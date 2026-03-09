@@ -1,26 +1,20 @@
 import { initializeApp } from 'firebase/app'
 import { getAnalytics, isSupported as isAnalyticsSupported } from 'firebase/analytics'
-import { getAuth, GoogleAuthProvider } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
 import { appConfig, isFirebaseConfigReady } from '../config/appConfig'
 
 let app = null
-let auth = null
 let db = null
-let googleProvider = null
 
 if (appConfig.useFirebase && isFirebaseConfigReady()) {
   app = initializeApp(appConfig.firebase)
-  auth = getAuth(app)
   db = getFirestore(app)
-  googleProvider = new GoogleAuthProvider()
-  googleProvider.setCustomParameters({ prompt: 'select_account' })
 }
 
-export { app, auth, db, googleProvider }
+export { app, db }
 
 export function isFirebaseEnabled() {
-  return !!app && !!auth && !!db
+  return !!app && !!db
 }
 
 export async function tryInitAnalytics() {

@@ -3,6 +3,9 @@ const rawAdminEmails = env.VITE_ADMIN_EMAILS || ''
 
 export const appConfig = {
   useFirebase: env.VITE_USE_FIREBASE === 'true',
+  authLoginDomain: env.VITE_AUTH_LOGIN_DOMAIN || 'seolak.local',
+  defaultAdminPassword: env.VITE_DEFAULT_ADMIN_PASSWORD || 'Seolak#2026!',
+  defaultAdminPasswordFromEnv: !!String(env.VITE_DEFAULT_ADMIN_PASSWORD || '').trim(),
   adminEmails: rawAdminEmails
     .split(',')
     .map((email) => email.trim().toLowerCase())

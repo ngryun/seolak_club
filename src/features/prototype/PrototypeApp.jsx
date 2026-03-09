@@ -1,133 +1,124 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
-import { applyToSchedule, cancelApplication, listAppliedSchedulesByTeacher, listApplicationsBySchedule } from "../../services/applicationService";
-import { createSchedule, deleteSchedule, listSchedules, updateSchedule } from "../../services/scheduleService";
-import { getUserProfile, listUsers, updateMyProfile, updateUserRole } from "../../services/userService";
-import { listStudentsBySchedule, addStudent, addStudentsBatch, deleteStudent, downloadStudentTemplate, parseStudentExcel, exportStudentsToExcel, getStudentCountsBySchedules } from "../../services/studentService";
+import {
+  advanceRecruitmentRound,
+  approveApplication,
+  directSelectInterviewMember,
+  getCurrentRecruitmentCycle,
+  inferStudentGrade,
+  listApplicationsBySchedule,
+  listClubMembers,
+  listStudentApplications,
+  purgeLegacyRecruitmentData,
+  randomSelectPending,
+  rejectApplication,
+  submitStudentPreferences,
+} from "../../services/applicationService";
+import {
+  canEditClub,
+  canManageSelection,
+  createClubRoom,
+  createSchedule,
+  deleteClubRoom,
+  deleteSchedule,
+  listClubRooms,
+  listSchedules,
+  updateSchedule,
+} from "../../services/scheduleService";
+import {
+  createUserAccount,
+  createUsersBatch,
+  deleteUserByAdmin,
+  downloadUserAccountTemplate,
+  listUsers,
+  parseUserAccountExcel,
+  resetUserPasswordByAdmin,
+  updateMyProfile,
+  updateMyPassword,
+  updateUserByAdmin,
+} from "../../services/userService";
 
-/*
-  Design direction: Claude-inspired — warm, minimal, restrained.
-  - Warm off-white background, clean white cards
-  - Single accent: warm terracotta/sienna
-  - No emojis in UI chrome
-  - Tight type hierarchy, generous whitespace
-  - Subtle 1px borders, soft shadows
-  - Purposeful micro-interactions
-*/
-
-// ─── Minimal Icon Set (thin stroke) ─────────────────────────────────────────
-const I = {
-  google: (
-    <svg width="16" height="16" viewBox="0 0 24 24">
-      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
-      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-    </svg>
-  ),
-  mail: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>,
-  calendar: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
-  users: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
-  plus: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
-  check: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
-  clock: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
-  logout: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
-  bell: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
-  pin: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>,
-  trash: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
-  arrow: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>,
-  grid: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>,
-  file: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
-  search: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
-  upload: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
-  download: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
-};
-
-// ─── Data ────────────────────────────────────────────────────────────────────
-// ─── Tokens ──────────────────────────────────────────────────────────────────
 const t = {
-  bg: "#F9F8F6",
-  surface: "#FFFFFF",
-  surfaceHover: "#FAFAF8",
-  border: "#EBEBEA",
-  borderDark: "#D9D9D6",
-  accent: "#C2714F",
-  accentHover: "#A85D3F",
-  accentSoft: "#FDF5F2",
-  green: "#3D8C6E",
-  greenSoft: "#F0F8F4",
-  amber: "#B5880A",
-  amberSoft: "#FEFBF0",
-  text: "#1A1A1A",
-  text2: "#5C5C5C",
-  text3: "#999999",
-  radius: 10,
+  bg: "#f6f7fb",
+  card: "#ffffff",
+  border: "#dfe3ee",
+  text: "#1c2431",
+  textSub: "#5f6b7d",
+  accent: "#1f6feb",
+  accentHover: "#1559be",
+  danger: "#c62828",
+  ok: "#2e7d32",
+  warn: "#c77700",
+  muted: "#eef2f8",
+  radius: 12,
   font: "'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif",
 };
 
-const css = `
-  @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/variable/pretendardvariable.css');
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body, #root { width: 100%; min-height: 100%; }
-  body {
-    margin: 0;
-    display: block;
-    background: ${t.bg};
-    -webkit-font-smoothing: antialiased;
-  }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-  ::selection { background: ${t.accent}20; }
-  ::-webkit-scrollbar { width: 4px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: ${t.border}; border-radius: 2px; }
-`;
+const page = {
+  minHeight: "100dvh",
+  background: "linear-gradient(180deg, #f9fbff 0%, #f3f5fb 40%, #eef2f8 100%)",
+  color: t.text,
+  fontFamily: t.font,
+};
 
-const roleLabel = (role) => (role === "admin" ? "관리자" : "상담교사");
+const cardStyle = {
+  background: t.card,
+  border: `1px solid ${t.border}`,
+  borderRadius: t.radius,
+  padding: 16,
+  boxShadow: "0 6px 20px rgba(9, 30, 66, 0.06)",
+};
 
-// ─── Reusable ────────────────────────────────────────────────────────────────
-function Badge({ type }) {
-  const map = {
-    done: { label: "마감", bg: t.greenSoft, color: t.green, border: `1px solid ${t.green}20` },
-    reserve: { label: "예비접수", bg: t.accentSoft, color: t.accent, border: `1px solid ${t.accent}20` },
-    progress: { label: "모집중", bg: t.amberSoft, color: t.amber, border: `1px solid ${t.amber}20` },
-    waiting: { label: "대기", bg: t.bg, color: t.text3, border: `1px solid ${t.border}` },
-  };
-  const s = map[type];
-  return <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 6, fontSize: 12, fontWeight: 500, background: s.bg, color: s.color, border: s.border, letterSpacing: "-0.01em" }}>{s.label}</span>;
+const inputBase = {
+  width: "100%",
+  border: `1px solid ${t.border}`,
+  borderRadius: 10,
+  padding: "10px 12px",
+  fontSize: 14,
+  outline: "none",
+  background: "#fff",
+  color: t.text,
+};
+
+const buttonBase = {
+  border: "none",
+  borderRadius: 10,
+  padding: "9px 12px",
+  fontSize: 13,
+  cursor: "pointer",
+};
+
+const badgeStyle = {
+  pending: { bg: "#fff8e1", color: t.warn, label: "대기" },
+  waiting_round: { bg: "#f3f4f6", color: t.textSub, label: "다음 라운드 대기" },
+  approved: { bg: "#e8f5e9", color: t.ok, label: "승인" },
+  rejected: { bg: "#ffebee", color: t.danger, label: "반려" },
+  cancelled: { bg: "#eceff1", color: "#4b5563", label: "취소" },
+};
+
+function roleLabel(role) {
+  if (role === "admin") return "관리자";
+  if (role === "teacher") return "교사";
+  return "학생";
 }
 
-function getCapacity(needed, waitlist = 0) {
-  return Number(needed || 0) + Number(waitlist || 0);
+function rejectReasonLabel(value) {
+  if (value === "manual") return "수동 반려";
+  if (value === "random_unselected") return "무작위 선발 미선정";
+  if (value === "higher_choice_assigned") return "다른 지망 배정";
+  if (value === "final_round_closed") return "3라운드 종료 미배정";
+  if (value === "round_ineligible") return "라운드 전환 시 신청 불가 처리";
+  return "";
 }
 
-function formatCapacity(needed, waitlist = 0) {
-  const main = Number(needed || 0);
-  const reserve = Number(waitlist || 0);
-  return reserve > 0 ? `${main}(+${reserve})` : `${main}`;
-}
-
-function getStatus(applied, needed, waitlist = 0) {
-  const main = Number(needed || 0);
-  const total = getCapacity(needed, waitlist);
-  if (Number(applied || 0) >= total) return "done";
-  if (Number(applied || 0) >= main) return "reserve";
-  if (applied > 0) return "progress";
-  return "waiting";
-}
-
-function formatAppliedAt(value) {
+function formatTime(value) {
   if (!value) return "-";
-  let dateObj = null;
-  if (typeof value?.toDate === "function") {
-    dateObj = value.toDate();
-  } else if (typeof value?.seconds === "number") {
-    dateObj = new Date(value.seconds * 1000);
-  } else {
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) dateObj = parsed;
-  }
-  if (!dateObj) return "-";
-  return dateObj.toLocaleString("ko-KR", {
+  const toDate = typeof value?.toDate === "function" ? value.toDate() : null;
+  const fromSeconds = typeof value?.seconds === "number" ? new Date(value.seconds * 1000) : null;
+  const parsed = new Date(value);
+  const date = toDate || fromSeconds || (Number.isNaN(parsed.getTime()) ? null : parsed);
+  if (!date) return "-";
+  return date.toLocaleString("ko-KR", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -137,1948 +128,2821 @@ function formatAppliedAt(value) {
   });
 }
 
-// ─── Login ───────────────────────────────────────────────────────────────────
-function LoginScreen({ onLogin }) {
-  const [email, setEmail] = useState("");
-  const [mode, setMode] = useState("main"); // main | magic | sent
-
-  const inputBase = {
-    width: "100%", padding: "10px 12px", borderRadius: 8,
-    background: "#fff", border: `1px solid ${t.border}`,
-    color: t.text, fontSize: 14, outline: "none", fontFamily: t.font,
-    transition: "border-color 0.15s",
+function MessageBar({ message, onClose }) {
+  if (!message?.text) return null;
+  const colors = {
+    ok: { bg: "#e8f5e9", border: "#b7dfbb", color: t.ok },
+    error: { bg: "#ffebee", border: "#f2b8be", color: t.danger },
+    info: { bg: "#e8f1fe", border: "#b6d1fb", color: t.accent },
   };
+  const palette = colors[message.type] || colors.info;
 
   return (
-    <div style={{
-      minHeight: "100dvh",
-      display: "flex",
-      alignItems: "flex-start",
-      justifyContent: "center",
-      background: t.bg,
-      fontFamily: t.font,
-      padding: "20px 14px calc(20px + env(safe-area-inset-bottom))",
-      overflowY: "auto",
-    }}>
-      <style>{css}</style>
-      <div style={{
-        width: "min(380px, 100%)", padding: "40px 36px", borderRadius: 16,
-        background: t.surface, border: `1px solid ${t.border}`,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.03)",
-        animation: "fadeIn 0.4s ease-out",
-        margin: "auto 0",
-      }}>
-        <div style={{ marginBottom: 32 }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 10, marginBottom: 20,
-            background: t.accent, display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
-            </svg>
-          </div>
-          <h1 style={{ fontSize: 20, fontWeight: 650, color: t.text, letterSpacing: "-0.025em", marginBottom: 6 }}>상담교사 배정 시스템</h1>
-          <p style={{ fontSize: 14, color: t.text3, lineHeight: 1.5 }}>학교 상담 일정 관리 및 교사 배정</p>
-        </div>
-
-        {mode === "main" && (
-          <div>
-            <button onClick={() => onLogin("teacher")} style={{
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              width: "100%", padding: "10px", borderRadius: 8,
-              background: "#fff", border: `1px solid ${t.borderDark}`, cursor: "pointer",
-              fontSize: 14, fontWeight: 500, color: t.text, transition: "all 0.15s",
-            }}
-            onMouseOver={e => { e.currentTarget.style.background = t.bg; }}
-            onMouseOut={e => { e.currentTarget.style.background = "#fff"; }}
-            >{I.google} Google로 계속하기</button>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "20px 0" }}>
-              <div style={{ flex: 1, height: 1, background: t.border }} />
-              <span style={{ fontSize: 12, color: t.text3 }}>또는</span>
-              <div style={{ flex: 1, height: 1, background: t.border }} />
-            </div>
-
-            <button onClick={() => setMode("magic")} style={{
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              width: "100%", padding: "10px", borderRadius: 8,
-              background: "transparent", border: `1px solid ${t.border}`, cursor: "pointer",
-              fontSize: 14, fontWeight: 500, color: t.text2, transition: "all 0.15s",
-            }}
-            onMouseOver={e => e.currentTarget.style.borderColor = t.borderDark}
-            onMouseOut={e => e.currentTarget.style.borderColor = t.border}
-            >{I.mail} 이메일로 로그인 링크 받기</button>
-
-            <div style={{ marginTop: 32, paddingTop: 20, borderTop: `1px solid ${t.border}` }}>
-              <p style={{ fontSize: 12, color: t.text3, marginBottom: 10 }}>데모 바로가기</p>
-              <div style={{ display: "flex", gap: 8 }}>
-                {[["admin", "관리자"], ["teacher", "교사"]].map(([role, label]) => (
-                  <button key={role} onClick={() => onLogin(role)} style={{
-                    flex: 1, padding: "8px", borderRadius: 8, fontSize: 13, fontWeight: 500,
-                    background: role === "admin" ? t.accent : "transparent",
-                    color: role === "admin" ? "#fff" : t.text2,
-                    border: role === "admin" ? "none" : `1px solid ${t.border}`,
-                    cursor: "pointer", transition: "all 0.15s",
-                  }}
-                  onMouseOver={e => { if (role !== "admin") e.currentTarget.style.background = t.bg; }}
-                  onMouseOut={e => { if (role !== "admin") e.currentTarget.style.background = "transparent"; }}
-                  >{label} 모드</button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {mode === "magic" && (
-          <div style={{ animation: "fadeIn 0.25s ease-out" }}>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 500, color: t.text2, marginBottom: 6 }}>이메일</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@school.ed.kr" style={inputBase}
-              onFocus={e => e.target.style.borderColor = t.accent}
-              onBlur={e => e.target.style.borderColor = t.border}
-            />
-            <button onClick={() => setMode("sent")} style={{
-              width: "100%", padding: "10px", borderRadius: 8, marginTop: 12,
-              background: t.accent, border: "none", cursor: "pointer",
-              fontSize: 14, fontWeight: 550, color: "#fff", transition: "background 0.15s",
-            }}
-            onMouseOver={e => e.currentTarget.style.background = t.accentHover}
-            onMouseOut={e => e.currentTarget.style.background = t.accent}
-            >로그인 링크 보내기</button>
-            <button onClick={() => setMode("main")} style={{
-              width: "100%", padding: "8px", marginTop: 6, background: "transparent",
-              border: "none", cursor: "pointer", fontSize: 13, color: t.text3,
-            }}>돌아가기</button>
-          </div>
-        )}
-
-        {mode === "sent" && (
-          <div style={{ textAlign: "center", animation: "fadeIn 0.25s ease-out", padding: "12px 0" }}>
-            <div style={{
-              width: 40, height: 40, borderRadius: 10, margin: "0 auto 16px",
-              background: t.greenSoft, border: `1px solid ${t.green}20`,
-              display: "flex", alignItems: "center", justifyContent: "center", color: t.green,
-            }}>{I.check}</div>
-            <p style={{ fontSize: 15, fontWeight: 550, color: t.text, marginBottom: 6 }}>메일을 확인해주세요</p>
-            <p style={{ fontSize: 13, color: t.text3, lineHeight: 1.5 }}>
-              <span style={{ color: t.text2 }}>{email || "입력한 주소"}</span>로<br/>로그인 링크를 보냈습니다.
-            </p>
-            <button onClick={() => { setMode("main"); }} style={{
-              marginTop: 20, padding: "8px 20px", borderRadius: 8,
-              background: "transparent", border: `1px solid ${t.border}`,
-              cursor: "pointer", fontSize: 13, color: t.text3,
-            }}>다시 시도</button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Sidebar ─────────────────────────────────────────────────────────────────
-function Sidebar({ role, user, tab, setTab, onLogout, isMobile, isOpen, onClose }) {
-  const nav = role === "admin"
-    ? [{ id: "dash", icon: I.grid, label: "대시보드" }, { id: "sched", icon: I.calendar, label: "상담일정" }, { id: "teach", icon: I.users, label: "교사 관리" }, { id: "profile", icon: I.file, label: "내 정보" }]
-    : [{ id: "list", icon: I.calendar, label: "상담 일정" }, { id: "my", icon: I.file, label: "내 지원현황" }, { id: "profile", icon: I.users, label: "내 정보" }];
-
-  const displayName = user?.name || user?.email || "-";
-  const displayRole = roleLabel(role);
-  const avatarText = (displayName || "?").trim().charAt(0);
-  const baseSidebarStyle = {
-    width: 220, height: "100dvh", background: t.surface,
-    borderRight: `1px solid ${t.border}`, display: "flex", flexDirection: "column",
-    fontFamily: t.font, flexShrink: 0, overflowY: "auto",
-  };
-
-  const mobileSidebarStyle = isMobile ? {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    zIndex: 50,
-    width: 250,
-    maxHeight: "100dvh",
-    transform: isOpen ? "translateX(0)" : "translateX(-100%)",
-    transition: "transform 0.2s ease",
-    boxShadow: "6px 0 24px rgba(0,0,0,0.12)",
-  } : {
-    position: "sticky",
-    top: 0,
-  };
-
-  return (
-    <div style={{ ...baseSidebarStyle, ...mobileSidebarStyle }}>
-      <div style={{ padding: "20px 16px 16px", borderBottom: `1px solid ${t.border}` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 7, background: t.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
-            </svg>
-          </div>
-          <span style={{ fontSize: 14, fontWeight: 650, color: t.text, letterSpacing: "-0.02em" }}>상담교사 배정</span>
-        </div>
-      </div>
-
-      <nav style={{ padding: "12px 8px", flex: 1, minHeight: 0, overflowY: "auto" }}>
-        {nav.map(n => (
-          <button key={n.id} onClick={() => { setTab(n.id); if (isMobile) onClose(); }} style={{
-            display: "flex", alignItems: "center", gap: 8,
-            width: "100%", padding: "8px 10px", borderRadius: 8, marginBottom: 2,
-            background: tab === n.id ? t.bg : "transparent",
-            border: "none", cursor: "pointer",
-            fontSize: 13, fontWeight: tab === n.id ? 550 : 450,
-            color: tab === n.id ? t.text : t.text2,
-            transition: "all 0.12s",
-          }}
-          onMouseOver={e => { if (tab !== n.id) e.currentTarget.style.background = t.surfaceHover; }}
-          onMouseOut={e => { if (tab !== n.id) e.currentTarget.style.background = "transparent"; }}
-          >
-            <span style={{ color: tab === n.id ? t.text : t.text3, display: "flex" }}>{n.icon}</span>
-            {n.label}
-          </button>
-        ))}
-      </nav>
-
-      <div style={{ padding: "12px 12px calc(16px + env(safe-area-inset-bottom))", borderTop: `1px solid ${t.border}` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <div style={{
-            width: 30, height: 30, borderRadius: 8, background: t.bg,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 12, fontWeight: 600, color: t.text2, border: `1px solid ${t.border}`,
-          }}>
-            {avatarText}
-          </div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 550, color: t.text }}>{displayName}</div>
-            <div style={{ fontSize: 11, color: t.text3 }}>{displayRole}</div>
-          </div>
-        </div>
-        <button onClick={async () => { await onLogout(); if (isMobile) onClose(); }} style={{
-          display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-          width: "100%", padding: "7px", borderRadius: 7,
-          background: "transparent", border: `1px solid ${t.border}`,
-          cursor: "pointer", fontSize: 12, color: t.text3, transition: "all 0.15s",
-        }}
-        onMouseOver={e => { e.currentTarget.style.borderColor = t.borderDark; e.currentTarget.style.color = t.text2; }}
-        onMouseOut={e => { e.currentTarget.style.borderColor = t.border; e.currentTarget.style.color = t.text3; }}
-        >{I.logout} 로그아웃</button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Top Bar ─────────────────────────────────────────────────────────────────
-function TopBar({ role, tab, isMobile, onToggleSidebar }) {
-  return (
-    <div style={{
-      height: isMobile ? 68 : 84, padding: "0 28px", display: "flex", alignItems: "center", justifyContent: "space-between",
-      borderBottom: `1px solid ${t.border}`, background: t.surface, flexShrink: 0,
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        {isMobile && (
-          <button
-            onClick={onToggleSidebar}
-            style={{
-              width: 32, height: 32, borderRadius: 8,
-              border: `1px solid ${t.border}`, background: "transparent",
-              cursor: "pointer", color: t.text2, fontSize: 16,
-            }}
-          >
-            ☰
-          </button>
-        )}
-        <img
-          src="/logo.png"
-          alt="강원특별자치도 진학지원센터 로고"
-          style={{ width: 200, height: 60, objectFit: "contain", objectPosition: "left center" }}
-        />
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <button style={{
-          position: "relative", width: 32, height: 32, borderRadius: 8,
-          background: "transparent", border: `1px solid ${t.border}`,
-          cursor: "pointer", color: t.text3, display: "flex", alignItems: "center", justifyContent: "center",
-          transition: "all 0.15s",
-        }}
-        onMouseOver={e => e.currentTarget.style.borderColor = t.borderDark}
-        onMouseOut={e => e.currentTarget.style.borderColor = t.border}
+    <div style={{ ...cardStyle, background: palette.bg, borderColor: palette.border, color: palette.color, padding: "10px 12px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{message.text}</span>
+        <button
+          onClick={onClose}
+          style={{ ...buttonBase, background: "transparent", color: palette.color, padding: "4px 8px" }}
         >
-          {I.bell}
-          <div style={{ position: "absolute", top: 6, right: 6, width: 5, height: 5, borderRadius: "50%", background: t.accent }} />
-        </button>
-        <span style={{ fontSize: 13, color: t.text3 }}>
-          {new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "short" })}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// ─── Admin: Dashboard ────────────────────────────────────────────────────────
-function Dashboard({ schedules }) {
-  const total = schedules.length;
-  const needed = schedules.reduce((a, s) => a + s.needed, 0);
-  const waitlist = schedules.reduce((a, s) => a + Number(s.waitlist || 0), 0);
-  const applied = schedules.reduce((a, s) => a + s.applied, 0);
-  const done = schedules.filter(s => s.applied >= getCapacity(s.needed, s.waitlist)).length;
-
-  const stats = [
-    { label: "전체 일정", value: total, sub: "건" },
-    { label: "모집 인원", value: needed, sub: "명" },
-    { label: "예비 인원", value: waitlist, sub: "명" },
-    { label: "지원 완료", value: applied, sub: "명" },
-    { label: "마감 일정", value: done, sub: "건" },
-  ];
-
-  return (
-    <div>
-      <h2 style={{ fontSize: 18, fontWeight: 650, color: t.text, letterSpacing: "-0.02em", marginBottom: 20 }}>대시보드</h2>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 28 }}>
-        {stats.map(s => (
-          <div key={s.label} style={{
-            padding: "18px 20px", borderRadius: t.radius, background: t.surface,
-            border: `1px solid ${t.border}`,
-          }}>
-            <div style={{ fontSize: 12, color: t.text3, marginBottom: 8, fontWeight: 450 }}>{s.label}</div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
-              <span style={{ fontSize: 28, fontWeight: 700, color: t.text, letterSpacing: "-0.03em", lineHeight: 1 }}>{s.value}</span>
-              <span style={{ fontSize: 13, color: t.text3 }}>{s.sub}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ borderRadius: t.radius, background: t.surface, border: `1px solid ${t.border}`, overflow: "hidden" }}>
-        <div style={{ padding: "14px 20px", borderBottom: `1px solid ${t.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: t.text }}>최근 일정</span>
-        </div>
-        {schedules.map((s, i) => (
-          <div key={s.id} style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "12px 20px", borderBottom: i < schedules.length - 1 ? `1px solid ${t.border}` : "none",
-            transition: "background 0.1s",
-          }}
-          onMouseOver={e => e.currentTarget.style.background = t.surfaceHover}
-          onMouseOut={e => e.currentTarget.style.background = "transparent"}
-          >
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 550, color: t.text, marginBottom: 2 }}>{s.school}</div>
-              <div style={{ fontSize: 12, color: t.text3, display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>{I.pin} {s.region}</span>
-                <span>{s.date}</span>
-                <span>{s.time}</span>
-              </div>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              {s.studentCount > 0 && (
-                <span style={{ fontSize: 12, color: t.accent, fontWeight: 500 }}>학생 {s.studentCount}명</span>
-              )}
-              <span style={{ fontSize: 13, color: t.text3 }}>{s.applied}/{formatCapacity(s.needed, s.waitlist)}</span>
-              <Badge type={getStatus(s.applied, s.needed, s.waitlist)} />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── Admin: Schedules ────────────────────────────────────────────────────────
-function Schedules({ schedules, onAddSchedule, onUpdateSchedule, onDeleteSchedule, onViewApplicants, onRefreshStudentCount }) {
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState({ school: "", region: "", date: "", time: "", needed: 2, waitlist: 0 });
-  const [applicantDialog, setApplicantDialog] = useState({
-    open: false,
-    schedule: null,
-    rows: [],
-    loading: false,
-    error: "",
-  });
-  const [studentDialog, setStudentDialog] = useState({
-    open: false,
-    schedule: null,
-    students: [],
-    loading: false,
-    error: "",
-  });
-  const [studentForm, setStudentForm] = useState({ grade: "", classNum: "", number: "", name: "", gender: "남", notes: "" });
-  const [uploadError, setUploadError] = useState("");
-  const [uploading, setUploading] = useState(false);
-
-  const handleSubmit = async () => {
-    if (!form.school || !form.date || !form.time) return;
-    if (editingId) {
-      await onUpdateSchedule(editingId, {
-        school: form.school,
-        region: form.region,
-        date: form.date,
-        time: form.time,
-        needed: Number.parseInt(form.needed, 10) || 0,
-        waitlist: Number.parseInt(form.waitlist, 10) || 0,
-      });
-    } else {
-      await onAddSchedule({
-        school: form.school,
-        region: form.region,
-        date: form.date,
-        time: form.time,
-        needed: Number.parseInt(form.needed, 10) || 0,
-        waitlist: Number.parseInt(form.waitlist, 10) || 0,
-      });
-    }
-    setForm({ school: "", region: "", date: "", time: "", needed: 2, waitlist: 0 });
-    setEditingId(null);
-    setShowForm(false);
-  };
-
-  const handleEdit = (schedule) => {
-    setEditingId(schedule.id);
-    setForm({
-      school: schedule.school || "",
-      region: schedule.region || "",
-      date: schedule.date || "",
-      time: schedule.time || "",
-      needed: schedule.needed || 1,
-      waitlist: Number(schedule.waitlist || 0),
-    });
-    setShowForm(true);
-  };
-
-  const inp = {
-    width: "100%", padding: "9px 12px", borderRadius: 8, background: "#fff",
-    border: `1px solid ${t.border}`, color: t.text, fontSize: 13,
-    outline: "none", fontFamily: t.font, transition: "border-color 0.15s",
-  };
-
-  const handleOpenApplicants = async (schedule) => {
-    setApplicantDialog({
-      open: true,
-      schedule,
-      rows: [],
-      loading: true,
-      error: "",
-    });
-
-    try {
-      const rows = await onViewApplicants(schedule.id);
-      setApplicantDialog({
-        open: true,
-        schedule,
-        rows,
-        loading: false,
-        error: "",
-      });
-    } catch (e) {
-      setApplicantDialog({
-        open: true,
-        schedule,
-        rows: [],
-        loading: false,
-        error: e instanceof Error ? e.message : "신청자 조회에 실패했습니다.",
-      });
-    }
-  };
-
-  const handleOpenStudents = async (schedule) => {
-    setStudentDialog({ open: true, schedule, students: [], loading: true, error: "" });
-    setStudentForm({ grade: "", classNum: "", number: "", name: "", gender: "남", notes: "" });
-    setUploadError("");
-    try {
-      const students = await listStudentsBySchedule(schedule.id);
-      setStudentDialog({ open: true, schedule, students, loading: false, error: "" });
-    } catch (e) {
-      setStudentDialog({ open: true, schedule, students: [], loading: false, error: e instanceof Error ? e.message : "학생 목록을 불러오지 못했습니다." });
-    }
-  };
-
-  const refreshStudents = async (scheduleId) => {
-    const students = await listStudentsBySchedule(scheduleId);
-    setStudentDialog((prev) => ({ ...prev, students }));
-    if (onRefreshStudentCount) onRefreshStudentCount(scheduleId, students.length);
-  };
-
-  const handleAddStudent = async () => {
-    if (!studentForm.name || !studentDialog.schedule) return;
-    try {
-      await addStudent(studentDialog.schedule.id, studentForm);
-      setStudentForm({ grade: "", classNum: "", number: "", name: "", gender: "남", notes: "" });
-      await refreshStudents(studentDialog.schedule.id);
-    } catch (e) {
-      setStudentDialog((prev) => ({ ...prev, error: e instanceof Error ? e.message : "학생 등록에 실패했습니다." }));
-    }
-  };
-
-  const handleDeleteStudent = async (studentId) => {
-    if (!studentDialog.schedule) return;
-    try {
-      await deleteStudent(studentDialog.schedule.id, studentId);
-      await refreshStudents(studentDialog.schedule.id);
-    } catch (e) {
-      setStudentDialog((prev) => ({ ...prev, error: e instanceof Error ? e.message : "학생 삭제에 실패했습니다." }));
-    }
-  };
-
-  const handleExcelUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file || !studentDialog.schedule) return;
-    setUploading(true);
-    setUploadError("");
-    try {
-      const parsed = await parseStudentExcel(file);
-      if (parsed.length === 0) { setUploadError("유효한 학생 데이터가 없습니다."); return; }
-      await addStudentsBatch(studentDialog.schedule.id, parsed);
-      await refreshStudents(studentDialog.schedule.id);
-    } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "엑셀 업로드에 실패했습니다.");
-    } finally {
-      setUploading(false);
-      e.target.value = "";
-    }
-  };
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 650, color: t.text, letterSpacing: "-0.02em" }}>상담일정 관리</h2>
-        <button onClick={() => {
-          if (showForm) {
-            setEditingId(null);
-            setForm({ school: "", region: "", date: "", time: "", needed: 2, waitlist: 0 });
-          }
-          setShowForm(!showForm);
-        }} style={{
-          display: "flex", alignItems: "center", gap: 5,
-          padding: "8px 14px", borderRadius: 8,
-          background: showForm ? "transparent" : t.accent,
-          color: showForm ? t.text2 : "#fff",
-          border: showForm ? `1px solid ${t.border}` : "none",
-          cursor: "pointer", fontSize: 13, fontWeight: 500, transition: "all 0.15s",
-        }}>
-          {showForm ? "취소" : <>{I.plus} 일정 등록</>}
+          닫기
         </button>
       </div>
+    </div>
+  );
+}
 
-      {showForm && (
-        <div style={{
-          padding: 20, borderRadius: t.radius, marginBottom: 20,
-          background: t.surface, border: `1px solid ${t.accent}30`,
-          animation: "fadeIn 0.2s ease-out",
-        }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: t.text, marginBottom: 16 }}>
-            {editingId ? "상담 일정 수정" : "새 상담 일정"}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            {[
-              ["학교명", "school", "서울 한빛초등학교", "text"],
-              ["지역", "region", "서울 강남구", "text"],
-              ["날짜", "date", "", "date"],
-              ["시간", "time", "09:00 – 12:00", "text"],
-              ["모집 인원", "needed", "", "number"],
-              ["예비 인원", "waitlist", "", "number"],
-            ].map(([label, key, ph, type]) => (
-              <div key={key}>
-                <label style={{ display: "block", fontSize: 12, color: t.text3, marginBottom: 4, fontWeight: 450 }}>{label}</label>
-                <input type={type} min={type === "number" ? (key === "waitlist" ? 0 : 1) : undefined} value={form[key]} onChange={e => setForm({...form, [key]: e.target.value})}
-                  placeholder={ph} style={inp}
-                  onFocus={e => e.target.style.borderColor = t.accent}
-                  onBlur={e => e.target.style.borderColor = t.border}
-                />
-              </div>
-            ))}
-            <div style={{ display: "flex", alignItems: "flex-end" }}>
-              <button onClick={handleSubmit} style={{
-                width: "100%", padding: "9px", borderRadius: 8,
-                background: t.accent, border: "none", cursor: "pointer",
-                fontSize: 13, fontWeight: 550, color: "#fff", transition: "background 0.15s",
-              }}
-              onMouseOver={e => e.currentTarget.style.background = t.accentHover}
-              onMouseOut={e => e.currentTarget.style.background = t.accent}
-              >{editingId ? "수정 저장" : "등록"}</button>
-            </div>
-          </div>
-        </div>
-      )}
+function LoginPanel({ onLogin, loading, error }) {
+  const [tab, setTab] = useState("teacher");
+  const [loginId, setLoginId] = useState("");
+  const [studentName, setStudentName] = useState("");
+  const [password, setPassword] = useState("");
 
-      <div style={{ borderRadius: t.radius, background: t.surface, border: `1px solid ${t.border}`, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ borderBottom: `1px solid ${t.border}` }}>
-              {["학교", "지역", "날짜", "시간", "학생", "현황", "상태", ""].map(h => (
-                <th key={h} style={{ padding: "10px 16px", fontSize: 12, fontWeight: 500, color: t.text3, textAlign: "left", background: t.bg }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {schedules.map((s, i) => (
-              <tr key={s.id}
-                style={{ borderBottom: i < schedules.length - 1 ? `1px solid ${t.border}` : "none", transition: "background 0.1s" }}
-                onMouseOver={e => e.currentTarget.style.background = t.surfaceHover}
-                onMouseOut={e => e.currentTarget.style.background = "transparent"}
-              >
-                <td style={{ padding: "11px 16px", fontSize: 13, fontWeight: 550, color: t.text }}>{s.school}</td>
-                <td style={{ padding: "11px 16px", fontSize: 13, color: t.text2 }}>{s.region}</td>
-                <td style={{ padding: "11px 16px", fontSize: 13, color: t.text2 }}>{s.date}</td>
-                <td style={{ padding: "11px 16px", fontSize: 13, color: t.text2 }}>{s.time}</td>
-                <td style={{ padding: "11px 16px", fontSize: 13, color: s.studentCount > 0 ? t.accent : t.text3, fontWeight: s.studentCount > 0 ? 550 : 400 }}>{s.studentCount > 0 ? `${s.studentCount}명` : "-"}</td>
-                <td style={{ padding: "11px 16px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    {(() => {
-                      const status = getStatus(s.applied, s.needed, s.waitlist);
-                      const total = Math.max(1, getCapacity(s.needed, s.waitlist));
-                      const ratio = Math.min(100, (Number(s.applied || 0) / total) * 100);
-                      const barColor = status === "done" ? t.green : status === "reserve" ? t.amber : t.accent;
-                      return (
-                        <>
-                          <div style={{ width: 60, height: 4, borderRadius: 2, background: t.bg, overflow: "hidden" }}>
-                            <div style={{
-                              width: `${ratio}%`, height: "100%", borderRadius: 2,
-                              background: barColor, transition: "width 0.3s",
-                            }} />
-                          </div>
-                          <span style={{ fontSize: 12, color: t.text3 }}>{s.applied}/{formatCapacity(s.needed, s.waitlist)}</span>
-                        </>
-                      );
-                    })()}
-                  </div>
-                </td>
-                <td style={{ padding: "11px 16px" }}><Badge type={getStatus(s.applied, s.needed, s.waitlist)} /></td>
-                <td style={{ padding: "11px 16px", textAlign: "right" }}>
-                  <button onClick={() => handleOpenStudents(s)} style={{
-                    padding: "4px 6px", borderRadius: 6, background: "transparent",
-                    border: "none", cursor: "pointer", color: t.text3, transition: "color 0.15s",
-                    marginRight: 8,
-                  }}
-                  onMouseOver={e => e.currentTarget.style.color = t.text}
-                  onMouseOut={e => e.currentTarget.style.color = t.text3}
-                  >학생</button>
-                  <button onClick={() => handleOpenApplicants(s)} style={{
-                    padding: "4px 6px", borderRadius: 6, background: "transparent",
-                    border: "none", cursor: "pointer", color: t.text3, transition: "color 0.15s",
-                    marginRight: 8,
-                  }}
-                  onMouseOver={e => e.currentTarget.style.color = t.text}
-                  onMouseOut={e => e.currentTarget.style.color = t.text3}
-                  >신청자</button>
-                  <button onClick={() => handleEdit(s)} style={{
-                    padding: "4px 6px", borderRadius: 6, background: "transparent",
-                    border: "none", cursor: "pointer", color: t.text3, transition: "color 0.15s",
-                    marginRight: 8,
-                  }}
-                  onMouseOver={e => e.currentTarget.style.color = t.text}
-                  onMouseOut={e => e.currentTarget.style.color = t.text3}
-                  >수정</button>
-                  <button onClick={() => onDeleteSchedule(s.id)} style={{
-                    padding: "4px 6px", borderRadius: 6, background: "transparent",
-                    border: "none", cursor: "pointer", color: t.text3, transition: "color 0.15s",
-                  }}
-                  onMouseOver={e => e.currentTarget.style.color = "#C53030"}
-                  onMouseOut={e => e.currentTarget.style.color = t.text3}
-                  >{I.trash}</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+  return (
+    <div style={{ ...page, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ width: "min(460px, 100%)", ...cardStyle, padding: 24 }}>
+        <h1 style={{ fontSize: 24, marginBottom: 6 }}>강원 설악고등학교 신청 통합 시스템</h1>
+        <p style={{ fontSize: 13, color: t.textSub, marginBottom: 18 }}>
+          교사/학생 탭을 선택해 로그인하세요.
+        </p>
 
-      {applicantDialog.open && (
-        <div style={{
-          position: "fixed",
-          inset: 0,
-          background: "rgba(0,0,0,0.25)",
-          zIndex: 80,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 16,
-        }}
-        onClick={() => setApplicantDialog({ open: false, schedule: null, rows: [], loading: false, error: "" })}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "100%",
-              maxWidth: 760,
-              borderRadius: 12,
-              background: t.surface,
-              border: `1px solid ${t.border}`,
-              boxShadow: "0 18px 50px rgba(0,0,0,0.15)",
-              overflow: "hidden",
-            }}
-          >
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "14px 16px",
-              borderBottom: `1px solid ${t.border}`,
-            }}>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 650, color: t.text }}>신청자 목록</div>
-                <div style={{ fontSize: 12, color: t.text3, marginTop: 3 }}>
-                  {applicantDialog.schedule?.school || "-"} · {applicantDialog.schedule?.date || "-"} {applicantDialog.schedule?.time || ""}
-                </div>
-              </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+          {["teacher", "student"].map((mode) => {
+            const active = tab === mode;
+            return (
               <button
-                onClick={() => setApplicantDialog({ open: false, schedule: null, rows: [], loading: false, error: "" })}
+                key={mode}
+                onClick={() => setTab(mode)}
                 style={{
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  border: `1px solid ${t.border}`,
-                  background: "transparent",
-                  color: t.text2,
-                  cursor: "pointer",
-                  fontSize: 12,
+                  ...buttonBase,
+                  background: active ? t.accent : "#fff",
+                  color: active ? "#fff" : t.text,
+                  border: `1px solid ${active ? t.accent : t.border}`,
+                  fontWeight: 700,
                 }}
               >
-                닫기
+                {mode === "teacher" ? "교사/관리자" : "학생"}
               </button>
-            </div>
-
-            <div style={{ padding: 16 }}>
-              {applicantDialog.loading && (
-                <div style={{ fontSize: 13, color: t.text3 }}>신청자 정보를 불러오는 중...</div>
-              )}
-              {!applicantDialog.loading && applicantDialog.error && (
-                <div style={{ fontSize: 13, color: "#8b3124" }}>{applicantDialog.error}</div>
-              )}
-              {!applicantDialog.loading && !applicantDialog.error && applicantDialog.rows.length === 0 && (
-                <div style={{ fontSize: 13, color: t.text3 }}>현재 신청자가 없습니다.</div>
-              )}
-              {!applicantDialog.loading && !applicantDialog.error && applicantDialog.rows.length > 0 && (
-                <div style={{ borderRadius: 10, overflow: "hidden", border: `1px solid ${t.border}` }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr style={{ background: t.bg, borderBottom: `1px solid ${t.border}` }}>
-                        {["학교명", "이름", "전화번호", "이메일", "지원시각"].map((h) => (
-                          <th key={h} style={{ padding: "10px 12px", fontSize: 12, color: t.text3, textAlign: "left", fontWeight: 550 }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {applicantDialog.rows.map((row, idx) => (
-                        <tr key={row.id} style={{ borderBottom: idx < applicantDialog.rows.length - 1 ? `1px solid ${t.border}` : "none" }}>
-                          <td style={{ padding: "10px 12px", fontSize: 13, color: t.text }}>{row.school || "-"}</td>
-                          <td style={{ padding: "10px 12px", fontSize: 13, color: t.text }}>{row.name || "-"}</td>
-                          <td style={{ padding: "10px 12px", fontSize: 13, color: t.text2 }}>{row.phone || "-"}</td>
-                          <td style={{ padding: "10px 12px", fontSize: 13, color: t.text2 }}>{row.email || row.teacherEmail || "-"}</td>
-                          <td style={{ padding: "10px 12px", fontSize: 13, color: t.text2 }}>{formatAppliedAt(row.createdAt)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
+            );
+          })}
         </div>
-      )}
 
-      {/* ── Student Management Dialog ── */}
-      {studentDialog.open && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)",
-          zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
-        }}
-        onClick={() => setStudentDialog({ open: false, schedule: null, students: [], loading: false, error: "" })}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
+        <div style={{ display: "grid", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 12, color: t.textSub, marginBottom: 4 }}>
+              {tab === "teacher" ? "아이디(교사명 또는 admin)" : "아이디(학번 5자리 숫자)"}
+            </div>
+            <input
+              value={loginId}
+              onChange={(e) => setLoginId(e.target.value)}
+              style={inputBase}
+              placeholder={tab === "teacher" ? "예: 김교사" : "예: 26001"}
+            />
+          </div>
+
+          {tab === "student" && (
+            <div>
+              <div style={{ fontSize: 12, color: t.textSub, marginBottom: 4 }}>이름</div>
+              <input
+                value={studentName}
+                onChange={(e) => setStudentName(e.target.value)}
+                style={inputBase}
+                placeholder="예: 홍길동"
+              />
+            </div>
+          )}
+
+          <div>
+            <div style={{ fontSize: 12, color: t.textSub, marginBottom: 4 }}>비밀번호</div>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={inputBase}
+              placeholder="비밀번호"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  onLogin({ loginId, password, tab, studentName });
+                }
+              }}
+            />
+          </div>
+
+          {error ? <div style={{ fontSize: 12, color: t.danger }}>{error}</div> : null}
+
+          <button
+            onClick={() => onLogin({ loginId, password, tab, studentName })}
+            disabled={loading}
             style={{
-              width: "100%", maxWidth: 900, maxHeight: "85vh",
-              borderRadius: 12, background: t.surface,
-              border: `1px solid ${t.border}`,
-              boxShadow: "0 18px 50px rgba(0,0,0,0.15)",
-              overflow: "hidden", display: "flex", flexDirection: "column",
+              ...buttonBase,
+              background: loading ? "#c7d2e8" : t.accent,
+              color: "#fff",
+              fontWeight: 700,
+              padding: "10px 12px",
             }}
           >
-            {/* Header */}
-            <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "14px 16px", borderBottom: `1px solid ${t.border}`, flexShrink: 0,
-            }}>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 650, color: t.text }}>학생 관리</div>
-                <div style={{ fontSize: 12, color: t.text3, marginTop: 3 }}>
-                  {studentDialog.schedule?.school || "-"} · {studentDialog.schedule?.date || "-"} {studentDialog.schedule?.time || ""}
-                </div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <button onClick={() => downloadStudentTemplate()} style={{
-                  padding: "5px 10px", borderRadius: 6, border: `1px solid ${t.border}`,
-                  background: "transparent", color: t.text2, cursor: "pointer", fontSize: 12,
-                  display: "flex", alignItems: "center", gap: 4,
-                }}>{I.download} 양식</button>
+            {loading ? "로그인 중..." : "로그인"}
+          </button>
 
-                <label style={{
-                  padding: "5px 10px", borderRadius: 6, border: `1px solid ${t.border}`,
-                  background: "transparent", color: t.text2, cursor: "pointer", fontSize: 12,
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                }}>
-                  {I.upload} {uploading ? "업로드 중..." : "엑셀 업로드"}
-                  <input type="file" accept=".xlsx,.xls" onChange={handleExcelUpload}
-                    style={{ display: "none" }} disabled={uploading} />
-                </label>
-
-                {studentDialog.students.length > 0 && (
-                  <button onClick={() => exportStudentsToExcel(studentDialog.students, studentDialog.schedule?.school)}
-                    style={{
-                      padding: "5px 10px", borderRadius: 6, border: `1px solid ${t.border}`,
-                      background: "transparent", color: t.text2, cursor: "pointer", fontSize: 12,
-                      display: "flex", alignItems: "center", gap: 4,
-                    }}>{I.download} 내보내기</button>
-                )}
-
-                <button
-                  onClick={() => setStudentDialog({ open: false, schedule: null, students: [], loading: false, error: "" })}
-                  style={{
-                    padding: "4px 8px", borderRadius: 6, border: `1px solid ${t.border}`,
-                    background: "transparent", color: t.text2, cursor: "pointer", fontSize: 12,
-                  }}
-                >닫기</button>
-              </div>
-            </div>
-
-            {/* Add Student Form */}
-            <div style={{
-              padding: "12px 16px", borderBottom: `1px solid ${t.border}`,
-              background: t.bg, flexShrink: 0,
-            }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 10 }}>학생 추가</div>
-              <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
-                {[
-                  ["학년", "grade", "3"],
-                  ["반", "classNum", "2"],
-                  ["번호", "number", "15"],
-                  ["이름", "name", "홍길동"],
-                ].map(([label, key, ph]) => (
-                  <div key={key} style={{ flex: key === "name" ? "1 1 100px" : "0 0 70px" }}>
-                    <label style={{ display: "block", fontSize: 11, color: t.text3, marginBottom: 3 }}>{label}</label>
-                    <input value={studentForm[key]}
-                      onChange={(e) => setStudentForm({ ...studentForm, [key]: e.target.value })}
-                      placeholder={ph} style={inp}
-                      onFocus={(e) => e.target.style.borderColor = t.accent}
-                      onBlur={(e) => e.target.style.borderColor = t.border}
-                    />
-                  </div>
-                ))}
-                <div style={{ flex: "0 0 70px" }}>
-                  <label style={{ display: "block", fontSize: 11, color: t.text3, marginBottom: 3 }}>성별</label>
-                  <select value={studentForm.gender}
-                    onChange={(e) => setStudentForm({ ...studentForm, gender: e.target.value })}
-                    style={{ ...inp, padding: "9px 8px" }}>
-                    <option value="남">남</option>
-                    <option value="여">여</option>
-                  </select>
-                </div>
-                <div style={{ flex: "1 1 120px" }}>
-                  <label style={{ display: "block", fontSize: 11, color: t.text3, marginBottom: 3 }}>참고사항</label>
-                  <input value={studentForm.notes}
-                    onChange={(e) => setStudentForm({ ...studentForm, notes: e.target.value })}
-                    style={inp}
-                    onFocus={(e) => e.target.style.borderColor = t.accent}
-                    onBlur={(e) => e.target.style.borderColor = t.border}
-                  />
-                </div>
-                <button onClick={handleAddStudent} style={{
-                  padding: "9px 14px", borderRadius: 8, background: t.accent,
-                  border: "none", cursor: "pointer", fontSize: 12, fontWeight: 550, color: "#fff",
-                  whiteSpace: "nowrap", flexShrink: 0,
-                }}>추가</button>
-              </div>
-              {uploadError && (
-                <div style={{ marginTop: 8, fontSize: 12, color: "#8b3124" }}>{uploadError}</div>
-              )}
-            </div>
-
-            {/* Student List */}
-            <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
-              {studentDialog.loading && (
-                <div style={{ fontSize: 13, color: t.text3 }}>학생 정보를 불러오는 중...</div>
-              )}
-              {!studentDialog.loading && studentDialog.error && (
-                <div style={{ fontSize: 13, color: "#8b3124" }}>{studentDialog.error}</div>
-              )}
-              {!studentDialog.loading && !studentDialog.error && studentDialog.students.length === 0 && (
-                <div style={{ fontSize: 13, color: t.text3, textAlign: "center", padding: "24px 0" }}>
-                  등록된 학생이 없습니다. 위에서 직접 추가하거나 엑셀 파일을 업로드해주세요.
-                </div>
-              )}
-              {!studentDialog.loading && !studentDialog.error && studentDialog.students.length > 0 && (
-                <>
-                  <div style={{ fontSize: 12, color: t.text3, marginBottom: 8 }}>
-                    총 {studentDialog.students.length}명
-                  </div>
-                  <div style={{ borderRadius: 10, overflow: "hidden", border: `1px solid ${t.border}` }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ background: t.bg, borderBottom: `1px solid ${t.border}` }}>
-                          {["학년", "반", "번호", "이름", "성별", "참고사항", ""].map((h) => (
-                            <th key={h} style={{
-                              padding: "10px 12px", fontSize: 12, color: t.text3,
-                              textAlign: "left", fontWeight: 550,
-                            }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {studentDialog.students.map((st, idx) => (
-                          <tr key={st.id} style={{
-                            borderBottom: idx < studentDialog.students.length - 1 ? `1px solid ${t.border}` : "none",
-                          }}>
-                            <td style={{ padding: "10px 12px", fontSize: 13, color: t.text }}>{st.grade}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 13, color: t.text }}>{st.classNum}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 13, color: t.text }}>{st.number}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 13, fontWeight: 550, color: t.text }}>{st.name}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 13, color: t.text2 }}>{st.gender}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 13, color: t.text2 }}>{st.notes || "-"}</td>
-                            <td style={{ padding: "10px 12px", textAlign: "right" }}>
-                              <button onClick={() => handleDeleteStudent(st.id)} style={{
-                                padding: "3px 6px", borderRadius: 6, background: "transparent",
-                                border: "none", cursor: "pointer", color: t.text3,
-                              }}
-                              onMouseOver={(e) => e.currentTarget.style.color = "#C53030"}
-                              onMouseOut={(e) => e.currentTarget.style.color = t.text3}
-                              >{I.trash}</button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
-            </div>
+          <div style={{ fontSize: 12, color: t.textSub, lineHeight: 1.5 }}>
+            학생은 학번(5자리 숫자) + 이름 + 비밀번호를 입력해야 로그인됩니다.
           </div>
         </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Admin: Teachers ─────────────────────────────────────────────────────────
-function Teachers({ users, currentUid, onChangeRole }) {
-  return (
-    <div>
-      <h2 style={{ fontSize: 18, fontWeight: 650, color: t.text, letterSpacing: "-0.02em", marginBottom: 20 }}>교사 관리</h2>
-      <div style={{ borderRadius: t.radius, background: t.surface, border: `1px solid ${t.border}`, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ borderBottom: `1px solid ${t.border}` }}>
-              {["이름", "이메일", "권한", ""].map(h => (
-                <th key={h} style={{ padding: "10px 16px", fontSize: 12, fontWeight: 500, color: t.text3, textAlign: "left", background: t.bg }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u, i) => (
-              <tr key={u.uid}
-                style={{ borderBottom: i < users.length - 1 ? `1px solid ${t.border}` : "none", transition: "background 0.1s" }}
-                onMouseOver={e => e.currentTarget.style.background = t.surfaceHover}
-                onMouseOut={e => e.currentTarget.style.background = "transparent"}
-              >
-                <td style={{ padding: "11px 16px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{
-                      width: 28, height: 28, borderRadius: 7, background: t.bg, border: `1px solid ${t.border}`,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 12, fontWeight: 600, color: t.text2,
-                    }}>{(u.name || u.email || "?")[0]}</div>
-                    <span style={{ fontSize: 13, fontWeight: 550, color: t.text }}>{u.name || "-"}</span>
-                  </div>
-                </td>
-                <td style={{ padding: "11px 16px", fontSize: 13, color: t.text2 }}>{u.email}</td>
-                <td style={{ padding: "11px 16px", fontSize: 13, color: t.text2 }}>
-                  <select
-                    value={u.role}
-                    disabled={u.uid === currentUid}
-                    onChange={(e) => onChangeRole(u, e.target.value)}
-                    style={{
-                      padding: "5px 8px",
-                      borderRadius: 6,
-                      border: `1px solid ${t.border}`,
-                      background: "#fff",
-                      color: t.text2,
-                      fontSize: 12,
-                    }}
-                  >
-                    <option value="teacher">상담교사</option>
-                    <option value="admin">관리자</option>
-                  </select>
-                </td>
-                <td style={{ padding: "11px 16px" }}>
-                  {u.uid === currentUid ? <span style={{ fontSize: 12, color: t.text3 }}>본인 계정</span> : null}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
     </div>
   );
 }
 
-// ─── Teacher: Schedule List ──────────────────────────────────────────────────
-function ScheduleList({ schedules, myApps, onApply, onCancel }) {
-  const [viewMode, setViewMode] = useState("list");
-  const [isCompact, setIsCompact] = useState(() => window.innerWidth < 900);
-  const [processingIds, setProcessingIds] = useState([]);
-  const [studentViewDialog, setStudentViewDialog] = useState({ open: false, schedule: null, students: [], loading: false, error: "" });
-  const [monthCursor, setMonthCursor] = useState(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
-  });
-  const [selectedDay, setSelectedDay] = useState(null);
+function Field({ label, children, hint }) {
+  return (
+    <div style={{ display: "grid", gap: 4 }}>
+      <div style={{ fontSize: 12, color: t.textSub, fontWeight: 600 }}>{label}</div>
+      {children}
+      {hint ? <div style={{ fontSize: 11, color: t.textSub }}>{hint}</div> : null}
+    </div>
+  );
+}
+
+function Select({ value, onChange, children }) {
+  return (
+    <select value={value} onChange={onChange} style={{ ...inputBase, paddingRight: 28 }}>
+      {children}
+    </select>
+  );
+}
+
+function formatStudentLabel(student) {
+  if (!student) return "";
+  const key = student.studentNo || student.loginId || "-";
+  const name = student.name || "-";
+  return `${key} / ${name}`;
+}
+
+function getDefaultRoomName(rooms) {
+  const rows = Array.isArray(rooms) ? rooms : [];
+  const hasUndecided = rows.some((row) => String(row?.name || "").trim() === "미정");
+  if (hasUndecided) return "미정";
+  const first = rows.find((row) => String(row?.name || "").trim());
+  return first ? String(first.name).trim() : "미정";
+}
+
+function StudentSearchCombobox({
+  students,
+  value,
+  onChange,
+}) {
+  const wrapperRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const selected = students.find((s) => s.uid === value) || null;
 
   useEffect(() => {
-    const onResize = () => setIsCompact(window.innerWidth < 900);
+    setQuery(selected ? formatStudentLabel(selected) : "");
+  }, [selected?.uid, selected?.studentNo, selected?.name, selected?.loginId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onPointerDown = (event) => {
+      if (!wrapperRef.current) return;
+      if (wrapperRef.current.contains(event.target)) return;
+      setOpen(false);
+    };
+    window.addEventListener("mousedown", onPointerDown);
+    return () => window.removeEventListener("mousedown", onPointerDown);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const rows = [...students].sort((a, b) => {
+      const left = String(a.studentNo || a.loginId || "");
+      const right = String(b.studentNo || b.loginId || "");
+      return left.localeCompare(right, "ko");
+    });
+
+    if (!q) return rows.slice(0, 40);
+    return rows
+      .filter((row) => {
+        const no = String(row.studentNo || "").toLowerCase();
+        const id = String(row.loginId || "").toLowerCase();
+        const name = String(row.name || "").toLowerCase();
+        return no.includes(q) || id.includes(q) || name.includes(q);
+      })
+      .slice(0, 40);
+  }, [students, query]);
+
+  function handleSelect(student) {
+    onChange(student.uid);
+    setOpen(false);
+  }
+
+  function handleClear() {
+    onChange("");
+    setQuery("");
+    setOpen(false);
+  }
+
+  function handleKeyDown(event) {
+    if (event.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+
+    if (event.key === "Enter" && filtered.length > 0) {
+      event.preventDefault();
+      handleSelect(filtered[0]);
+    }
+  }
+
+  return (
+    <div ref={wrapperRef} style={{ position: "relative" }}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={handleKeyDown}
+          placeholder="학번 또는 이름으로 검색"
+          style={{ ...inputBase, flex: 1 }}
+        />
+        {value ? (
+          <button
+            onClick={handleClear}
+            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, padding: "0 10px" }}
+          >
+            해제
+          </button>
+        ) : null}
+      </div>
+
+      {selected ? (
+        <div style={{ marginTop: 5, fontSize: 11, color: t.accent }}>
+          선택됨: {formatStudentLabel(selected)}
+        </div>
+      ) : null}
+
+      {open ? (
+        <div
+          style={{
+            position: "absolute",
+            zIndex: 40,
+            top: selected ? 56 : 42,
+            left: 0,
+            right: 0,
+            border: `1px solid ${t.border}`,
+            borderRadius: 10,
+            background: "#fff",
+            boxShadow: "0 14px 26px rgba(9, 30, 66, 0.14)",
+            maxHeight: 260,
+            overflow: "auto",
+          }}
+        >
+          {filtered.length === 0 ? (
+            <div style={{ padding: "10px 12px", fontSize: 12, color: t.textSub }}>
+              검색 결과가 없습니다.
+            </div>
+          ) : (
+            filtered.map((student) => {
+              const isSelected = value === student.uid;
+              return (
+                <button
+                  key={student.uid}
+                  onClick={() => handleSelect(student)}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    border: "none",
+                    borderBottom: `1px solid ${t.border}`,
+                    background: isSelected ? "#edf4ff" : "#fff",
+                    padding: "9px 11px",
+                    cursor: "pointer",
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 700, color: isSelected ? t.accent : t.text }}>
+                    {student.studentNo || student.loginId || "-"} / {student.name || "-"}
+                  </div>
+                  <div style={{ fontSize: 11, color: t.textSub }}>
+                    아이디: {student.loginId || "-"}
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function StatusBadge({ status }) {
+  const current = badgeStyle[status] || badgeStyle.waiting_round;
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        borderRadius: 999,
+        padding: "3px 8px",
+        fontSize: 12,
+        fontWeight: 700,
+        background: current.bg,
+        color: current.color,
+      }}
+    >
+      {current.label}
+    </span>
+  );
+}
+
+function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
+  const [isMobile, setIsMobile] = useState(
+    () => (typeof window !== "undefined" ? window.innerWidth < 980 : false),
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onResize = () => setIsMobile(window.innerWidth < 980);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const handleApply = async (s) => {
-    if (myApps.find(a => a.id === s.id)) return;
-    setProcessingIds((prev) => [...prev, s.id]);
-    try {
-      await onApply(s.id);
-    } finally {
-      setProcessingIds((prev) => prev.filter((id) => id !== s.id));
-    }
+  const navByRole = {
+    admin: [
+      { key: "clubs", label: "동아리 관리" },
+      { key: "round", label: "라운드 운영" },
+      { key: "users", label: "회원 관리" },
+      { key: "profile", label: "내 정보" },
+    ],
+    teacher: [
+      { key: "myClubs", label: "내 동아리" },
+      { key: "clubOverview", label: "동아리개설현황" },
+      { key: "profile", label: "내 정보" },
+    ],
+    student: isStudentLeader
+      ? [
+        { key: "apply", label: "동아리 신청" },
+        { key: "my", label: "신청 현황" },
+        { key: "clubOverview", label: "동아리개설현황" },
+        { key: "clubs", label: "동아리 수정(동아리장)" },
+        { key: "profile", label: "내 정보" },
+      ]
+      : [
+        { key: "apply", label: "동아리 신청" },
+        { key: "my", label: "신청 현황" },
+        { key: "clubOverview", label: "동아리개설현황" },
+        { key: "profile", label: "내 정보" },
+      ],
   };
 
-  const handleCancel = async (s) => {
-    setProcessingIds((prev) => [...prev, s.id]);
-    try {
-      await onCancel(s.id);
-    } finally {
-      setProcessingIds((prev) => prev.filter((id) => id !== s.id));
-    }
-  };
-
-  const handleViewStudents = async (schedule) => {
-    setStudentViewDialog({ open: true, schedule, students: [], loading: true, error: "" });
-    try {
-      const students = await listStudentsBySchedule(schedule.id);
-      setStudentViewDialog({ open: true, schedule, students, loading: false, error: "" });
-    } catch (e) {
-      setStudentViewDialog({ open: true, schedule, students: [], loading: false, error: e instanceof Error ? e.message : "학생 목록을 불러오지 못했습니다." });
-    }
-  };
-
-  const recruitable = schedules.filter((s) => Number(s.applied || 0) < Number(s.needed || 0));
-  const reserveOpen = schedules.filter((s) => {
-    const applied = Number(s.applied || 0);
-    const needed = Number(s.needed || 0);
-    const total = getCapacity(s.needed, s.waitlist);
-    return applied >= needed && applied < total;
-  });
-  const full = schedules.filter((s) => Number(s.applied || 0) >= getCapacity(s.needed, s.waitlist));
-  const allSchedules = [...recruitable, ...reserveOpen, ...full];
-
-  const parseDate = (value) => {
-    if (!value) return null;
-    const [y, m, d] = String(value).split("-").map(Number);
-    if (!y || !m || !d) return null;
-    return new Date(y, m - 1, d);
-  };
-
-  const toKey = (date) => {
-    const yyyy = date.getFullYear();
-    const mm = String(date.getMonth() + 1).padStart(2, "0");
-    const dd = String(date.getDate()).padStart(2, "0");
-    return `${yyyy}-${mm}-${dd}`;
-  };
-
-  const dayMap = allSchedules.reduce((acc, item) => {
-    const dt = parseDate(item.date);
-    if (!dt) return acc;
-    const key = toKey(dt);
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(item);
-    return acc;
-  }, {});
-
-  const monthLabel = `${monthCursor.getFullYear()}년 ${monthCursor.getMonth() + 1}월`;
-  const startWeekday = new Date(monthCursor.getFullYear(), monthCursor.getMonth(), 1).getDay();
-  const totalDays = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 0).getDate();
-  const calendarCells = [];
-
-  for (let i = 0; i < startWeekday; i += 1) {
-    calendarCells.push({ type: "blank", key: `b-${i}` });
-  }
-  for (let day = 1; day <= totalDays; day += 1) {
-    const dateObj = new Date(monthCursor.getFullYear(), monthCursor.getMonth(), day);
-    const key = toKey(dateObj);
-    calendarCells.push({ type: "day", key, day, items: dayMap[key] || [] });
-  }
-
-  const selectedItems = selectedDay ? (dayMap[selectedDay] || []) : [];
-
-  const Card = ({ s }) => {
-    const applied = myApps.find(a => a.id === s.id);
-    const isProcessing = processingIds.includes(s.id);
-    const status = getStatus(s.applied, s.needed, s.waitlist);
-    const totalCapacity = Math.max(1, getCapacity(s.needed, s.waitlist));
-    const mainCapacity = Number(s.needed || 0);
-    const appliedCount = Number(s.applied || 0);
-    const isClosedForNew = status === "done" && !applied;
-    const remainMain = Math.max(0, mainCapacity - appliedCount);
-    const remainReserve = Math.max(0, totalCapacity - appliedCount);
-    const progressColor = status === "done" ? t.green : status === "reserve" ? t.amber : t.accent;
-    const actionLabel = isProcessing
-      ? "처리중..."
-      : applied
-        ? "지원 취소"
-        : status === "reserve"
-          ? "예비지원"
-          : status === "done"
-            ? "모집 마감"
-            : "지원하기";
-    return (
-      <div style={{
-        padding: "18px 20px", borderRadius: t.radius, background: t.surface,
-        border: `1px solid ${applied ? t.green + "30" : t.border}`,
-        opacity: isClosedForNew ? 0.72 : 1, transition: "all 0.15s",
-      }}
-      onMouseOver={e => { if (!isClosedForNew) { e.currentTarget.style.borderColor = t.borderDark; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.04)"; }}}
-      onMouseOut={e => { e.currentTarget.style.borderColor = applied ? t.green + "30" : t.border; e.currentTarget.style.boxShadow = "none"; }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 12 }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: t.text, marginBottom: 3 }}>{s.school}</div>
-            <div style={{ fontSize: 12, color: t.text3, display: "flex", alignItems: "center", gap: 3 }}>{I.pin} {s.region}</div>
-          </div>
-          <Badge type={status} />
-        </div>
-
-        <div style={{ display: "flex", gap: 16, marginBottom: 14, fontSize: 13, color: t.text2 }}>
-          <span style={{ display: "flex", alignItems: "center", gap: 4 }}>{I.calendar} {s.date}</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 4 }}>{I.clock} {s.time}</span>
-          {s.studentCount > 0 && (
-            <button onClick={(e) => { e.stopPropagation(); handleViewStudents(s); }} style={{
-              display: "flex", alignItems: "center", gap: 4,
-              background: "none", border: "none", cursor: "pointer",
-              fontSize: 12, fontWeight: 550, color: t.accent, padding: 0,
-            }}
-            onMouseOver={(e) => e.currentTarget.style.textDecoration = "underline"}
-            onMouseOut={(e) => e.currentTarget.style.textDecoration = "none"}
-            >{I.users} 상담학생 {s.studentCount}명</button>
-          )}
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 60, height: 4, borderRadius: 2, background: t.bg, overflow: "hidden" }}>
-              <div style={{ width: `${Math.min(100, (appliedCount / totalCapacity) * 100)}%`, height: "100%", borderRadius: 2, background: progressColor, transition: "width 0.3s" }} />
-            </div>
-            <span style={{ fontSize: 12, color: t.text3 }}>
-              {status === "done" ? "정원 마감" : status === "reserve" ? `예비 ${remainReserve}명 남음` : `${remainMain}명 남음`}
-            </span>
-            <span style={{ fontSize: 12, color: t.text3 }}>{appliedCount}/{formatCapacity(s.needed, s.waitlist)}</span>
-          </div>
-          <button onClick={() => (applied ? handleCancel(s) : handleApply(s))} disabled={isProcessing || isClosedForNew} style={{
-            padding: "7px 16px", borderRadius: 7, fontSize: 13, fontWeight: 500,
-            background: applied ? "#fff6f4" : isClosedForNew ? t.bg : t.accent,
-            color: applied ? "#9b3a2a" : isClosedForNew ? t.text3 : "#fff",
-            border: applied ? "1px solid #f2c9c0" : isClosedForNew ? `1px solid ${t.border}` : "none",
-            cursor: (isProcessing || isClosedForNew) ? "default" : "pointer", transition: "all 0.15s",
-            opacity: isProcessing ? 0.7 : 1,
-          }}
-          onMouseOver={e => { if (!applied && !isProcessing && !isClosedForNew) e.currentTarget.style.background = t.accentHover; }}
-          onMouseOut={e => { if (!applied && !isProcessing && !isClosedForNew) e.currentTarget.style.background = t.accent; }}
-          >{actionLabel}</button>
-        </div>
-      </div>
-    );
-  };
+  const nav = navByRole[user?.role] || navByRole.student;
 
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 650, color: t.text, letterSpacing: "-0.02em" }}>상담 일정</h2>
-        <div style={{ display: "inline-flex", padding: 3, borderRadius: 8, border: `1px solid ${t.border}`, background: t.surface }}>
-          {[
-            { id: "list", label: "리스트" },
-            { id: "calendar", label: "캘린더" },
-          ].map((m) => (
-            <button
-              key={m.id}
-              onClick={() => setViewMode(m.id)}
-              style={{
-                border: "none",
-                cursor: "pointer",
-                fontSize: 12,
-                fontWeight: 600,
-                padding: "6px 10px",
-                borderRadius: 6,
-                color: viewMode === m.id ? "#fff" : t.text2,
-                background: viewMode === m.id ? t.accent : "transparent",
-              }}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {viewMode === "list" && (
-        <>
-          {recruitable.length > 0 && (
-            <>
-              <div style={{ fontSize: 12, fontWeight: 500, color: t.text3, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.03em" }}>
-                모집중 · {recruitable.length}건
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: isCompact ? "1fr" : "repeat(2, 1fr)", gap: 12, marginBottom: 28 }}>
-                {recruitable.map(s => <Card key={s.id} s={s} />)}
-              </div>
-            </>
-          )}
-
-          {reserveOpen.length > 0 && (
-            <>
-              <div style={{ fontSize: 12, fontWeight: 500, color: t.text3, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.03em" }}>
-                예비 접수 · {reserveOpen.length}건
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: isCompact ? "1fr" : "repeat(2, 1fr)", gap: 12, marginBottom: 28 }}>
-                {reserveOpen.map(s => <Card key={s.id} s={s} />)}
-              </div>
-            </>
-          )}
-
-          {full.length > 0 && (
-            <>
-              <div style={{ fontSize: 12, fontWeight: 500, color: t.text3, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.03em" }}>
-                마감 · {full.length}건
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: isCompact ? "1fr" : "repeat(2, 1fr)", gap: 12 }}>
-                {full.map(s => <Card key={s.id} s={s} />)}
-              </div>
-            </>
-          )}
-        </>
-      )}
-
-      {viewMode === "calendar" && (
-        <div style={{ borderRadius: t.radius, border: `1px solid ${t.border}`, background: t.surface, overflow: "hidden" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", borderBottom: `1px solid ${t.border}` }}>
-            <button
-              onClick={() => setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() - 1, 1))}
-              style={{ border: "none", background: "transparent", cursor: "pointer", color: t.text2, fontSize: 14 }}
-            >
-              {"<"}
-            </button>
-            <div style={{ fontSize: 14, fontWeight: 650, color: t.text }}>{monthLabel}</div>
-            <button
-              onClick={() => setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 1))}
-              style={{ border: "none", background: "transparent", cursor: "pointer", color: t.text2, fontSize: 14 }}
-            >
-              {">"}
-            </button>
+    <div style={page}>
+      <div style={{ maxWidth: 1400, margin: "0 auto", padding: 16, display: "grid", gap: 12 }}>
+        <header style={{ ...cardStyle, padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 800 }}>강원 설악고등학교 신청 통합 시스템</div>
+            <div style={{ fontSize: 12, color: t.textSub }}>
+              {roleLabel(user?.role)} · {user?.name || "-"} ({user?.loginId || "-"})
+            </div>
           </div>
+          <button
+            onClick={onSignOut}
+            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
+          >
+            로그아웃
+          </button>
+        </header>
 
-          <div style={{ overflowX: "auto" }}>
-            <div style={{ minWidth: isCompact ? 680 : "auto" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", borderBottom: `1px solid ${t.border}` }}>
-                {["일", "월", "화", "수", "목", "금", "토"].map((dayName) => (
-                  <div key={dayName} style={{ padding: "8px 6px", fontSize: 12, color: t.text3, textAlign: "center", background: t.bg }}>
-                    {dayName}
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))" }}>
-                {calendarCells.map((cell) => {
-                  if (cell.type === "blank") {
-                    return <div key={cell.key} style={{ minHeight: isCompact ? 72 : 88, borderRight: `1px solid ${t.border}`, borderBottom: `1px solid ${t.border}`, background: "#fcfbfa" }} />;
-                  }
-
-                  const isSelected = selectedDay === cell.key;
+        {isMobile ? (
+          <div style={{ display: "grid", gap: 12 }}>
+            <nav style={{ ...cardStyle, padding: 8 }}>
+              <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>
+                {nav.map((item) => {
+                  const active = tab === item.key;
                   return (
                     <button
-                      key={cell.key}
-                      onClick={() => setSelectedDay(cell.key)}
+                      key={item.key}
+                      onClick={() => setTab(item.key)}
                       style={{
-                        minHeight: isCompact ? 72 : 88,
-                        border: "none",
-                        borderRight: `1px solid ${t.border}`,
-                        borderBottom: `1px solid ${t.border}`,
-                        background: isSelected ? "#fff5f1" : "#fff",
-                        textAlign: "left",
-                        padding: isCompact ? "5px" : "6px",
-                        cursor: "pointer",
+                        ...buttonBase,
+                        whiteSpace: "nowrap",
+                        background: active ? t.accent : "#fff",
+                        color: active ? "#fff" : t.text,
+                        border: `1px solid ${active ? t.accent : t.border}`,
+                        fontWeight: 700,
                       }}
                     >
-                      <div style={{ fontSize: isCompact ? 11 : 12, fontWeight: 600, color: t.text2, marginBottom: 4 }}>{cell.day}</div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                        {cell.items.slice(0, isCompact ? 1 : 2).map((s) => (
-                          (() => {
-                            const status = getStatus(s.applied, s.needed, s.waitlist);
-                            const styleByStatus = status === "done"
-                              ? { color: t.green, background: t.greenSoft, border: `1px solid ${t.green}30` }
-                              : status === "reserve"
-                                ? { color: t.amber, background: t.amberSoft, border: `1px solid ${t.amber}30` }
-                                : { color: t.accent, background: t.accentSoft, border: `1px solid ${t.accent}30` };
-                            return (
-                              <span
-                                key={s.id}
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  fontSize: 10,
-                                  borderRadius: 999,
-                                  padding: "2px 6px",
-                                  maxWidth: "100%",
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                  ...styleByStatus,
-                                }}
-                              >
-                                {s.school} · {s.applied}/{formatCapacity(s.needed, s.waitlist)}
-                              </span>
-                            );
-                          })()
-                        ))}
-                        {cell.items.length > (isCompact ? 1 : 2) && (
-                          <span style={{ fontSize: 10, color: t.text3 }}>+{cell.items.length - (isCompact ? 1 : 2)}건</span>
-                        )}
-                      </div>
+                      {item.label}
                     </button>
                   );
                 })}
               </div>
-            </div>
+            </nav>
+            <main style={{ display: "grid", gap: 12 }}>{children}</main>
           </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 12 }}>
+            <aside style={{ ...cardStyle, height: "fit-content", padding: 10 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                {nav.map((item) => {
+                  const active = tab === item.key;
+                  return (
+                    <button
+                      key={item.key}
+                      onClick={() => setTab(item.key)}
+                      style={{
+                        ...buttonBase,
+                        textAlign: "left",
+                        background: active ? t.accent : "transparent",
+                        color: active ? "#fff" : t.text,
+                        border: `1px solid ${active ? t.accent : "transparent"}`,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </aside>
 
-          <div style={{ padding: "14px", borderTop: `1px solid ${t.border}` }}>
-            <div style={{ fontSize: 12, color: t.text3, marginBottom: 10 }}>
-              {selectedDay ? `${selectedDay} 일정 ${selectedItems.length}건` : "날짜를 선택하면 일정 상세가 표시됩니다."}
-            </div>
-            {selectedDay && selectedItems.length === 0 && (
-              <div style={{ fontSize: 13, color: t.text3 }}>선택한 날짜에 등록된 일정이 없습니다.</div>
-            )}
-            {selectedItems.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: isCompact ? "1fr" : "repeat(2, 1fr)", gap: 12 }}>
-                {selectedItems.map((s) => (
-                  <Card key={s.id} s={s} />
-                ))}
-              </div>
-            )}
+            <main style={{ display: "grid", gap: 12 }}>{children}</main>
           </div>
-        </div>
-      )}
-      {/* ── Student View Dialog (read-only for teachers) ── */}
-      {studentViewDialog.open && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)",
-          zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
-        }}
-        onClick={() => setStudentViewDialog({ open: false, schedule: null, students: [], loading: false, error: "" })}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "100%", maxWidth: 700, maxHeight: "80vh",
-              borderRadius: 12, background: t.surface,
-              border: `1px solid ${t.border}`,
-              boxShadow: "0 18px 50px rgba(0,0,0,0.15)",
-              overflow: "hidden", display: "flex", flexDirection: "column",
-            }}
-          >
-            <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "14px 16px", borderBottom: `1px solid ${t.border}`, flexShrink: 0,
-            }}>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 650, color: t.text }}>상담 대상 학생</div>
-                <div style={{ fontSize: 12, color: t.text3, marginTop: 3 }}>
-                  {studentViewDialog.schedule?.school || "-"} · {studentViewDialog.schedule?.date || "-"} {studentViewDialog.schedule?.time || ""}
-                </div>
-              </div>
-              <button
-                onClick={() => setStudentViewDialog({ open: false, schedule: null, students: [], loading: false, error: "" })}
-                style={{
-                  padding: "4px 8px", borderRadius: 6, border: `1px solid ${t.border}`,
-                  background: "transparent", color: t.text2, cursor: "pointer", fontSize: 12,
-                }}
-              >닫기</button>
-            </div>
-            <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
-              {studentViewDialog.loading && (
-                <div style={{ fontSize: 13, color: t.text3 }}>학생 정보를 불러오는 중...</div>
-              )}
-              {!studentViewDialog.loading && studentViewDialog.error && (
-                <div style={{ fontSize: 13, color: "#8b3124" }}>{studentViewDialog.error}</div>
-              )}
-              {!studentViewDialog.loading && !studentViewDialog.error && studentViewDialog.students.length === 0 && (
-                <div style={{ fontSize: 13, color: t.text3, textAlign: "center", padding: "24px 0" }}>등록된 상담 학생이 없습니다.</div>
-              )}
-              {!studentViewDialog.loading && !studentViewDialog.error && studentViewDialog.students.length > 0 && (
-                <>
-                  <div style={{ fontSize: 12, color: t.text3, marginBottom: 8 }}>총 {studentViewDialog.students.length}명</div>
-                  <div style={{ borderRadius: 10, overflow: "hidden", border: `1px solid ${t.border}` }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ background: t.bg, borderBottom: `1px solid ${t.border}` }}>
-                          {["학년", "반", "번호", "이름", "성별", "참고사항"].map((h) => (
-                            <th key={h} style={{ padding: "10px 12px", fontSize: 12, color: t.text3, textAlign: "left", fontWeight: 550 }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {studentViewDialog.students.map((st, idx) => (
-                          <tr key={st.id} style={{ borderBottom: idx < studentViewDialog.students.length - 1 ? `1px solid ${t.border}` : "none" }}>
-                            <td style={{ padding: "10px 12px", fontSize: 13, color: t.text }}>{st.grade}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 13, color: t.text }}>{st.classNum}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 13, color: t.text }}>{st.number}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 13, fontWeight: 550, color: t.text }}>{st.name}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 13, color: t.text2 }}>{st.gender}</td>
-                            <td style={{ padding: "10px 12px", fontSize: 13, color: t.text2 }}>{st.notes || "-"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
-// ─── Teacher: My Applications ────────────────────────────────────────────────
-function MyApps({ myApps, onCancel }) {
-  return (
-    <div>
-      <h2 style={{ fontSize: 18, fontWeight: 650, color: t.text, letterSpacing: "-0.02em", marginBottom: 20 }}>내 지원현황</h2>
+function ClubForm({
+  actor,
+  users,
+  roomOptions,
+  editingId,
+  form,
+  setForm,
+  onSubmit,
+  onReset,
+  submitting,
+  canCreate,
+}) {
+  const teachers = users.filter((u) => u.role === "teacher" || u.role === "admin");
+  const students = users.filter((u) => u.role === "student");
+  const isAdmin = actor?.role === "admin";
+  const selectedTeacher = teachers.find((u) => u.uid === form.teacherUid);
+  const teacherDisplay = selectedTeacher
+    ? `${selectedTeacher.name} (${selectedTeacher.loginId})`
+    : (form.teacherUid || "미지정");
+  const normalizedRoomOptions = useMemo(() => {
+    const map = new Map();
+    (roomOptions || []).forEach((row) => {
+      const name = String(row?.name || "").trim();
+      if (!name) return;
+      map.set(name, { id: row?.id || name, name });
+    });
+    if (!map.has("미정")) {
+      map.set("미정", { id: "system-undecided", name: "미정" });
+    }
+    const currentRoom = String(form?.room || "").trim();
+    if (currentRoom && !map.has(currentRoom)) {
+      map.set(currentRoom, { id: `legacy-room-${currentRoom}`, name: currentRoom });
+    }
+    return [...map.values()].sort((a, b) => {
+      if (a.name === "미정") return -1;
+      if (b.name === "미정") return 1;
+      return a.name.localeCompare(b.name, "ko");
+    });
+  }, [roomOptions, form?.room]);
 
-      {myApps.length === 0 ? (
-        <div style={{
-          padding: "48px 0", borderRadius: t.radius, textAlign: "center",
-          background: t.surface, border: `1px solid ${t.border}`,
-        }}>
-          <div style={{ color: t.text3, marginBottom: 8, display: "flex", justifyContent: "center" }}>{I.file}</div>
-          <p style={{ fontSize: 14, fontWeight: 500, color: t.text2, marginBottom: 4 }}>아직 지원한 일정이 없습니다</p>
-          <p style={{ fontSize: 13, color: t.text3 }}>상담 일정 탭에서 지원할 수 있습니다.</p>
+  return (
+    <section style={cardStyle}>
+      <h2 style={{ fontSize: 17, marginBottom: 12 }}>{editingId ? "동아리 수정" : "동아리 개설"}</h2>
+
+      <div style={{ display: "grid", gap: 10 }}>
+        {!canCreate && !editingId ? (
+          <div style={{ ...cardStyle, background: "#fff8e1", borderColor: "#f3dfb9", padding: 10, fontSize: 12, color: t.warn }}>
+            동아리장은 신규 동아리 생성 권한이 없습니다. 목록에서 본인 동아리를 선택해 수정만 가능합니다.
+          </div>
+        ) : null}
+
+        <Field label="동아리명">
+          <input
+            value={form.clubName}
+            onChange={(e) => setForm((prev) => ({ ...prev, clubName: e.target.value }))}
+            style={inputBase}
+            placeholder="예: 미디어콘텐츠 동아리"
+          />
+        </Field>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Field label="담당교사 연결">
+            {isAdmin ? (
+              <Select
+                value={form.teacherUid}
+                onChange={(e) => setForm((prev) => ({ ...prev, teacherUid: e.target.value }))}
+              >
+                <option value="">담당교사 선택</option>
+                {teachers.map((u) => (
+                  <option key={u.uid} value={u.uid}>
+                    {u.name} ({u.loginId})
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <input
+                style={{ ...inputBase, background: t.muted }}
+                readOnly
+                value={teacherDisplay}
+              />
+            )}
+          </Field>
+
+          <Field label="동아리장 학번(학생계정 연결)">
+            <StudentSearchCombobox
+              students={students}
+              value={form.leaderUid}
+              onChange={(nextUid) => setForm((prev) => ({ ...prev, leaderUid: nextUid }))}
+            />
+          </Field>
         </div>
-      ) : (
-        <div style={{ borderRadius: t.radius, background: t.surface, border: `1px solid ${t.border}`, overflow: "hidden" }}>
-          {myApps.map((s, i) => (
-            <div key={s.id} style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "14px 20px",
-              borderBottom: i < myApps.length - 1 ? `1px solid ${t.border}` : "none",
-              transition: "background 0.1s",
-            }}
-            onMouseOver={e => e.currentTarget.style.background = t.surfaceHover}
-            onMouseOut={e => e.currentTarget.style.background = "transparent"}
-            >
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 550, color: t.text, marginBottom: 2 }}>{s.school}</div>
-                <div style={{ fontSize: 12, color: t.text3, display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>{I.pin} {s.region}</span>
-                  <span>{s.date}</span>
-                  <span>{s.time}</span>
-                  {s.studentCount > 0 && (
-                    <span style={{ color: t.accent, fontWeight: 550 }}>학생 {s.studentCount}명</span>
-                  )}
-                </div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{
-                  padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 500,
-                  background: t.greenSoft, color: t.green, border: `1px solid ${t.green}20`,
-                }}>지원완료</span>
-                <button
-                  onClick={() => onCancel(s.id)}
+
+        <Field label="대상학년(중복선택)">
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {[1, 2, 3].map((grade) => {
+              const checked = form.targetGrades.includes(grade);
+              return (
+                <label
+                  key={grade}
                   style={{
-                    padding: "4px 10px",
-                    borderRadius: 6,
-                    fontSize: 12,
-                    fontWeight: 500,
-                    color: "#9b3a2a",
-                    background: "#fff6f4",
-                    border: "1px solid #f2c9c0",
-                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    border: `1px solid ${checked ? t.accent : t.border}`,
+                    background: checked ? "#edf4ff" : "#fff",
+                    borderRadius: 999,
+                    padding: "6px 10px",
+                    fontSize: 13,
                   }}
                 >
-                  지원 취소
-                </button>
-              </div>
-            </div>
-          ))}
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {
+                      setForm((prev) => {
+                        const exists = prev.targetGrades.includes(grade);
+                        const next = exists
+                          ? prev.targetGrades.filter((g) => g !== grade)
+                          : [...prev.targetGrades, grade];
+                        return { ...prev, targetGrades: next.sort((a, b) => a - b) };
+                      });
+                    }}
+                  />
+                  {grade}학년
+                </label>
+              );
+            })}
+          </div>
+        </Field>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Field label="동아리실" hint="관리자가 등록한 목록에서 선택합니다. 공란은 미정으로 처리됩니다.">
+            <Select
+              value={form.room || "미정"}
+              onChange={(e) => setForm((prev) => ({ ...prev, room: e.target.value }))}
+            >
+              {normalizedRoomOptions.map((room) => (
+                <option key={room.id} value={room.name}>
+                  {room.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          <Field label="동아리 최대인원">
+            <input
+              type="number"
+              min={1}
+              value={form.maxMembers}
+              onChange={(e) => setForm((prev) => ({ ...prev, maxMembers: e.target.value }))}
+              style={inputBase}
+            />
+          </Field>
         </div>
-      )}
-    </div>
-  );
-}
 
-// ─── Profile ─────────────────────────────────────────────────────────────────
-function ProfilePage({ user, onSave }) {
-  const [form, setForm] = useState({
-    school: user?.school || "",
-    name: user?.name || "",
-    phone: user?.phone || "",
-    subject: user?.subject || "",
-  });
-  const [saving, setSaving] = useState(false);
+        <Field label="동아리 소개(장문)">
+          <textarea
+            value={form.description}
+            onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+            style={{ ...inputBase, minHeight: 110, resize: "vertical" }}
+            placeholder="동아리 활동 목적, 운영 방식, 기대 효과 등을 입력"
+          />
+        </Field>
 
-  useEffect(() => {
-    setForm({
-      school: user?.school || "",
-      name: user?.name || "",
-      phone: user?.phone || "",
-      subject: user?.subject || "",
-    });
-  }, [user?.name, user?.school, user?.phone, user?.subject]);
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
+          <input
+            type="checkbox"
+            checked={form.isInterviewSelection}
+            onChange={(e) => setForm((prev) => ({ ...prev, isInterviewSelection: e.target.checked }))}
+          />
+          자체면접 선발 여부 (O=체크 / X=해제)
+        </label>
 
-  const inp = {
-    width: "100%", padding: "9px 12px", borderRadius: 8, background: "#fff",
-    border: `1px solid ${t.border}`, color: t.text, fontSize: 13,
-    outline: "none", fontFamily: t.font,
-  };
-
-  return (
-    <div>
-      <h2 style={{ fontSize: 18, fontWeight: 650, color: t.text, letterSpacing: "-0.02em", marginBottom: 20 }}>내 정보</h2>
-      <div style={{ padding: 20, borderRadius: t.radius, background: t.surface, border: `1px solid ${t.border}` }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: t.text3, marginBottom: 4 }}>학교명</label>
-            <input value={form.school} onChange={(e) => setForm({ ...form, school: e.target.value })} placeholder="예: 설악고등학교" style={inp} />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: t.text3, marginBottom: 4 }}>성함</label>
-            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="성함" style={inp} />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: t.text3, marginBottom: 4 }}>과목</label>
-            <input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="예: 수학" style={inp} />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: t.text3, marginBottom: 4 }}>전화번호</label>
-            <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="예: 010-1234-5678" style={inp} />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: t.text3, marginBottom: 4 }}>역할</label>
-            <input value={roleLabel(user?.role || "teacher")} readOnly style={{ ...inp, background: t.bg, color: t.text3 }} />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: t.text3, marginBottom: 4 }}>이메일</label>
-            <input value={user?.email || ""} readOnly style={{ ...inp, background: t.bg, color: t.text3 }} />
-          </div>
-        </div>
-        <div style={{ marginTop: 14, fontSize: 12, color: t.text3 }}>
-          역할(role)은 관리자만 변경할 수 있습니다.
-        </div>
-        <div style={{ marginTop: 16 }}>
+        <div style={{ display: "flex", gap: 8 }}>
           <button
-            onClick={async () => {
-              setSaving(true);
-              try {
-                await onSave(form);
-              } finally {
-                setSaving(false);
-              }
-            }}
-            disabled={saving}
-            style={{
-              padding: "8px 14px", borderRadius: 8, border: "none",
-              background: t.accent, color: "#fff", cursor: saving ? "default" : "pointer",
-              fontSize: 13, fontWeight: 600,
-            }}
+            onClick={onSubmit}
+            disabled={submitting || (!canCreate && !editingId)}
+            style={{ ...buttonBase, background: t.accent, color: "#fff", fontWeight: 700 }}
           >
-            {saving ? "저장 중..." : "정보 저장"}
+            {submitting ? "저장 중..." : editingId ? "수정 저장" : canCreate ? "동아리 생성" : "신규 생성 불가"}
+          </button>
+          <button
+            onClick={onReset}
+            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+          >
+            닫기
           </button>
         </div>
       </div>
+    </section>
+  );
+}
+
+function ClubRoomManager({
+  rooms,
+  loading,
+  onAdd,
+  onDelete,
+  onRefresh,
+}) {
+  const [roomInput, setRoomInput] = useState("");
+  const rows = Array.isArray(rooms) ? rooms : [];
+
+  async function submitRoom() {
+    if (loading) return;
+    const ok = await onAdd(roomInput);
+    if (ok) setRoomInput("");
+  }
+
+  return (
+    <section style={cardStyle}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+        <h2 style={{ fontSize: 17 }}>동아리실 등록</h2>
+        <button
+          onClick={onRefresh}
+          disabled={loading}
+          style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+        >
+          새로고침
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            value={roomInput}
+            onChange={(e) => setRoomInput(e.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              submitRoom();
+            }}
+            style={{ ...inputBase, minWidth: 260, flex: 1 }}
+            placeholder="예: 2층 창의융합실 (비워도 등록 가능)"
+          />
+          <button
+            onClick={submitRoom}
+            disabled={loading}
+            style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700 }}
+          >
+            {loading ? "처리 중..." : "동아리실 등록"}
+          </button>
+        </div>
+        <div style={{ fontSize: 12, color: t.textSub }}>
+          입력값이 비어 있으면 <strong>미정</strong>으로 등록됩니다.
+        </div>
+      </div>
+
+      <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+        <div style={{ fontSize: 12, color: t.textSub }}>등록된 동아리실</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {rows.map((room) => {
+            const locked = room.name === "미정";
+            return (
+              <div
+                key={room.id}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  border: `1px solid ${locked ? "#f3dfb9" : t.border}`,
+                  background: locked ? "#fff8e1" : "#fff",
+                  borderRadius: 999,
+                  padding: "6px 10px",
+                }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 700, color: locked ? t.warn : t.text }}>
+                  {room.name}
+                </span>
+                <button
+                  onClick={() => onDelete(room)}
+                  disabled={loading || locked}
+                  style={{
+                    ...buttonBase,
+                    padding: "4px 7px",
+                    background: locked ? "transparent" : "#ffebee",
+                    color: locked ? t.textSub : t.danger,
+                    cursor: loading || locked ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {locked ? "고정" : "삭제"}
+                </button>
+              </div>
+            );
+          })}
+          {rows.length === 0 ? (
+            <div style={{ fontSize: 12, color: t.textSub }}>등록된 동아리실이 없습니다.</div>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ClubTable({
+  actor,
+  clubs,
+  userMap,
+  cycle,
+  roundStats,
+  canCreate,
+  onCreate,
+  onOpenDetail,
+  onEdit,
+  onDelete,
+  onOpenApplicants,
+  onOpenInterviewSelect,
+  showCapacity = true,
+  showRoundStatus = true,
+  showActions = true,
+}) {
+  const headers = ["동아리명", "담당교사", "동아리장", "대상학년", "동아리실"];
+  if (showCapacity) headers.push("정원");
+  headers.push("면접");
+  if (showRoundStatus) headers.push("라운드 현황");
+  if (showActions) headers.push("작업");
+
+  return (
+    <section style={cardStyle}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12 }}>
+        <h2 style={{ fontSize: 17 }}>동아리 목록</h2>
+        {canCreate ? (
+          <button
+            onClick={onCreate}
+            style={{ ...buttonBase, background: t.accent, color: "#fff", fontWeight: 700 }}
+          >
+            생성 (+)
+          </button>
+        ) : null}
+      </div>
+      <div style={{ fontSize: 12, color: t.textSub, marginBottom: 8 }}>
+        동아리명을 클릭하면 동아리 상세 내용을 확인할 수 있습니다.
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1060 }}>
+          <thead>
+            <tr>
+              {headers.map((head) => (
+                <th
+                  key={head}
+                  style={{
+                    textAlign: "left",
+                    borderBottom: `1px solid ${t.border}`,
+                    padding: "10px 8px",
+                    fontSize: 12,
+                    color: t.textSub,
+                  }}
+                >
+                  {head}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {clubs.map((club) => {
+              const teacher = userMap.get(club.teacherUid);
+              const leader = userMap.get(club.leaderUid);
+              const editable = canEditClub(club, actor);
+              const manageable = canManageSelection(club, actor);
+              const stats = roundStats[club.id] || { pendingCurrent: 0, approved: 0, total: 0 };
+
+              return (
+                <tr key={club.id}>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13, fontWeight: 700 }}>
+                    <button
+                      onClick={() => onOpenDetail(club)}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        padding: 0,
+                        margin: 0,
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color: t.accent,
+                        cursor: "pointer",
+                        textDecoration: "underline",
+                        textUnderlineOffset: 2,
+                      }}
+                    >
+                      {club.clubName}
+                    </button>
+                    {club.legacy ? <span style={{ marginLeft: 6, fontSize: 11, color: t.danger }}>[구형데이터]</span> : null}
+                  </td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
+                    {teacher ? `${teacher.name}(${teacher.loginId})` : club.teacherUid || "-"}
+                  </td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
+                    {leader ? `${leader.studentNo || leader.loginId} / ${leader.name}` : club.leaderUid || "미지정"}
+                  </td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
+                    {(club.targetGrades || []).map((g) => `${g}`).join(", ")}
+                  </td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>{club.room}</td>
+                  {showCapacity ? (
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
+                      {club.memberCount}/{club.maxMembers}
+                    </td>
+                  ) : null}
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
+                    {club.isInterviewSelection ? "O" : "X"}
+                  </td>
+                  {showRoundStatus ? (
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 12, color: t.textSub }}>
+                      {cycle?.status === "closed"
+                        ? "종료"
+                        : `${cycle?.currentRound || 1}R 대기 ${stats.pendingCurrent}명 / 승인 ${stats.approved}명`}
+                    </td>
+                  ) : null}
+                  {showActions ? (
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px" }}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {editable ? (
+                          <button
+                            onClick={() => onEdit(club)}
+                            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, padding: "6px 9px" }}
+                          >
+                            수정
+                          </button>
+                        ) : null}
+
+                        {manageable && !club.isInterviewSelection ? (
+                          <button
+                            onClick={() => onOpenApplicants(club)}
+                            style={{ ...buttonBase, background: "#edf4ff", color: t.accent, padding: "6px 9px", fontWeight: 700 }}
+                          >
+                            신청관리
+                          </button>
+                        ) : null}
+
+                        {manageable && club.isInterviewSelection ? (
+                          <button
+                            onClick={() => onOpenInterviewSelect(club)}
+                            style={{ ...buttonBase, background: "#fff3e0", color: t.warn, padding: "6px 9px", fontWeight: 700 }}
+                          >
+                            직접선발
+                          </button>
+                        ) : null}
+
+                        {(actor?.role === "admin" || actor?.loginId === "admin") ? (
+                          <button
+                            onClick={() => onDelete(club)}
+                            style={{ ...buttonBase, background: "#ffebee", color: t.danger, padding: "6px 9px", fontWeight: 700 }}
+                          >
+                            삭제
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
+                  ) : null}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function ClubFormDialog({
+  open,
+  title,
+  onClose,
+  children,
+}) {
+  if (!open) return null;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
+      <div style={{ maxWidth: 900, margin: "20px auto" }}>
+        <div style={{ ...cardStyle, marginBottom: 10, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <div style={{ fontSize: 15, fontWeight: 800 }}>{title}</div>
+          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}>
+            닫기
+          </button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }
 
-// ─── App ─────────────────────────────────────────────────────────────────────
-export default function App() {
-  const { user: authUser, isAuthenticated, isLoading, signInWithGoogle, signOut } = useAuth();
-  const [tab, setTab] = useState("dash");
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 900);
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [schedules, setSchedules] = useState([]);
-  const [myApps, setMyApps] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [profile, setProfile] = useState(null);
-  const [dataLoading, setDataLoading] = useState(true);
-  const [error, setError] = useState("");
+function ClubDetailDialog({
+  open,
+  club,
+  userMap,
+  onClose,
+}) {
+  if (!open || !club) return null;
 
-  const role = profile?.role || authUser?.role || "teacher";
+  const teacher = userMap.get(club.teacherUid);
+  const leader = userMap.get(club.leaderUid);
 
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 900);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
+      <div style={{ maxWidth: 900, margin: "20px auto", ...cardStyle }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+          <div style={{ fontSize: 18, fontWeight: 800 }}>{club.clubName}</div>
+          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>
+            닫기
+          </button>
+        </div>
 
-  useEffect(() => {
-    if (!isMobile) {
-      setMobileNavOpen(false);
-    }
-  }, [isMobile]);
-
-  const loadData = async () => {
-    if (!authUser?.uid) {
-      setSchedules([]);
-      setMyApps([]);
-      setUsers([]);
-      setProfile(null);
-      return;
-    }
-
-    const [scheduleData, myApplied, userRows, myProfile] = await Promise.all([
-      listSchedules(),
-      listAppliedSchedulesByTeacher(authUser.uid),
-      role === "admin" ? listUsers() : Promise.resolve([]),
-      getUserProfile(authUser.uid),
-    ]);
-
-    // Attach student counts to each schedule
-    const ids = scheduleData.map((s) => s.id);
-    const counts = ids.length > 0 ? await getStudentCountsBySchedules(ids) : {};
-    const schedulesWithCounts = scheduleData.map((s) => ({ ...s, studentCount: counts[s.id] || 0 }));
-
-    setSchedules(schedulesWithCounts);
-    setMyApps(myApplied.map((item) => item.schedule).filter(Boolean).map((s) => ({ ...s, studentCount: counts[s.id] || 0 })));
-    setUsers(userRows);
-    setProfile(myProfile);
-  };
-
-  useEffect(() => {
-    if (!isAuthenticated || !authUser?.uid) {
-      setDataLoading(false);
-      return;
-    }
-
-    let mounted = true;
-
-    async function hydrate() {
-      setDataLoading(true);
-      try {
-        await loadData();
-        if (!mounted) return;
-        setTab(role === "admin" ? "dash" : "list");
-        setError("");
-      } catch (e) {
-        if (!mounted) return;
-        setError(e instanceof Error ? e.message : "데이터를 불러오지 못했습니다.");
-      } finally {
-        if (mounted) setDataLoading(false);
-      }
-    }
-
-    hydrate();
-    return () => {
-      mounted = false;
-    };
-  }, [authUser?.uid, isAuthenticated, role]);
-
-  const handleAddSchedule = async (payload) => {
-    try {
-      await createSchedule(payload);
-      await loadData();
-      setError("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "일정 생성에 실패했습니다.");
-    }
-  };
-
-  const handleDeleteSchedule = async (scheduleId) => {
-    try {
-      await deleteSchedule(scheduleId);
-      await loadData();
-      setError("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "일정 삭제에 실패했습니다.");
-    }
-  };
-
-  const handleUpdateSchedule = async (scheduleId, payload) => {
-    try {
-      await updateSchedule(scheduleId, payload);
-      await loadData();
-      setError("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "일정 수정에 실패했습니다.");
-    }
-  };
-
-  const handleApplySchedule = async (scheduleId) => {
-    if (!authUser?.uid) return;
-    const target = schedules.find((item) => item.id === scheduleId);
-    if (!target) return;
-    if (myApps.find((item) => item.id === scheduleId)) return;
-
-    const previousSchedules = schedules;
-    const previousMyApps = myApps;
-    setMyApps((prev) => [...prev, target]);
-    setSchedules((prev) =>
-      prev.map((item) =>
-        item.id === scheduleId
-          ? { ...item, applied: Number(item.applied || 0) + 1 }
-          : item,
-      ),
-    );
-
-    try {
-      await applyToSchedule({
-        scheduleId,
-        teacherUid: authUser.uid,
-        teacherEmail: authUser.email,
-        teacherName: authUser.name,
-      });
-      await loadData();
-      setError("");
-    } catch (e) {
-      setSchedules(previousSchedules);
-      setMyApps(previousMyApps);
-      setError(e instanceof Error ? e.message : "일정 지원에 실패했습니다.");
-    }
-  };
-
-  const handleCancelApplication = async (scheduleId) => {
-    if (!authUser?.uid) return;
-    const previousSchedules = schedules;
-    const previousMyApps = myApps;
-    setMyApps((prev) => prev.filter((item) => item.id !== scheduleId));
-    setSchedules((prev) =>
-      prev.map((item) =>
-        item.id === scheduleId
-          ? { ...item, applied: Math.max(0, Number(item.applied || 0) - 1) }
-          : item,
-      ),
-    );
-
-    try {
-      await cancelApplication({
-        scheduleId,
-        teacherUid: authUser.uid,
-      });
-      await loadData();
-      setError("");
-    } catch (e) {
-      setSchedules(previousSchedules);
-      setMyApps(previousMyApps);
-      setError(e instanceof Error ? e.message : "지원 취소에 실패했습니다.");
-    }
-  };
-
-  const handleChangeUserRole = async (userRow, nextRole) => {
-    const currentRole = userRow.role || "teacher";
-    if (currentRole === nextRole) return;
-
-    const ok = window.confirm(
-      `권한을 변경하시겠습니까?\n\n대상: ${userRow.email}\n현재: ${currentRole}\n변경: ${nextRole}`
-    );
-
-    if (!ok) return;
-
-    try {
-      await updateUserRole(userRow.uid, nextRole);
-      await loadData();
-      setError("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "권한 변경에 실패했습니다.");
-    }
-  };
-
-  const handleSaveProfile = async (payload) => {
-    if (!authUser?.uid) return;
-    try {
-      await updateMyProfile(authUser.uid, payload);
-      await loadData();
-      setError("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "프로필 저장에 실패했습니다.");
-    }
-  };
-
-  const handleViewApplicants = async (scheduleId) => {
-    return listApplicationsBySchedule(scheduleId);
-  };
-
-  if (isLoading || dataLoading) {
-    return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: t.bg, color: t.text2, fontFamily: t.font }}>
-        데이터를 불러오는 중...
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "space-between",
-          background:
-            "radial-gradient(circle at 15% 20%, #fff3ec 0%, #f8f4ee 35%, #f4f1eb 100%)",
-          fontFamily: t.font,
-          padding: "24px 16px 20px",
-        }}
-      >
-        <div />
-
-        <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
-          <div
-            style={{
-              width: "100%",
-              maxWidth: 760,
-              borderRadius: 20,
-              border: `1px solid ${t.border}`,
-              background: "#ffffffcc",
-              backdropFilter: "blur(6px)",
-              boxShadow: "0 12px 34px rgba(111, 74, 38, 0.08)",
-              padding: "32px 28px",
-              textAlign: "center",
-            }}
-          >
-            <img
-              src="/logo.png"
-              alt="강원특별자치도 진학지원센터 로고"
-              style={{
-                width: 220,
-                maxWidth: "82%",
-                height: 64,
-                objectFit: "contain",
-                marginBottom: 12,
-              }}
-            />
-            <h1
-              style={{
-                margin: 0,
-                fontSize: 28,
-                lineHeight: 1.2,
-                fontWeight: 700,
-                color: t.text,
-                letterSpacing: "-0.02em",
-              }}
-            >
-              강원특별자치도 진학지원센터
-              <br />
-              상담교사 배정 시스템
-            </h1>
-            <p style={{ margin: "14px 0 24px", color: t.text2, fontSize: 14, lineHeight: 1.5 }}>
-              상담 일정 확인, 지원, 배정 관리를 위해
-              <br />
-              Google 계정으로 로그인해 주세요.
-            </p>
-            <button
-              onClick={async () => {
-                try {
-                  await signInWithGoogle();
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : "Google 로그인에 실패했습니다.");
-                }
-              }}
-              style={{
-                width: "100%",
-                maxWidth: 360,
-                border: "none",
-                borderRadius: 10,
-                background: t.accent,
-                color: "#fff",
-                fontSize: 14,
-                fontWeight: 650,
-                padding: "12px 14px",
-                cursor: "pointer",
-                boxShadow: "0 8px 16px rgba(194, 113, 79, 0.28)",
-              }}
-            >
-              Google 계정으로 로그인
-            </button>
-            {!!error && (
-              <div style={{ marginTop: 10, fontSize: 12, color: "#8b3124" }}>
-                {error}
-              </div>
-            )}
+        <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
+          <div style={{ fontSize: 13 }}>
+            <strong>담당교사:</strong> {teacher ? `${teacher.name} (${teacher.loginId})` : (club.teacherUid || "-")}
+          </div>
+          <div style={{ fontSize: 13 }}>
+            <strong>동아리장:</strong> {leader ? `${leader.studentNo || leader.loginId} / ${leader.name}` : (club.leaderUid || "미지정")}
+          </div>
+          <div style={{ fontSize: 13 }}>
+            <strong>대상학년:</strong> {(club.targetGrades || []).join(", ")}
+          </div>
+          <div style={{ fontSize: 13 }}>
+            <strong>동아리실:</strong> {club.room || "-"}
+          </div>
+          <div style={{ fontSize: 13 }}>
+            <strong>정원:</strong> {club.memberCount}/{club.maxMembers}
+          </div>
+          <div style={{ fontSize: 13 }}>
+            <strong>자체면접:</strong> {club.isInterviewSelection ? "O" : "X"}
           </div>
         </div>
 
-        <div style={{ textAlign: "center", color: t.text3, fontSize: 12, lineHeight: 1.5 }}>
-          로그인 후 좌측 메뉴에서 상담 일정 지원, 내 정보 수정, 지원 현황 확인이 가능합니다.
-          <br />
-          문의: 강원특별자치도 진학지원센터
-        </div>
-      </div>
-    );
-  }
-
-  const currentUser = { ...(authUser || {}), ...(profile || {}) };
-
-  return (
-    <div style={{ display: "flex", minHeight: "100vh", background: t.bg, fontFamily: t.font, color: t.text }}>
-      <style>{css}</style>
-      {isMobile && mobileNavOpen && (
-        <div
-          onClick={() => setMobileNavOpen(false)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.22)",
-            zIndex: 40,
-          }}
-        />
-      )}
-      <Sidebar
-        role={role}
-        user={currentUser}
-        tab={tab}
-        setTab={setTab}
-        isMobile={isMobile}
-        isOpen={mobileNavOpen}
-        onClose={() => setMobileNavOpen(false)}
-        onLogout={async () => { await signOut(); setMyApps([]); }}
-      />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: "100vh" }}>
-        <TopBar role={role} tab={tab} isMobile={isMobile} onToggleSidebar={() => setMobileNavOpen((prev) => !prev)} />
-        <div style={{ flex: 1, padding: isMobile ? "16px 12px" : "24px 28px", overflow: "auto", animation: "fadeIn 0.3s ease-out" }}>
-          <div style={{ width: "100%", maxWidth: 1200, margin: "0 auto" }}>
-            {!!error && (
-              <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 8, background: "#fff4f2", border: "1px solid #f1c3bc", color: "#8b3124", fontSize: 13 }}>
-                {error}
-              </div>
-            )}
-            {role === "admin" && tab === "dash" && <Dashboard schedules={schedules} />}
-            {role === "admin" && tab === "sched" && (
-              <Schedules
-                schedules={schedules}
-                onAddSchedule={handleAddSchedule}
-                onUpdateSchedule={handleUpdateSchedule}
-                onDeleteSchedule={handleDeleteSchedule}
-                onViewApplicants={handleViewApplicants}
-                onRefreshStudentCount={(scheduleId, count) => {
-                  setSchedules((prev) => prev.map((s) => s.id === scheduleId ? { ...s, studentCount: count } : s));
-                }}
-              />
-            )}
-            {role === "admin" && tab === "teach" && (
-              <Teachers users={users} currentUid={authUser.uid} onChangeRole={handleChangeUserRole} />
-            )}
-            {role === "teacher" && tab === "list" && (
-              <ScheduleList
-                schedules={schedules}
-                myApps={myApps}
-                onApply={handleApplySchedule}
-                onCancel={handleCancelApplication}
-              />
-            )}
-            {role === "teacher" && tab === "my" && <MyApps myApps={myApps} onCancel={handleCancelApplication} />}
-            {tab === "profile" && <ProfilePage user={currentUser} onSave={handleSaveProfile} />}
+        <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>동아리 소개</div>
+          <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.6, fontSize: 13, color: t.textSub }}>
+            {String(club.description || "").trim() || "소개가 아직 입력되지 않았습니다."}
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function ApplicantsDialog({
+  open,
+  loading,
+  club,
+  cycle,
+  rows,
+  onClose,
+  onApprove,
+  onReject,
+  onRandom,
+  randomLocked,
+}) {
+  if (!open) return null;
+
+  const currentRound = cycle?.currentRound || 1;
+  const pendingCurrent = rows.filter(
+    (row) => row.status === "pending" && Number(row.preferenceRank) === Number(currentRound),
+  ).length;
+  const randomDisabled = loading || pendingCurrent === 0 || randomLocked || cycle?.status === "closed";
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
+      <div style={{ maxWidth: 1180, margin: "20px auto", ...cardStyle }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>{club?.clubName} 신청 관리</div>
+            <div style={{ fontSize: 12, color: t.textSub }}>
+              현재 {currentRound}라운드 · 대기 {pendingCurrent}명
+            </div>
+          </div>
+          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>닫기</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <button
+            onClick={onRandom}
+            disabled={randomDisabled}
+            style={{
+              ...buttonBase,
+              background: randomDisabled ? "#cfd8e3" : "#fff3e0",
+              color: randomDisabled ? "#6b7280" : t.warn,
+              fontWeight: 700,
+            }}
+          >
+            무작위 선발 1회 실행
+          </button>
+          {randomLocked ? <span style={{ fontSize: 12, color: t.textSub }}>현재 라운드는 이미 무작위 선발을 실행했습니다.</span> : null}
+        </div>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+            <thead>
+              <tr>
+                {["학번", "이름", "지망", "상태", "진로희망", "신청사유", "활동계획", "결정", "작업"].map((head) => (
+                  <th
+                    key={head}
+                    style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
+                  >
+                    {head}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const canDecide = row.status === "pending" && cycle?.status === "open";
+                return (
+                  <tr key={row.id}>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.studentNo || "-"}</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.studentName || "-"}</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.preferenceRank}지망</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}><StatusBadge status={row.status} /></td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.careerGoal || "-"}</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.applyReason || "-"}</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.wantedActivity || "-"}</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, color: t.textSub }}>
+                      {row.rejectReason ? rejectReasonLabel(row.rejectReason) : "-"}
+                    </td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          onClick={() => onApprove(row)}
+                          disabled={!canDecide || loading}
+                          style={{
+                            ...buttonBase,
+                            padding: "5px 8px",
+                            background: canDecide && !loading ? "#e8f5e9" : "#cfd8e3",
+                            color: canDecide && !loading ? t.ok : "#6b7280",
+                            fontWeight: 700,
+                          }}
+                        >
+                          승인
+                        </button>
+                        <button
+                          onClick={() => onReject(row)}
+                          disabled={!canDecide || loading}
+                          style={{
+                            ...buttonBase,
+                            padding: "5px 8px",
+                            background: canDecide && !loading ? "#ffebee" : "#cfd8e3",
+                            color: canDecide && !loading ? t.danger : "#6b7280",
+                            fontWeight: 700,
+                          }}
+                        >
+                          반려
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={9} style={{ padding: 16, textAlign: "center", fontSize: 13, color: t.textSub }}>
+                    신청 데이터가 없습니다.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InterviewSelectDialog({
+  open,
+  club,
+  users,
+  members,
+  loading,
+  keyword,
+  setKeyword,
+  onClose,
+  onSelect,
+}) {
+  if (!open) return null;
+
+  const students = users.filter((u) => u.role === "student");
+  const memberIds = new Set(members.map((m) => m.studentUid));
+  const filtered = students
+    .filter((s) => !memberIds.has(s.uid))
+    .filter((s) => {
+      if (!keyword.trim()) return true;
+      const q = keyword.trim();
+      return (
+        String(s.studentNo || "").includes(q)
+        || String(s.name || "").includes(q)
+        || String(s.loginId || "").includes(q)
+      );
+    })
+    .slice(0, 80);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
+      <div style={{ maxWidth: 960, margin: "20px auto", ...cardStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>{club?.clubName} 직접 선발</div>
+            <div style={{ fontSize: 12, color: t.textSub }}>
+              자체면접 동아리는 학생 신청 없이 담당교사가 직접 선발합니다.
+            </div>
+          </div>
+          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>닫기</button>
+        </div>
+
+        <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ ...cardStyle, padding: 12, background: "#fafbfd" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+              현재 선발 인원: {club?.memberCount || 0}/{club?.maxMembers || 0}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {members.map((member) => (
+                <span
+                  key={member.id}
+                  style={{
+                    border: `1px solid ${t.border}`,
+                    borderRadius: 999,
+                    padding: "4px 8px",
+                    fontSize: 12,
+                    background: "#fff",
+                  }}
+                >
+                  {member.studentNo} / {member.name}
+                </span>
+              ))}
+              {members.length === 0 ? <span style={{ fontSize: 12, color: t.textSub }}>아직 선발된 학생이 없습니다.</span> : null}
+            </div>
+          </div>
+
+          <div>
+            <input
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              style={inputBase}
+              placeholder="학번 또는 이름으로 학생 검색"
+            />
+          </div>
+
+          <div style={{ maxHeight: 420, overflow: "auto", border: `1px solid ${t.border}`, borderRadius: 10 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {["학번", "이름", "아이디", "작업"].map((head) => (
+                    <th key={head} style={{ textAlign: "left", padding: "8px 10px", fontSize: 12, color: t.textSub, borderBottom: `1px solid ${t.border}` }}>{head}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((s) => (
+                  <tr key={s.uid}>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px", fontSize: 13 }}>{s.studentNo || "-"}</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px", fontSize: 13 }}>{s.name || "-"}</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px", fontSize: 13 }}>{s.loginId || "-"}</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px" }}>
+                      <button
+                        onClick={() => onSelect(s)}
+                        disabled={loading}
+                        style={{
+                          ...buttonBase,
+                          padding: "5px 8px",
+                          background: loading ? "#cfd8e3" : "#fff3e0",
+                          color: loading ? "#6b7280" : t.warn,
+                          fontWeight: 700,
+                        }}
+                      >
+                        선발
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} style={{ padding: 14, textAlign: "center", color: t.textSub, fontSize: 13 }}>
+                      검색 결과가 없습니다.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RoundPanel({ cycle, stats, loading, onRefresh, onAdvance, onCleanup }) {
+  const pendingTotal = Object.values(stats).reduce((sum, row) => sum + Number(row.pendingCurrent || 0), 0);
+
+  return (
+    <section style={cardStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ fontSize: 17 }}>라운드 순차 운영</h2>
+          <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
+            현재 상태: {cycle?.status === "closed" ? "종료" : "진행중"} · 현재 라운드: {cycle?.currentRound || 1}
+          </div>
+          <div style={{ fontSize: 12, color: t.textSub, marginTop: 2 }}>
+            현재 라운드 pending 합계: {pendingTotal}명
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+          >
+            새로고침
+          </button>
+          <button
+            onClick={onAdvance}
+            disabled={loading || cycle?.status === "closed" || pendingTotal > 0}
+            style={{
+              ...buttonBase,
+              background: loading || cycle?.status === "closed" || pendingTotal > 0 ? "#cfd8e3" : t.accent,
+              color: "#fff",
+              fontWeight: 700,
+            }}
+          >
+            다음 라운드 시작
+          </button>
+          <button
+            onClick={onCleanup}
+            disabled={loading}
+            style={{ ...buttonBase, background: "#ffebee", color: t.danger, fontWeight: 700 }}
+          >
+            기존 모집 데이터 전체 삭제
+          </button>
+        </div>
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
+          <thead>
+            <tr>
+              {["동아리", "현재라운드 대기", "총신청", "승인", "반려", "취소"].map((head) => (
+                <th key={head} style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}>{head}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {Object.values(stats).map((row) => (
+              <tr key={row.clubId}>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13, fontWeight: 700 }}>{row.clubName}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.pendingCurrent}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.total}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.approved}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.rejected}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.cancelled}</td>
+              </tr>
+            ))}
+            {Object.keys(stats).length === 0 ? (
+              <tr>
+                <td colSpan={6} style={{ padding: 14, textAlign: "center", color: t.textSub, fontSize: 13 }}>
+                  동아리 데이터가 없습니다.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function StudentApplyPanel({
+  user,
+  cycle,
+  clubs,
+  myApplications,
+  submitting,
+  onSubmit,
+}) {
+  const grade = inferStudentGrade(user?.studentNo || user?.loginId);
+  const submitted = myApplications.length > 0;
+
+  const available = clubs.filter((club) => {
+    if (club.legacy) return false;
+    if (club.isInterviewSelection) return false;
+    if (!club.leaderUid) return false;
+    if (!grade) return false;
+    return (club.targetGrades || []).includes(grade);
+  });
+
+  const interviewClubs = clubs.filter((club) => !club.legacy && club.isInterviewSelection);
+
+  const [rows, setRows] = useState([
+    { clubId: "", careerGoal: "", applyReason: "", wantedActivity: "" },
+    { clubId: "", careerGoal: "", applyReason: "", wantedActivity: "" },
+    { clubId: "", careerGoal: "", applyReason: "", wantedActivity: "" },
+  ]);
+
+  useEffect(() => {
+    if (!submitted) {
+      setRows([
+        { clubId: "", careerGoal: "", applyReason: "", wantedActivity: "" },
+        { clubId: "", careerGoal: "", applyReason: "", wantedActivity: "" },
+        { clubId: "", careerGoal: "", applyReason: "", wantedActivity: "" },
+      ]);
+    }
+  }, [submitted, user?.uid, cycle?.currentRound, cycle?.status]);
+
+  return (
+    <section style={cardStyle}>
+      <h2 style={{ fontSize: 17, marginBottom: 8 }}>학생 동아리 신청</h2>
+      <div style={{ fontSize: 12, color: t.textSub, marginBottom: 12 }}>
+        현재 사이클 상태: {cycle?.status === "closed" ? "종료" : "진행중"} · 현재 라운드 {cycle?.currentRound || 1}
+      </div>
+      <div style={{ fontSize: 12, color: t.textSub, marginBottom: 12 }}>
+        내 학년 추정: {grade ? `${grade}학년` : "학번 첫 자리로 학년 추정 불가"}
+      </div>
+
+      {submitted ? (
+        <div style={{ ...cardStyle, background: "#edf4ff", borderColor: "#c8dcff" }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>이미 1~3지망을 제출했습니다.</div>
+          <div style={{ fontSize: 12, color: t.textSub }}>정책상 재신청은 불가합니다.</div>
+        </div>
+      ) : null}
+
+      {!submitted && cycle?.status !== "open" ? (
+        <div style={{ ...cardStyle, background: "#ffebee", borderColor: "#f2b8be" }}>
+          <div style={{ fontWeight: 700, marginBottom: 4, color: t.danger }}>현재 모집 사이클이 종료되었습니다.</div>
+          <div style={{ fontSize: 12, color: t.textSub }}>관리자가 새 모집 사이클을 열기 전까지 신청할 수 없습니다.</div>
+        </div>
+      ) : null}
+
+      {!submitted && cycle?.status === "open" ? (
+        <div style={{ display: "grid", gap: 12 }}>
+          {[0, 1, 2].map((idx) => (
+            <div key={idx} style={{ ...cardStyle, background: "#fafbfd" }}>
+              <h3 style={{ fontSize: 14, marginBottom: 10 }}>{idx + 1}지망</h3>
+              <div style={{ display: "grid", gap: 8 }}>
+                <Field label="동아리 선택">
+                  <Select
+                    value={rows[idx].clubId}
+                    onChange={(e) => {
+                      const next = [...rows];
+                      next[idx] = { ...next[idx], clubId: e.target.value };
+                      setRows(next);
+                    }}
+                  >
+                    <option value="">선택 안함</option>
+                    {available.map((club) => (
+                      <option key={club.id} value={club.id}>
+                        {club.clubName} ({club.room})
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+
+                <Field label="진로희망">
+                  <input
+                    value={rows[idx].careerGoal}
+                    onChange={(e) => {
+                      const next = [...rows];
+                      next[idx] = { ...next[idx], careerGoal: e.target.value };
+                      setRows(next);
+                    }}
+                    style={inputBase}
+                    placeholder="예: 방송기획자"
+                  />
+                </Field>
+
+                <Field label="신청사유">
+                  <textarea
+                    value={rows[idx].applyReason}
+                    onChange={(e) => {
+                      const next = [...rows];
+                      next[idx] = { ...next[idx], applyReason: e.target.value };
+                      setRows(next);
+                    }}
+                    style={{ ...inputBase, minHeight: 70, resize: "vertical" }}
+                  />
+                </Field>
+
+                <Field label="원하는 활동">
+                  <textarea
+                    value={rows[idx].wantedActivity}
+                    onChange={(e) => {
+                      const next = [...rows];
+                      next[idx] = { ...next[idx], wantedActivity: e.target.value };
+                      setRows(next);
+                    }}
+                    style={{ ...inputBase, minHeight: 70, resize: "vertical" }}
+                  />
+                </Field>
+              </div>
+            </div>
+          ))}
+
+          <button
+            onClick={() => onSubmit(rows)}
+            disabled={submitting}
+            style={{
+              ...buttonBase,
+              background: submitting ? "#cfd8e3" : t.accent,
+              color: "#fff",
+              fontWeight: 700,
+              justifySelf: "start",
+            }}
+          >
+            {submitting ? "제출 중..." : "1~3지망 제출"}
+          </button>
+        </div>
+      ) : null}
+
+      <div style={{ marginTop: 14, ...cardStyle, background: "#fffaf0", borderColor: "#f3dfb9" }}>
+        <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>자체면접 동아리(학생 신청 불가)</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {interviewClubs.map((club) => (
+            <span key={club.id} style={{ border: "1px solid #f0d9a6", borderRadius: 999, padding: "4px 8px", fontSize: 12 }}>
+              {club.clubName}
+            </span>
+          ))}
+          {interviewClubs.length === 0 ? <span style={{ fontSize: 12, color: t.textSub }}>없음</span> : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function StudentMyPanel({ apps }) {
+  return (
+    <section style={cardStyle}>
+      <h2 style={{ fontSize: 17, marginBottom: 12 }}>내 신청 현황</h2>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 }}>
+          <thead>
+            <tr>
+              {["지망", "동아리", "상태", "반려사유", "진로희망", "신청사유", "활동계획", "수정일"].map((head) => (
+                <th key={head} style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}>
+                  {head}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {apps.map((row) => (
+              <tr key={row.id}>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.preferenceRank}지망</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.club?.clubName || row.clubId}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}><StatusBadge status={row.status} /></td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: t.textSub }}>{rejectReasonLabel(row.rejectReason) || "-"}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.careerGoal || "-"}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.applyReason || "-"}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.wantedActivity || "-"}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: t.textSub }}>{formatTime(row.updatedAt || row.createdAt)}</td>
+              </tr>
+            ))}
+            {apps.length === 0 ? (
+              <tr>
+                <td colSpan={8} style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
+                  신청 내역이 없습니다.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function UserManagementPanel({
+  currentUser,
+  users,
+  onRefresh,
+  onCreate,
+  onBulkUpload,
+  onDownloadTemplate,
+  onUpdate,
+  onDelete,
+  onResetPassword,
+  loading,
+}) {
+  const [search, setSearch] = useState("");
+  const [createForm, setCreateForm] = useState({
+    loginId: "",
+    password: "",
+    name: "",
+    role: "student",
+    studentNo: "",
+    subject: "",
+  });
+
+  const [editingUid, setEditingUid] = useState("");
+  const [editForm, setEditForm] = useState({
+    name: "",
+    role: "student",
+    studentNo: "",
+    subject: "",
+  });
+
+  const filtered = users.filter((u) => {
+    const q = search.trim();
+    if (!q) return true;
+    return (
+      String(u.loginId || "").includes(q)
+      || String(u.name || "").includes(q)
+      || String(u.studentNo || "").includes(q)
+      || String(u.role || "").includes(q)
+    );
+  });
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <section style={cardStyle}>
+        <h2 style={{ fontSize: 17, marginBottom: 10 }}>회원 계정 생성</h2>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 10 }}>
+            <Field label="아이디(교사명/학생학번)">
+              <input
+                style={inputBase}
+                value={createForm.loginId}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, loginId: e.target.value }))}
+              />
+            </Field>
+            <Field label="비밀번호">
+              <input
+                type="password"
+                style={inputBase}
+                value={createForm.password}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, password: e.target.value }))}
+              />
+            </Field>
+            <Field label="이름">
+              <input
+                style={inputBase}
+                value={createForm.name}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
+              />
+            </Field>
+            <Field label="역할">
+              <Select
+                value={createForm.role}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, role: e.target.value }))}
+              >
+                <option value="student">학생</option>
+                <option value="teacher">교사</option>
+                <option value="admin">관리자</option>
+              </Select>
+            </Field>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 10 }}>
+            <Field label="학번(학생만)">
+              <input
+                style={inputBase}
+                value={createForm.studentNo}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, studentNo: e.target.value }))}
+                placeholder="5자리 숫자"
+              />
+            </Field>
+            <Field label="과목(교사)">
+              <input
+                style={inputBase}
+                value={createForm.subject}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, subject: e.target.value }))}
+              />
+            </Field>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              onClick={() => onCreate(createForm)}
+              disabled={loading}
+              style={{ ...buttonBase, background: t.accent, color: "#fff", fontWeight: 700 }}
+            >
+              계정 생성
+            </button>
+            <button
+              onClick={onDownloadTemplate}
+              disabled={loading}
+              style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+            >
+              엑셀 템플릿 다운로드
+            </button>
+            <label style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}>
+              엑셀 일괄 등록
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onBulkUpload(file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <button
+              onClick={onRefresh}
+              disabled={loading}
+              style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+            >
+              새로고침
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section style={cardStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <h2 style={{ fontSize: 17 }}>회원 목록</h2>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ ...inputBase, width: 260 }}
+            placeholder="아이디/이름/학번 검색"
+          />
+        </div>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 }}>
+            <thead>
+              <tr>
+                {["아이디", "이름", "역할", "학번", "과목", "작업"].map((head) => (
+                  <th key={head} style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}>{head}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((row) => {
+                const editing = editingUid === row.uid;
+                return (
+                  <tr key={row.uid}>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.loginId}</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                      {editing ? (
+                        <input
+                          value={editForm.name}
+                          onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))}
+                          style={{ ...inputBase, padding: "6px 8px" }}
+                        />
+                      ) : (
+                        <span style={{ fontSize: 13 }}>{row.name || "-"}</span>
+                      )}
+                    </td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                      {editing ? (
+                        <Select
+                          value={editForm.role}
+                          onChange={(e) => setEditForm((prev) => ({ ...prev, role: e.target.value }))}
+                        >
+                          <option value="student">학생</option>
+                          <option value="teacher">교사</option>
+                          <option value="admin">관리자</option>
+                        </Select>
+                      ) : (
+                        <span style={{ fontSize: 13 }}>{roleLabel(row.role)}</span>
+                      )}
+                    </td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                      {editing ? (
+                        <input
+                          value={editForm.studentNo}
+                          onChange={(e) => setEditForm((prev) => ({ ...prev, studentNo: e.target.value }))}
+                          style={{ ...inputBase, padding: "6px 8px" }}
+                        />
+                      ) : (
+                        <span style={{ fontSize: 13 }}>{row.studentNo || "-"}</span>
+                      )}
+                    </td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                      {editing ? (
+                        <input
+                          value={editForm.subject}
+                          onChange={(e) => setEditForm((prev) => ({ ...prev, subject: e.target.value }))}
+                          style={{ ...inputBase, padding: "6px 8px" }}
+                        />
+                      ) : (
+                        <span style={{ fontSize: 13 }}>{row.subject || "-"}</span>
+                      )}
+                    </td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {editing ? (
+                          <>
+                            <button
+                              onClick={async () => {
+                                await onUpdate(row, editForm);
+                                setEditingUid("");
+                              }}
+                              style={{ ...buttonBase, padding: "5px 8px", background: "#e8f5e9", color: t.ok, fontWeight: 700 }}
+                            >
+                              저장
+                            </button>
+                            <button
+                              onClick={() => setEditingUid("")}
+                              style={{ ...buttonBase, padding: "5px 8px", background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+                            >
+                              취소
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setEditingUid(row.uid);
+                              setEditForm({
+                                name: row.name || "",
+                                role: row.role || "student",
+                                studentNo: row.studentNo || "",
+                                subject: row.subject || "",
+                              });
+                            }}
+                            style={{ ...buttonBase, padding: "5px 8px", background: "#fff", border: `1px solid ${t.border}` }}
+                          >
+                            수정
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => onResetPassword(row)}
+                          style={{ ...buttonBase, padding: "5px 8px", background: "#fff3e0", color: t.warn, fontWeight: 700 }}
+                        >
+                          비번초기화
+                        </button>
+
+                        <button
+                          onClick={() => onDelete(row)}
+                          disabled={row.uid === currentUser?.uid}
+                          style={{
+                            ...buttonBase,
+                            padding: "5px 8px",
+                            background: row.uid === currentUser?.uid ? "#cfd8e3" : "#ffebee",
+                            color: row.uid === currentUser?.uid ? "#6b7280" : t.danger,
+                            fontWeight: 700,
+                          }}
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
+                    사용자 데이터가 없습니다.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ProfilePanel({ user, onSave, onChangePassword, loading, passwordLoading }) {
+  const [form, setForm] = useState({
+    name: user?.name || "",
+    subject: user?.subject || "",
+  });
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    nextPassword: "",
+    confirmPassword: "",
+  });
+
+  useEffect(() => {
+    setForm({
+      name: user?.name || "",
+      subject: user?.subject || "",
+    });
+  }, [user?.uid, user?.name, user?.subject]);
+
+  return (
+    <section style={{ ...cardStyle, maxWidth: 600 }}>
+      <h2 style={{ fontSize: 17, marginBottom: 12 }}>내 정보</h2>
+
+      <div style={{ display: "grid", gap: 10 }}>
+        <Field label="아이디">
+          <input value={user?.loginId || ""} readOnly style={{ ...inputBase, background: t.muted }} />
+        </Field>
+
+        <Field label="역할">
+          <input value={roleLabel(user?.role)} readOnly style={{ ...inputBase, background: t.muted }} />
+        </Field>
+
+        {user?.role === "student" ? (
+          <Field label="학번">
+            <input value={user?.studentNo || ""} readOnly style={{ ...inputBase, background: t.muted }} />
+          </Field>
+        ) : null}
+
+        <Field label="이름">
+          <input
+            value={form.name}
+            onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+            style={inputBase}
+          />
+        </Field>
+
+        {(user?.role === "teacher" || user?.role === "admin") ? (
+          <Field label="과목">
+            <input
+              value={form.subject}
+              onChange={(e) => setForm((prev) => ({ ...prev, subject: e.target.value }))}
+              style={inputBase}
+            />
+          </Field>
+        ) : null}
+
+        <button
+          onClick={() => onSave(form)}
+          disabled={loading}
+          style={{
+            ...buttonBase,
+            background: loading ? "#cfd8e3" : t.accent,
+            color: "#fff",
+            fontWeight: 700,
+            justifySelf: "start",
+          }}
+        >
+          {loading ? "저장 중..." : "저장"}
+        </button>
+      </div>
+
+      <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${t.border}`, display: "grid", gap: 10 }}>
+        <h3 style={{ fontSize: 15 }}>비밀번호 변경</h3>
+        <div style={{ ...cardStyle, background: "#fff8e1", borderColor: "#f3dfb9", padding: "8px 10px", fontSize: 12, color: t.warn }}>
+          비밀번호는 암호화되어 저장됩니다. 분실 시 기존 비밀번호를 확인할 수 없어 비밀번호 초기화만 가능합니다.
+        </div>
+        <Field label="현재 비밀번호">
+          <input
+            type="password"
+            value={passwordForm.currentPassword}
+            onChange={(e) => setPasswordForm((prev) => ({ ...prev, currentPassword: e.target.value }))}
+            style={inputBase}
+          />
+        </Field>
+        <Field label="새 비밀번호" hint="6자 이상">
+          <input
+            type="password"
+            value={passwordForm.nextPassword}
+            onChange={(e) => setPasswordForm((prev) => ({ ...prev, nextPassword: e.target.value }))}
+            style={inputBase}
+          />
+        </Field>
+        <Field label="새 비밀번호 확인">
+          <input
+            type="password"
+            value={passwordForm.confirmPassword}
+            onChange={(e) => setPasswordForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
+            style={inputBase}
+          />
+        </Field>
+        <button
+          onClick={async () => {
+            const changed = await onChangePassword(
+              passwordForm.currentPassword,
+              passwordForm.nextPassword,
+              passwordForm.confirmPassword,
+            );
+            if (changed) {
+              setPasswordForm({
+                currentPassword: "",
+                nextPassword: "",
+                confirmPassword: "",
+              });
+            }
+          }}
+          disabled={passwordLoading}
+          style={{
+            ...buttonBase,
+            background: passwordLoading ? "#cfd8e3" : t.accent,
+            color: "#fff",
+            fontWeight: 700,
+            justifySelf: "start",
+          }}
+        >
+          {passwordLoading ? "변경 중..." : "비밀번호 변경"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function newClubForm(user, defaultRoom = "미정") {
+  return {
+    clubName: "",
+    teacherUid: user?.role === "teacher" ? user.uid : "",
+    leaderUid: "",
+    targetGrades: [1],
+    description: "",
+    room: defaultRoom || "미정",
+    maxMembers: 20,
+    isInterviewSelection: false,
+  };
+}
+
+export default function PrototypeApp() {
+  const {
+    user,
+    isAuthenticated,
+    isLoading,
+    lastSyncError,
+    signInWithCredentials,
+    signOut,
+  } = useAuth();
+
+  const [tab, setTab] = useState("clubs");
+  const [loading, setLoading] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [myPasswordLoading, setMyPasswordLoading] = useState(false);
+  const [loginError, setLoginError] = useState("");
+  const [message, setMessage] = useState({ type: "", text: "" });
+
+  const [clubs, setClubs] = useState([]);
+  const [clubRooms, setClubRooms] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [cycle, setCycle] = useState({ id: "current", currentRound: 1, status: "open" });
+  const [roundStats, setRoundStats] = useState({});
+  const [myApplications, setMyApplications] = useState([]);
+
+  const [clubForm, setClubForm] = useState(newClubForm(user));
+  const [editingClubId, setEditingClubId] = useState("");
+  const [savingClub, setSavingClub] = useState(false);
+  const [savingRoom, setSavingRoom] = useState(false);
+  const [clubFormDialogOpen, setClubFormDialogOpen] = useState(false);
+
+  const [applicantDialog, setApplicantDialog] = useState({
+    open: false,
+    club: null,
+    rows: [],
+    loading: false,
+  });
+  const [clubDetailDialog, setClubDetailDialog] = useState({
+    open: false,
+    club: null,
+  });
+
+  const [interviewDialog, setInterviewDialog] = useState({
+    open: false,
+    club: null,
+    members: [],
+    keyword: "",
+    loading: false,
+  });
+
+  const [studentSubmitLoading, setStudentSubmitLoading] = useState(false);
+
+  const userMap = useMemo(() => new Map(users.map((u) => [u.uid, u])), [users]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+    const nextTab = user.role === "admin"
+      ? "clubs"
+      : user.role === "teacher"
+        ? "myClubs"
+        : "apply";
+    setTab(nextTab);
+    setClubFormDialogOpen(false);
+    setClubForm(newClubForm(user));
+  }, [isAuthenticated, user?.uid, user?.role]);
+
+  async function refreshCycle() {
+    const current = await getCurrentRecruitmentCycle();
+    setCycle(current);
+    return current;
+  }
+
+  async function refreshClubs() {
+    const rows = await listSchedules();
+    setClubs(rows);
+    return rows;
+  }
+
+  async function refreshUsers() {
+    const rows = await listUsers();
+    setUsers(rows);
+    return rows;
+  }
+
+  async function refreshClubRooms() {
+    const rows = await listClubRooms();
+    setClubRooms(rows);
+    return rows;
+  }
+
+  async function refreshMyApplications() {
+    if (!user?.uid || user?.role !== "student") {
+      setMyApplications([]);
+      return [];
+    }
+    const rows = await listStudentApplications(user.uid);
+    setMyApplications(rows);
+    return rows;
+  }
+
+  async function refreshRoundStats(clubList = clubs, cycleInfo = cycle) {
+    const next = {};
+
+    await Promise.all(
+      clubList.map(async (club) => {
+        if (club.legacy) return;
+        const apps = await listApplicationsBySchedule(club.id);
+        next[club.id] = {
+          clubId: club.id,
+          clubName: club.clubName,
+          pendingCurrent: apps.filter(
+            (row) => row.status === "pending" && Number(row.preferenceRank) === Number(cycleInfo.currentRound || 1),
+          ).length,
+          total: apps.length,
+          approved: apps.filter((row) => row.status === "approved").length,
+          rejected: apps.filter((row) => row.status === "rejected").length,
+          cancelled: apps.filter((row) => row.status === "cancelled").length,
+        };
+      }),
+    );
+
+    setRoundStats(next);
+    return next;
+  }
+
+  async function loadAll() {
+    if (!isAuthenticated || !user) return;
+    setLoading(true);
+    try {
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      await Promise.all([refreshUsers(), refreshMyApplications(), refreshClubRooms()]);
+      await refreshRoundStats(clubRows, cycleInfo);
+      setMessage({ type: "", text: "" });
+    } catch (error) {
+      setMessage({ type: "error", text: error instanceof Error ? error.message : "데이터 로딩에 실패했습니다." });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+    loadAll();
+  }, [isAuthenticated, user?.uid, user?.role]);
+
+  useEffect(() => {
+    if (!lastSyncError) return;
+    setMessage({ type: "error", text: lastSyncError });
+  }, [lastSyncError]);
+
+  async function handleLogin({ loginId, password, tab: loginTab, studentName }) {
+    setLoginLoading(true);
+    setLoginError("");
+    try {
+      await signInWithCredentials(loginId, password, {
+        loginRole: loginTab,
+        studentName,
+      });
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "로그인 실패");
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  async function handleSignOut() {
+    await signOut();
+    setMessage({ type: "", text: "" });
+    setLoginError("");
+  }
+
+  function withMessageError(error, fallback) {
+    setMessage({
+      type: "error",
+      text: error instanceof Error ? error.message : fallback,
+    });
+  }
+
+  function resetClubForm() {
+    setEditingClubId("");
+    setClubForm(newClubForm(user, getDefaultRoomName(clubRooms)));
+  }
+
+  function closeClubFormDialog() {
+    setClubFormDialogOpen(false);
+    resetClubForm();
+  }
+
+  function openCreateClubDialog() {
+    resetClubForm();
+    setClubFormDialogOpen(true);
+  }
+
+  async function handleSaveClub() {
+    setSavingClub(true);
+    try {
+      const payload = {
+        clubName: String(clubForm.clubName || "").trim(),
+        teacherUid: String(clubForm.teacherUid || "").trim(),
+        leaderUid: String(clubForm.leaderUid || "").trim(),
+        targetGrades: Array.isArray(clubForm.targetGrades) ? clubForm.targetGrades : [],
+        description: String(clubForm.description || "").trim(),
+        room: String(clubForm.room || "").trim() || "미정",
+        maxMembers: Number(clubForm.maxMembers || 0),
+        isInterviewSelection: Boolean(clubForm.isInterviewSelection),
+      };
+
+      if (editingClubId) {
+        await updateSchedule(editingClubId, payload, { actor: user });
+        setMessage({ type: "ok", text: "동아리 정보를 수정했습니다." });
+      } else {
+        await createSchedule(payload, { actor: user });
+        setMessage({ type: "ok", text: "동아리를 생성했습니다." });
+      }
+
+      setClubFormDialogOpen(false);
+      resetClubForm();
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      await refreshRoundStats(clubRows, cycleInfo);
+    } catch (error) {
+      withMessageError(error, "동아리 저장에 실패했습니다.");
+    } finally {
+      setSavingClub(false);
+    }
+  }
+
+  function handleEditClub(club) {
+    setEditingClubId(club.id);
+    setClubForm({
+      clubName: club.clubName || "",
+      teacherUid: club.teacherUid || "",
+      leaderUid: club.leaderUid || "",
+      targetGrades: Array.isArray(club.targetGrades) && club.targetGrades.length > 0 ? [...club.targetGrades] : [1],
+      description: club.description || "",
+      room: club.room || getDefaultRoomName(clubRooms),
+      maxMembers: club.maxMembers || 1,
+      isInterviewSelection: Boolean(club.isInterviewSelection),
+    });
+    setClubFormDialogOpen(true);
+  }
+
+  async function handleCreateClubRoom(name) {
+    setSavingRoom(true);
+    try {
+      const normalized = String(name || "").trim() || "미정";
+      await createClubRoom(normalized, { actor: user });
+      await refreshClubRooms();
+      setMessage({ type: "ok", text: `동아리실을 등록했습니다. (${normalized})` });
+      return true;
+    } catch (error) {
+      withMessageError(error, "동아리실 등록에 실패했습니다.");
+      return false;
+    } finally {
+      setSavingRoom(false);
+    }
+  }
+
+  async function handleDeleteClubRoom(room) {
+    if (!room?.id) return false;
+    if (!window.confirm(`동아리실 '${room.name}'을 삭제하시겠습니까?`)) return false;
+    setSavingRoom(true);
+    try {
+      await deleteClubRoom(room.id, { actor: user });
+      await refreshClubRooms();
+      if (String(clubForm.room || "").trim() === String(room.name || "").trim()) {
+        setClubForm((prev) => ({ ...prev, room: "미정" }));
+      }
+      setMessage({ type: "ok", text: `동아리실을 삭제했습니다. (${room.name})` });
+      return true;
+    } catch (error) {
+      withMessageError(error, "동아리실 삭제에 실패했습니다.");
+      return false;
+    } finally {
+      setSavingRoom(false);
+    }
+  }
+
+  async function handleDeleteClub(club) {
+    if (!window.confirm(`동아리 '${club.clubName}'를 삭제하시겠습니까?`)) return;
+    try {
+      await deleteSchedule(club.id, { actor: user });
+      setMessage({ type: "ok", text: "동아리를 삭제했습니다." });
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      await refreshRoundStats(clubRows, cycleInfo);
+      if (editingClubId === club.id) {
+        closeClubFormDialog();
+      }
+    } catch (error) {
+      withMessageError(error, "동아리 삭제에 실패했습니다.");
+    }
+  }
+
+  function openClubDetail(club) {
+    setClubDetailDialog({ open: true, club });
+  }
+
+  function closeClubDetail() {
+    setClubDetailDialog({ open: false, club: null });
+  }
+
+  async function openApplicantDialog(club) {
+    setApplicantDialog({ open: true, club, rows: [], loading: true });
+    try {
+      const rows = await listApplicationsBySchedule(club.id);
+      setApplicantDialog({ open: true, club, rows, loading: false });
+    } catch (error) {
+      withMessageError(error, "신청 목록을 불러오지 못했습니다.");
+      setApplicantDialog({ open: false, club: null, rows: [], loading: false });
+    }
+  }
+
+  async function reloadApplicantDialog(club) {
+    if (!club) return;
+    setApplicantDialog((prev) => ({ ...prev, loading: true }));
+    try {
+      const [rows, clubsData, cycleInfo] = await Promise.all([
+        listApplicationsBySchedule(club.id),
+        refreshClubs(),
+        refreshCycle(),
+      ]);
+      await refreshRoundStats(clubsData, cycleInfo);
+
+      const latestClub = clubsData.find((item) => item.id === club.id) || club;
+      setApplicantDialog({ open: true, club: latestClub, rows, loading: false });
+    } catch (error) {
+      withMessageError(error, "신청 목록을 새로고침하지 못했습니다.");
+      setApplicantDialog((prev) => ({ ...prev, loading: false }));
+    }
+  }
+
+  async function handleApproveApplication(row) {
+    try {
+      await approveApplication({ applicationId: row.id, actor: user });
+      setMessage({ type: "ok", text: "승인 처리했습니다." });
+      await reloadApplicantDialog(applicantDialog.club);
+      await refreshMyApplications();
+    } catch (error) {
+      withMessageError(error, "승인 처리에 실패했습니다.");
+    }
+  }
+
+  async function handleRejectApplication(row) {
+    try {
+      await rejectApplication({ applicationId: row.id, actor: user, reason: "manual" });
+      setMessage({ type: "ok", text: "반려 처리했습니다." });
+      await reloadApplicantDialog(applicantDialog.club);
+      await refreshMyApplications();
+    } catch (error) {
+      withMessageError(error, "반려 처리에 실패했습니다.");
+    }
+  }
+
+  async function handleRandomSelection() {
+    try {
+      const result = await randomSelectPending({
+        clubId: applicantDialog.club?.id,
+        actor: user,
+      });
+      setMessage({
+        type: "ok",
+        text: `무작위 선발 완료: 승인 ${result.selected}명, 반려 ${result.rejected}명`,
+      });
+      await reloadApplicantDialog(applicantDialog.club);
+      await refreshMyApplications();
+    } catch (error) {
+      withMessageError(error, "무작위 선발에 실패했습니다.");
+    }
+  }
+
+  async function openInterviewDialog(club) {
+    setInterviewDialog({
+      open: true,
+      club,
+      members: [],
+      keyword: "",
+      loading: true,
+    });
+
+    try {
+      const members = await listClubMembers(club.id);
+      setInterviewDialog({
+        open: true,
+        club,
+        members,
+        keyword: "",
+        loading: false,
+      });
+    } catch (error) {
+      withMessageError(error, "동아리 구성원을 불러오지 못했습니다.");
+      setInterviewDialog({ open: false, club: null, members: [], keyword: "", loading: false });
+    }
+  }
+
+  async function reloadInterviewDialog(club) {
+    if (!club) return;
+    setInterviewDialog((prev) => ({ ...prev, loading: true }));
+    try {
+      const [members, clubsData, cycleInfo] = await Promise.all([
+        listClubMembers(club.id),
+        refreshClubs(),
+        refreshCycle(),
+      ]);
+      await refreshRoundStats(clubsData, cycleInfo);
+
+      const latestClub = clubsData.find((item) => item.id === club.id) || club;
+      setInterviewDialog((prev) => ({
+        ...prev,
+        open: true,
+        club: latestClub,
+        members,
+        loading: false,
+      }));
+    } catch (error) {
+      withMessageError(error, "선발 목록 갱신에 실패했습니다.");
+      setInterviewDialog((prev) => ({ ...prev, loading: false }));
+    }
+  }
+
+  async function handleDirectSelect(student) {
+    try {
+      await directSelectInterviewMember({
+        clubId: interviewDialog.club?.id,
+        studentUid: student.uid,
+        actor: user,
+      });
+      setMessage({ type: "ok", text: `${student.name} 학생을 선발했습니다.` });
+      await reloadInterviewDialog(interviewDialog.club);
+      await refreshMyApplications();
+    } catch (error) {
+      withMessageError(error, "직접 선발에 실패했습니다.");
+    }
+  }
+
+  async function handleAdvanceRound() {
+    try {
+      const next = await advanceRecruitmentRound({ actor: user });
+      setCycle(next);
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      await Promise.all([
+        refreshRoundStats(clubRows, cycleInfo),
+        refreshMyApplications(),
+      ]);
+      setMessage({ type: "ok", text: cycleInfo.status === "closed" ? "모집 사이클을 종료했습니다." : `${cycleInfo.currentRound}라운드로 전환했습니다.` });
+    } catch (error) {
+      withMessageError(error, "라운드 전환에 실패했습니다.");
+    }
+  }
+
+  async function handleCleanupRecruitment() {
+    const confirmed = window.confirm("기존 모집 데이터(동아리/신청/라운드)를 전부 삭제하고 초기화할까요?");
+    if (!confirmed) return;
+
+    try {
+      await purgeLegacyRecruitmentData({ actor: user });
+      setMessage({ type: "ok", text: "모집 데이터를 초기화했습니다." });
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      await Promise.all([
+        refreshRoundStats(clubRows, cycleInfo),
+        refreshMyApplications(),
+      ]);
+      if (applicantDialog.open) {
+        setApplicantDialog({ open: false, club: null, rows: [], loading: false });
+      }
+      if (interviewDialog.open) {
+        setInterviewDialog({ open: false, club: null, members: [], keyword: "", loading: false });
+      }
+    } catch (error) {
+      withMessageError(error, "모집 데이터 초기화에 실패했습니다.");
+    }
+  }
+
+  async function handleStudentPreferenceSubmit(rows) {
+    setStudentSubmitLoading(true);
+    try {
+      const normalized = [];
+      let firstEmptyAfterUsed = false;
+
+      for (let idx = 0; idx < rows.length; idx += 1) {
+        const row = rows[idx];
+        const hasAny = [row.clubId, row.careerGoal, row.applyReason, row.wantedActivity].some((value) => String(value || "").trim());
+
+        if (!hasAny) {
+          if (normalized.length > 0) {
+            firstEmptyAfterUsed = true;
+          }
+          continue;
+        }
+
+        if (firstEmptyAfterUsed) {
+          throw new Error("지망은 빈 칸 없이 1지망부터 순서대로 입력해주세요.");
+        }
+
+        const clubId = String(row.clubId || "").trim();
+        const careerGoal = String(row.careerGoal || "").trim();
+        const applyReason = String(row.applyReason || "").trim();
+        const wantedActivity = String(row.wantedActivity || "").trim();
+
+        if (!clubId || !careerGoal || !applyReason || !wantedActivity) {
+          throw new Error(`${idx + 1}지망 항목을 모두 입력해주세요.`);
+        }
+
+        normalized.push({ clubId, careerGoal, applyReason, wantedActivity });
+      }
+
+      if (normalized.length === 0) {
+        throw new Error("최소 1개 지망을 입력해주세요.");
+      }
+
+      await submitStudentPreferences({
+        studentUid: user.uid,
+        studentNo: user.studentNo || user.loginId,
+        studentName: user.name,
+        preferences: normalized,
+      });
+
+      setMessage({ type: "ok", text: "1~3지망 신청을 제출했습니다." });
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      await Promise.all([
+        refreshRoundStats(clubRows, cycleInfo),
+        refreshMyApplications(),
+      ]);
+    } catch (error) {
+      withMessageError(error, "신청 제출에 실패했습니다.");
+    } finally {
+      setStudentSubmitLoading(false);
+    }
+  }
+
+  async function handleCreateUser(form) {
+    try {
+      await createUserAccount({
+        loginId: String(form.loginId || "").trim(),
+        password: String(form.password || ""),
+        name: String(form.name || "").trim(),
+        role: String(form.role || "student").trim(),
+        studentNo: String(form.studentNo || "").trim(),
+        subject: String(form.subject || "").trim(),
+      });
+      setMessage({ type: "ok", text: "계정을 생성했습니다." });
+      await refreshUsers();
+    } catch (error) {
+      withMessageError(error, "계정 생성에 실패했습니다.");
+    }
+  }
+
+  async function handleBulkUserUpload(file) {
+    try {
+      const parsed = await parseUserAccountExcel(file);
+      if (parsed.length === 0) {
+        throw new Error("엑셀에서 유효한 계정 데이터를 찾지 못했습니다.");
+      }
+
+      const result = await createUsersBatch(parsed);
+      const failMessages = result.failed.slice(0, 5).map((item) => `${item.row}행 ${item.loginId}: ${item.reason}`);
+      const summary = [`생성 ${result.created.length}건`, `실패 ${result.failed.length}건`];
+      if (failMessages.length > 0) {
+        summary.push(failMessages.join(" / "));
+      }
+      setMessage({ type: result.failed.length > 0 ? "info" : "ok", text: summary.join(" · ") });
+      await refreshUsers();
+    } catch (error) {
+      withMessageError(error, "엑셀 일괄 등록에 실패했습니다.");
+    }
+  }
+
+  async function handleUpdateUser(row, patch) {
+    try {
+      await updateUserByAdmin(row.uid, {
+        name: patch.name,
+        role: patch.role,
+        studentNo: patch.studentNo,
+        subject: patch.subject,
+      });
+      setMessage({ type: "ok", text: "회원 정보를 수정했습니다." });
+      await refreshUsers();
+    } catch (error) {
+      withMessageError(error, "회원 수정에 실패했습니다.");
+    }
+  }
+
+  async function handleDeleteUser(row) {
+    if (!window.confirm(`${row.loginId} 계정을 삭제할까요?`)) return;
+
+    try {
+      await deleteUserByAdmin(row.uid);
+      setMessage({ type: "ok", text: "회원을 삭제했습니다." });
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      await refreshUsers();
+      await refreshRoundStats(clubRows, cycleInfo);
+    } catch (error) {
+      withMessageError(error, "회원 삭제에 실패했습니다.");
+    }
+  }
+
+  async function handleResetPassword(row) {
+    const nextPassword = window.prompt(`${row.loginId} 계정의 새 비밀번호를 입력하세요`, "123456");
+    if (!nextPassword) return;
+
+    try {
+      await resetUserPasswordByAdmin(row.uid, nextPassword);
+      setMessage({ type: "ok", text: `비밀번호를 초기화했습니다. (${row.loginId})` });
+    } catch (error) {
+      withMessageError(error, "비밀번호 초기화에 실패했습니다.");
+    }
+  }
+
+  async function handleSaveMyProfile(form) {
+    try {
+      await updateMyProfile(user.uid, form);
+      setMessage({ type: "ok", text: "내 정보를 저장했습니다. 다시 로그인하면 즉시 반영됩니다." });
+    } catch (error) {
+      withMessageError(error, "내 정보 저장에 실패했습니다.");
+    }
+  }
+
+  async function handleChangeMyPassword(currentPassword, nextPassword, confirmPassword) {
+    try {
+      if (!currentPassword || !nextPassword || !confirmPassword) {
+        throw new Error("현재/새/새 비밀번호 확인을 모두 입력해주세요.");
+      }
+      if (nextPassword !== confirmPassword) {
+        throw new Error("새 비밀번호 확인이 일치하지 않습니다.");
+      }
+
+      setMyPasswordLoading(true);
+      await updateMyPassword(user.uid, currentPassword, nextPassword);
+      setMessage({ type: "ok", text: "비밀번호를 변경했습니다." });
+      return true;
+    } catch (error) {
+      withMessageError(error, "비밀번호 변경에 실패했습니다.");
+      return false;
+    } finally {
+      setMyPasswordLoading(false);
+    }
+  }
+
+  const visibleClubs = clubs.filter((club) => !club.legacy);
+  const leaderEditableClubs = visibleClubs.filter((club) => canEditClub(club, user));
+  const teacherOwnedClubs = visibleClubs.filter((club) => String(club.teacherUid || "") === String(user?.uid || ""));
+  const isStudentLeader = user?.role === "student" && leaderEditableClubs.length > 0;
+  const clubsForManageTab = user?.role === "student" ? leaderEditableClubs : visibleClubs;
+  const canCreateClub = user?.role === "admin" || user?.role === "teacher" || user?.loginId === "admin";
+  const applicantRandomLocked = applicantDialog.club
+    ? Array.isArray(applicantDialog.club.randomDrawnRounds)
+      && applicantDialog.club.randomDrawnRounds.includes(cycle.currentRound)
+    : false;
+
+  useEffect(() => {
+    if (user?.role === "student" && tab === "clubs" && !isStudentLeader) {
+      setTab("apply");
+    }
+  }, [isStudentLeader, tab, user?.role]);
+
+  if (isLoading) {
+    return (
+      <div style={{ ...page, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ ...cardStyle, fontSize: 14, color: t.textSub }}>초기화 중...</div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated || !user) {
+    return <LoginPanel onLogin={handleLogin} loading={loginLoading} error={loginError} />;
+  }
+
+  return (
+    <Layout user={user} tab={tab} setTab={setTab} onSignOut={handleSignOut} isStudentLeader={isStudentLeader}>
+      <MessageBar message={message} onClose={() => setMessage({ type: "", text: "" })} />
+
+      {loading ? (
+        <section style={cardStyle}>
+          <div style={{ fontSize: 14, color: t.textSub }}>데이터를 불러오는 중...</div>
+        </section>
+      ) : null}
+
+      {tab === "clubs" ? (
+        (user.role === "admin" || isStudentLeader) ? (
+          <div style={{ display: "grid", gap: 12 }}>
+            {user.role === "admin" ? (
+              <ClubRoomManager
+                rooms={clubRooms}
+                loading={savingRoom}
+                onAdd={handleCreateClubRoom}
+                onDelete={handleDeleteClubRoom}
+                onRefresh={async () => {
+                  try {
+                    setSavingRoom(true);
+                    await refreshClubRooms();
+                    setMessage({ type: "ok", text: "동아리실 목록을 새로고침했습니다." });
+                  } catch (error) {
+                    withMessageError(error, "동아리실 목록 갱신에 실패했습니다.");
+                  } finally {
+                    setSavingRoom(false);
+                  }
+                }}
+              />
+            ) : null}
+
+            <ClubTable
+              actor={user}
+              clubs={clubsForManageTab}
+              userMap={userMap}
+              cycle={cycle}
+              roundStats={roundStats}
+              canCreate={canCreateClub}
+              onCreate={openCreateClubDialog}
+              onOpenDetail={openClubDetail}
+              onEdit={handleEditClub}
+              onDelete={handleDeleteClub}
+              onOpenApplicants={openApplicantDialog}
+              onOpenInterviewSelect={openInterviewDialog}
+            />
+          </div>
+        ) : null
+      ) : null}
+
+      {tab === "myClubs" && user.role === "teacher" ? (
+        <ClubTable
+          actor={user}
+          clubs={teacherOwnedClubs}
+          userMap={userMap}
+          cycle={cycle}
+          roundStats={roundStats}
+          canCreate={canCreateClub}
+          onCreate={openCreateClubDialog}
+          onOpenDetail={openClubDetail}
+          onEdit={handleEditClub}
+          onDelete={handleDeleteClub}
+          onOpenApplicants={openApplicantDialog}
+          onOpenInterviewSelect={openInterviewDialog}
+        />
+      ) : null}
+
+      {tab === "clubOverview" && (user.role === "teacher" || user.role === "student") ? (
+        <ClubTable
+          actor={user}
+          clubs={visibleClubs}
+          userMap={userMap}
+          cycle={cycle}
+          roundStats={roundStats}
+          canCreate={false}
+          onCreate={openCreateClubDialog}
+          onOpenDetail={openClubDetail}
+          onEdit={handleEditClub}
+          onDelete={handleDeleteClub}
+          onOpenApplicants={openApplicantDialog}
+          onOpenInterviewSelect={openInterviewDialog}
+          showCapacity={user.role !== "student"}
+          showRoundStatus={user.role !== "student"}
+          showActions={user.role !== "student"}
+        />
+      ) : null}
+
+      {tab === "round" && user.role === "admin" ? (
+        <RoundPanel
+          cycle={cycle}
+          stats={roundStats}
+          loading={loading}
+          onRefresh={async () => {
+            try {
+              const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+              await Promise.all([
+                refreshRoundStats(clubRows, cycleInfo),
+                refreshMyApplications(),
+              ]);
+              setMessage({ type: "ok", text: "라운드 정보를 새로고침했습니다." });
+            } catch (error) {
+              withMessageError(error, "라운드 정보 갱신에 실패했습니다.");
+            }
+          }}
+          onAdvance={handleAdvanceRound}
+          onCleanup={handleCleanupRecruitment}
+        />
+      ) : null}
+
+      {tab === "users" && user.role === "admin" ? (
+        <UserManagementPanel
+          currentUser={user}
+          users={users}
+          onRefresh={async () => {
+            try {
+              await refreshUsers();
+              setMessage({ type: "ok", text: "회원 목록을 새로고침했습니다." });
+            } catch (error) {
+              withMessageError(error, "회원 목록 갱신에 실패했습니다.");
+            }
+          }}
+          onCreate={handleCreateUser}
+          onBulkUpload={handleBulkUserUpload}
+          onDownloadTemplate={downloadUserAccountTemplate}
+          onUpdate={handleUpdateUser}
+          onDelete={handleDeleteUser}
+          onResetPassword={handleResetPassword}
+          loading={loading}
+        />
+      ) : null}
+
+      {tab === "apply" && user.role === "student" ? (
+        <StudentApplyPanel
+          user={user}
+          cycle={cycle}
+          clubs={visibleClubs}
+          myApplications={myApplications}
+          submitting={studentSubmitLoading}
+          onSubmit={handleStudentPreferenceSubmit}
+        />
+      ) : null}
+
+      {tab === "my" && user.role === "student" ? (
+        <StudentMyPanel apps={myApplications} />
+      ) : null}
+
+      {tab === "profile" ? (
+        <ProfilePanel
+          user={user}
+          onSave={handleSaveMyProfile}
+          onChangePassword={handleChangeMyPassword}
+          loading={loading}
+          passwordLoading={myPasswordLoading}
+        />
+      ) : null}
+
+      <ClubFormDialog
+        open={clubFormDialogOpen}
+        title={editingClubId ? "동아리 수정" : "동아리 개설"}
+        onClose={closeClubFormDialog}
+      >
+        <ClubForm
+          actor={user}
+          users={users}
+          roomOptions={clubRooms}
+          editingId={editingClubId}
+          form={clubForm}
+          setForm={setClubForm}
+          onSubmit={handleSaveClub}
+          onReset={closeClubFormDialog}
+          submitting={savingClub}
+          canCreate={canCreateClub}
+        />
+      </ClubFormDialog>
+
+      <ClubDetailDialog
+        open={clubDetailDialog.open}
+        club={clubDetailDialog.club}
+        userMap={userMap}
+        onClose={closeClubDetail}
+      />
+
+      <ApplicantsDialog
+        open={applicantDialog.open}
+        loading={applicantDialog.loading}
+        club={applicantDialog.club}
+        cycle={cycle}
+        rows={applicantDialog.rows}
+        onClose={() => setApplicantDialog({ open: false, club: null, rows: [], loading: false })}
+        onApprove={handleApproveApplication}
+        onReject={handleRejectApplication}
+        onRandom={handleRandomSelection}
+        randomLocked={applicantRandomLocked}
+      />
+
+      <InterviewSelectDialog
+        open={interviewDialog.open}
+        club={interviewDialog.club}
+        users={users}
+        members={interviewDialog.members}
+        loading={interviewDialog.loading}
+        keyword={interviewDialog.keyword}
+        setKeyword={(value) => setInterviewDialog((prev) => ({ ...prev, keyword: value }))}
+        onClose={() => setInterviewDialog({ open: false, club: null, members: [], keyword: "", loading: false })}
+        onSelect={handleDirectSelect}
+      />
+    </Layout>
   );
 }

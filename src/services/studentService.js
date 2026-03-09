@@ -10,7 +10,6 @@ import {
   serverTimestamp,
   writeBatch,
 } from 'firebase/firestore'
-import * as XLSX from 'xlsx'
 import { db, isFirebaseEnabled } from '../lib/firebase'
 import { mockStudents } from './mockData'
 
@@ -19,6 +18,16 @@ import { mockStudents } from './mockData'
 const localStore = new Map(
   Object.entries(mockStudents).map(([k, v]) => [k, v.map((s) => ({ ...s }))])
 )
+let xlsxModulePromise = null
+
+async function getXlsx() {
+  if (!xlsxModulePromise) {
+    xlsxModulePromise = import('xlsx')
+  }
+  const mod = await xlsxModulePromise
+  if (mod && mod.utils) return mod
+  return mod.default
+}
 
 function getLocalList(scheduleId) {
   if (!localStore.has(scheduleId)) localStore.set(scheduleId, [])
@@ -184,7 +193,8 @@ const HEADER_MAP = {
   '참고사항': 'notes',
 }
 
-export function downloadStudentTemplate() {
+export async function downloadStudentTemplate() {
+  const XLSX = await getXlsx()
   const exampleRow = ['3', '2', '15', '홍길동', '남', '']
   const ws = XLSX.utils.aoa_to_sheet([HEADERS, exampleRow])
   ws['!cols'] = [
@@ -197,40 +207,34 @@ export function downloadStudentTemplate() {
   ]
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, '학생목록')
-  XLSX.writeFile(wb, '상담학생_양식.xlsx')
+  XLSX.writeFile(wb, '동아리신청학생_양식.xlsx')
 }
 
-export function parseStudentExcel(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      try {
-        const data = new Uint8Array(e.target.result)
-        const wb = XLSX.read(data, { type: 'array' })
-        const ws = wb.Sheets[wb.SheetNames[0]]
-        const rows = XLSX.utils.sheet_to_json(ws, { defval: '' })
+export async function parseStudentExcel(file) {
+  try {
+    const XLSX = await getXlsx()
+    const buffer = await file.arrayBuffer()
+    const data = new Uint8Array(buffer)
+    const wb = XLSX.read(data, { type: 'array' })
+    const ws = wb.Sheets[wb.SheetNames[0]]
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' })
 
-        const students = rows
-          .map((row) => {
-            const mapped = {}
-            for (const [korKey, engKey] of Object.entries(HEADER_MAP)) {
-              mapped[engKey] = String(row[korKey] ?? '').trim()
-            }
-            return mapped
-          })
-          .filter((s) => s.name)
-
-        resolve(students)
-      } catch {
-        reject(new Error('엑셀 파일을 읽는 데 실패했습니다.'))
-      }
-    }
-    reader.onerror = () => reject(new Error('파일을 읽는 데 실패했습니다.'))
-    reader.readAsArrayBuffer(file)
-  })
+    return rows
+      .map((row) => {
+        const mapped = {}
+        for (const [korKey, engKey] of Object.entries(HEADER_MAP)) {
+          mapped[engKey] = String(row[korKey] ?? '').trim()
+        }
+        return mapped
+      })
+      .filter((s) => s.name)
+  } catch {
+    throw new Error('엑셀 파일을 읽는 데 실패했습니다.')
+  }
 }
 
-export function exportStudentsToExcel(students, scheduleName) {
+export async function exportStudentsToExcel(students, scheduleName) {
+  const XLSX = await getXlsx()
   const data = students.map((s) => [
     s.grade,
     s.classNum,
@@ -250,7 +254,7 @@ export function exportStudentsToExcel(students, scheduleName) {
   ]
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, '학생목록')
-  XLSX.writeFile(wb, `${scheduleName || '상담학생'}_목록.xlsx`)
+  XLSX.writeFile(wb, `${scheduleName || '동아리신청학생'}_목록.xlsx`)
 }
 
 export function resetStudentStore() {
