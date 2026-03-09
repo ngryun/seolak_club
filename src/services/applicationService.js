@@ -963,10 +963,13 @@ export async function listClubMembers(clubId) {
   return snapshot.docs.map((item) => normalizeMember(item.id, item.data()))
 }
 
-export async function directSelectInterviewMember(payload) {
+async function directAssignMemberInternal(payload, options = {}) {
   const clubId = String(payload?.clubId || '').trim()
   const studentUid = String(payload?.studentUid || '').trim()
   const user = assertActor(payload?.actor)
+  const source = String(options?.source || payload?.source || 'manual_assign').trim() || 'manual_assign'
+  const requireInterview = options?.requireInterview === true
+  const requireLeader = options?.requireLeader === true
 
   if (!clubId || !studentUid) {
     throw new Error('동아리와 학생을 선택해주세요.')
@@ -979,10 +982,10 @@ export async function directSelectInterviewMember(payload) {
   if (!club || club.legacy) {
     throw new Error('동아리 정보를 찾을 수 없습니다.')
   }
-  if (!club.isInterviewSelection) {
+  if (requireInterview && !club.isInterviewSelection) {
     throw new Error('자체면접 동아리에서만 직접 선발이 가능합니다.')
   }
-  if (!club.leaderUid) {
+  if (requireLeader && !club.leaderUid) {
     throw new Error('동아리장이 지정되지 않은 동아리는 직접 선발할 수 없습니다.')
   }
   if (!canManageSelection(club, user)) {
@@ -1015,38 +1018,69 @@ export async function directSelectInterviewMember(payload) {
   }
 
   if (!isFirebaseEnabled()) {
+    const now = nowIso()
     const members = getLocalMembers(club.id)
+    const targetApp = pickDirectAssignApplication(studentApps, cycle.id, club.id)
+    let applicationId = targetApp?.id || ''
+
+    localApplications = localApplications.map((row) => {
+      if (targetApp && row.id === targetApp.id) {
+        return {
+          ...row,
+          studentNo: student.studentNo,
+          studentName: student.name,
+          status: STATUS.APPROVED,
+          rejectReason: '',
+          decidedByUid: user.uid,
+          selectionSource: source,
+          decidedAt: now,
+          updatedAt: now,
+        }
+      }
+      if (
+        row.cycleId === cycle.id
+        && row.studentUid === studentUid
+        && row.id !== targetApp?.id
+        && (row.status === STATUS.PENDING || row.status === STATUS.WAITING)
+      ) {
+        return {
+          ...row,
+          status: STATUS.CANCELLED,
+          rejectReason: REJECT_REASON.HIGHER_CHOICE,
+          decidedByUid: user.uid,
+          updatedAt: now,
+        }
+      }
+      return row
+    })
+
+    if (!targetApp) {
+      const created = await createApprovedDirectApplication({
+        cycle,
+        club,
+        student,
+        actor: user,
+        source,
+      })
+      applicationId = created.id
+    }
+
     members.push({
       id: student.uid,
       studentUid: student.uid,
       studentNo: student.studentNo,
       name: student.name,
-      source: 'interview_manual',
-      applicationId: '',
+      source,
+      applicationId,
       addedByUid: user.uid,
-      addedAt: nowIso(),
+      addedAt: now,
     })
 
     await updateScheduleMemberCount(club.id, club.memberCount + 1)
-    await createApprovedInterviewApplication({
-      cycle,
-      club,
-      student,
-      actor: user,
-    })
-
-    const studentRows = localApplications.filter((row) => row.studentUid === studentUid)
-    const patches = studentRows
-      .filter((row) => row.cycleId === cycle.id && (row.status === STATUS.PENDING || row.status === STATUS.WAITING))
-      .map((row) => ({
-        id: row.id,
-        status: STATUS.CANCELLED,
-        rejectReason: REJECT_REASON.HIGHER_CHOICE,
-        decidedByUid: user.uid,
-      }))
-    await updateApplicationsStatusBulk(patches)
-    return
+    return { applicationId }
   }
+
+  let applicationId = ''
 
   await runTransaction(db, async (tx) => {
     const clubRef = doc(db, 'schedules', club.id)
@@ -1082,32 +1116,49 @@ export async function directSelectInterviewMember(payload) {
       throw new Error('해당 학생은 이미 다른 동아리에 배정되었습니다.')
     }
 
-    const interviewAppRef = doc(collection(db, APPLICATIONS))
-    tx.set(interviewAppRef, {
-      cycleId: cycle.id,
-      studentUid: student.uid,
-      studentNo: student.studentNo,
-      studentName: student.name,
-      clubId: club.id,
-      preferenceRank: 1,
-      careerGoal: '',
-      applyReason: '',
-      wantedActivity: '',
-      status: STATUS.APPROVED,
-      rejectReason: '',
-      decidedByUid: user.uid,
-      selectionSource: 'interview_manual',
-      decidedAt: serverTimestamp(),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    })
+    const targetApp = pickDirectAssignApplication(studentAppsLocal, cycle.id, club.id)
+    const assignedAppRef = targetApp
+      ? doc(db, APPLICATIONS, targetApp.id)
+      : doc(collection(db, APPLICATIONS))
+
+    if (targetApp) {
+      tx.update(assignedAppRef, {
+        studentNo: student.studentNo,
+        studentName: student.name,
+        status: STATUS.APPROVED,
+        rejectReason: '',
+        decidedByUid: user.uid,
+        selectionSource: source,
+        decidedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    } else {
+      tx.set(assignedAppRef, {
+        cycleId: cycle.id,
+        studentUid: student.uid,
+        studentNo: student.studentNo,
+        studentName: student.name,
+        clubId: club.id,
+        preferenceRank: 1,
+        careerGoal: '',
+        applyReason: '',
+        wantedActivity: '',
+        status: STATUS.APPROVED,
+        rejectReason: '',
+        decidedByUid: user.uid,
+        selectionSource: source,
+        decidedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    }
 
     tx.set(memberRef, {
       studentUid: student.uid,
       studentNo: student.studentNo,
       name: student.name,
-      source: 'interview_manual',
-      applicationId: interviewAppRef.id,
+      source,
+      applicationId: assignedAppRef.id,
       addedByUid: user.uid,
       addedAt: serverTimestamp(),
     })
@@ -1118,7 +1169,11 @@ export async function directSelectInterviewMember(payload) {
     })
 
     studentAppsLocal
-      .filter((row) => row.cycleId === cycle.id && (row.status === STATUS.PENDING || row.status === STATUS.WAITING))
+      .filter(
+        (row) => row.id !== assignedAppRef.id
+          && row.cycleId === cycle.id
+          && (row.status === STATUS.PENDING || row.status === STATUS.WAITING),
+      )
       .forEach((row) => {
         tx.update(doc(db, APPLICATIONS, row.id), {
           status: STATUS.CANCELLED,
@@ -1127,6 +1182,26 @@ export async function directSelectInterviewMember(payload) {
           updatedAt: serverTimestamp(),
         })
       })
+
+    applicationId = assignedAppRef.id
+  })
+
+  return { applicationId }
+}
+
+export async function directAssignStudentToClub(payload) {
+  return directAssignMemberInternal(payload, {
+    source: 'manual_assign',
+    requireInterview: false,
+    requireLeader: false,
+  })
+}
+
+export async function directSelectInterviewMember(payload) {
+  return directAssignMemberInternal(payload, {
+    source: 'interview_manual',
+    requireInterview: true,
+    requireLeader: true,
   })
 }
 

@@ -3,6 +3,7 @@ import { useAuth } from "../../hooks/useAuth";
 import {
   advanceRecruitmentRound,
   approveApplication,
+  directAssignStudentToClub,
   directSelectInterviewMember,
   getCurrentRecruitmentCycle,
   inferStudentGrade,
@@ -1120,12 +1121,35 @@ function ApplicantsDialog({
   club,
   cycle,
   rows,
+  users,
   onClose,
   onApprove,
   onReject,
   onRandom,
+  onManualAssign,
   randomLocked,
 }) {
+  const [manualStudentUid, setManualStudentUid] = useState("");
+
+  useEffect(() => {
+    setManualStudentUid("");
+  }, [open, club?.id]);
+
+  const students = useMemo(
+    () => {
+      const targets = Array.isArray(club?.targetGrades) ? club.targetGrades : [];
+      return (users || [])
+        .filter((row) => row.role === "student")
+        .filter((row) => {
+          if (targets.length === 0) return true;
+          const grade = inferStudentGrade(row.studentNo || row.loginId);
+          return grade ? targets.includes(grade) : false;
+        });
+    },
+    [users, club?.id, (club?.targetGrades || []).join(",")],
+  );
+  const manualDisabled = loading || cycle?.status !== "open" || !manualStudentUid;
+
   if (!open) return null;
 
   const currentRound = cycle?.currentRound || 1;
@@ -1161,6 +1185,38 @@ function ApplicantsDialog({
             무작위 선발 1회 실행
           </button>
           {randomLocked ? <span style={{ fontSize: 12, color: t.textSub }}>현재 라운드는 이미 무작위 선발을 실행했습니다.</span> : null}
+        </div>
+
+        <div style={{ ...cardStyle, marginBottom: 12, background: "#f8fbff", borderColor: "#d8e5ff", padding: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>
+            학생 수동 배정 승인
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8 }}>
+            <StudentSearchCombobox
+              students={students}
+              value={manualStudentUid}
+              onChange={setManualStudentUid}
+            />
+            <button
+              onClick={async () => {
+                const ok = await onManualAssign(manualStudentUid);
+                if (ok) setManualStudentUid("");
+              }}
+              disabled={manualDisabled}
+              style={{
+                ...buttonBase,
+                background: manualDisabled ? "#cfd8e3" : "#e8f5e9",
+                color: manualDisabled ? "#6b7280" : t.ok,
+                fontWeight: 700,
+                minWidth: 136,
+              }}
+            >
+              수동 배정 승인
+            </button>
+          </div>
+          <div style={{ marginTop: 7, fontSize: 12, color: t.textSub }}>
+            대상학년 학생만 검색되며, 신청하지 않은 학생도 바로 배정할 수 있습니다.
+          </div>
         </div>
 
         <div style={{ overflowX: "auto" }}>
@@ -2440,6 +2496,34 @@ export default function PrototypeApp() {
     }
   }
 
+  async function handleManualAssignStudent(studentUid) {
+    const clubId = applicantDialog.club?.id;
+    const targetUid = String(studentUid || "").trim();
+    if (!clubId || !targetUid) {
+      setMessage({ type: "error", text: "배정할 학생을 먼저 선택해주세요." });
+      return false;
+    }
+
+    try {
+      await directAssignStudentToClub({
+        clubId,
+        studentUid: targetUid,
+        actor: user,
+      });
+      const selected = users.find((row) => row.uid === targetUid);
+      setMessage({
+        type: "ok",
+        text: `${selected?.name || "선택한 학생"} 학생을 수동 배정 승인했습니다.`,
+      });
+      await reloadApplicantDialog(applicantDialog.club);
+      await refreshMyApplications();
+      return true;
+    } catch (error) {
+      withMessageError(error, "수동 배정 승인에 실패했습니다.");
+      return false;
+    }
+  }
+
   async function openInterviewDialog(club) {
     setInterviewDialog({
       open: true,
@@ -2925,10 +3009,12 @@ export default function PrototypeApp() {
         club={applicantDialog.club}
         cycle={cycle}
         rows={applicantDialog.rows}
+        users={users}
         onClose={() => setApplicantDialog({ open: false, club: null, rows: [], loading: false })}
         onApprove={handleApproveApplication}
         onReject={handleRejectApplication}
         onRandom={handleRandomSelection}
+        onManualAssign={handleManualAssignStudent}
         randomLocked={applicantRandomLocked}
       />
 
