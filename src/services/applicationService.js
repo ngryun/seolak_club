@@ -763,16 +763,12 @@ export async function updateRecruitmentSubmissionWindow(payload) {
   const endRaw = String(payload?.submissionEndAt || '').trim()
   const startAt = startRaw ? toIsoString(startRaw) : null
   const endAt = endRaw ? toIsoString(endRaw) : null
-  const preAssignmentEndAt = toIsoString(cycle.preAssignmentEndAt)
 
   if ((startAt && !endAt) || (!startAt && endAt)) {
     throw new Error('신청 시작/종료 일시를 모두 입력해주세요.')
   }
   if (startAt && endAt && new Date(startAt).getTime() >= new Date(endAt).getTime()) {
     throw new Error('신청 종료 일시는 시작 일시보다 뒤여야 합니다.')
-  }
-  if (startAt && preAssignmentEndAt && new Date(preAssignmentEndAt).getTime() > new Date(startAt).getTime()) {
-    throw new Error('교사 사전 학생 배정 기간은 학생 신청 시작 전까지 끝나야 합니다.')
   }
 
   const existingApps = (await getAllApplications()).filter((row) => row.cycleId === cycle.id)
@@ -829,25 +825,12 @@ export async function updateRecruitmentPreAssignmentWindow(payload) {
   const endRaw = String(payload?.preAssignmentEndAt || '').trim()
   const startAt = startRaw ? toIsoString(startRaw) : null
   const endAt = endRaw ? toIsoString(endRaw) : null
-  const submissionStartAt = toIsoString(cycle.submissionStartAt)
 
   if ((startAt && !endAt) || (!startAt && endAt)) {
     throw new Error('교사 사전 학생 배정 시작/종료 일시를 모두 입력해주세요.')
   }
   if (startAt && endAt && new Date(startAt).getTime() >= new Date(endAt).getTime()) {
     throw new Error('교사 사전 학생 배정 종료 일시는 시작 일시보다 뒤여야 합니다.')
-  }
-  if (startAt && endAt && submissionStartAt && new Date(endAt).getTime() > new Date(submissionStartAt).getTime()) {
-    throw new Error('교사 사전 학생 배정 기간은 학생 신청 시작 전까지 끝나야 합니다.')
-  }
-
-  const existingApps = (await getAllApplications()).filter((row) => row.cycleId === cycle.id)
-  const existingDrafts = await listDraftsByCycle(cycle.id)
-  const hasSelectionData = existingApps.some((row) => row.selectionSource !== LEADER_AUTO_SOURCE || row.status !== STATUS.APPROVED)
-    || existingDrafts.length > 0
-    || (!!cycle.submissionFinalizedAt)
-  if (hasSelectionData) {
-    throw new Error('이미 학생 신청 또는 선발 데이터가 있어 교사 사전 학생 배정 기간을 변경할 수 없습니다.')
   }
 
   if (!isFirebaseEnabled()) {

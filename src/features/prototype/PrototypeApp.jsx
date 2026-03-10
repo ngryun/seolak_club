@@ -304,7 +304,7 @@ function preAssignmentPhaseDescription(state) {
     return `교사 사전 학생 배정 시작 전입니다. ${formatTime(state.startAt)}부터 직접 선발과 수동 배정을 진행할 수 있습니다.`;
   }
   if (state.phase === "open") {
-    return `교사 사전 학생 배정 기간입니다. ${formatTime(state.endAt)}까지 학생 신청 전 사전 배정을 진행할 수 있습니다.`;
+    return `교사 사전 학생 배정 기간입니다. ${formatTime(state.endAt)}까지 직접 선발과 수동 배정을 진행할 수 있습니다.`;
   }
   if (state.phase === "closed") {
     return "교사 사전 학생 배정 기간이 종료되었습니다.";
@@ -1905,7 +1905,7 @@ function RoundPanel({
             교사 사전 배정 기간 저장
           </button>
           <span style={{ fontSize: 12, color: t.textSub }}>
-            학생 신청 시작 전 기간만 설정할 수 있으며, 이때는 직접 선발/수동 배정만 허용됩니다.
+            이 기간이 열려 있는 동안에는 직접 선발과 수동 배정을 추가로 허용합니다.
           </span>
         </div>
       </div>
