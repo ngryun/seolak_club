@@ -39,5 +39,13 @@ service cloud.firestore {
     match /recruitmentAssignments/{assignmentId} {
       allow read, write: if true;
     }
+
+    match /requestCards/{cardId} {
+      allow read, write: if true;
+    }
+
+    match /requestCardApplications/{applicationId} {
+      allow read, write: if true;
+    }
   }
 }
