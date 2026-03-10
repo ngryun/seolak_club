@@ -244,6 +244,19 @@ export function getSubmissionWindowState(cycle, nowValue = new Date()) {
     }
   }
 
+  if (finalizedAt) {
+    return {
+      configured: true,
+      phase: 'closed',
+      startAt,
+      endAt,
+      finalizedAt,
+      canSubmit: false,
+      selectionReady: true,
+      needsFinalization: false,
+    }
+  }
+
   if (now.getTime() < startAt.getTime()) {
     return {
       configured: true,
@@ -766,19 +779,18 @@ export async function updateRecruitmentSubmissionWindow(payload) {
   const existingDrafts = await listDraftsByCycle(cycle.id)
   const hasSelectionData = existingApps.some((row) => row.selectionSource !== LEADER_AUTO_SOURCE || row.status !== STATUS.APPROVED)
     || (!!cycle.submissionFinalizedAt)
-  if (hasSelectionData) {
-    throw new Error('이미 선발 단계가 시작된 모집 사이클은 신청 기간을 변경할 수 없습니다.')
+  if ((!startAt || !endAt) && (existingDrafts.length > 0 || hasSelectionData)) {
+    throw new Error('이미 제출 또는 선발 데이터가 있어 신청 기간을 비울 수 없습니다.')
   }
-  if ((!startAt || !endAt) && existingDrafts.length > 0) {
-    throw new Error('이미 제출된 신청서가 있어 신청 기간을 비울 수 없습니다.')
-  }
+
+  const nextFinalizedAt = hasSelectionData ? (cycle.submissionFinalizedAt || nowIso()) : null
 
   if (!isFirebaseEnabled()) {
     localCycle = {
       ...localCycle,
       submissionStartAt: startAt,
       submissionEndAt: endAt,
-      submissionFinalizedAt: null,
+      submissionFinalizedAt: nextFinalizedAt,
       updatedAt: nowIso(),
     }
     return { ...localCycle }
@@ -793,7 +805,7 @@ export async function updateRecruitmentSubmissionWindow(payload) {
       preAssignmentEndAt: cycle.preAssignmentEndAt || null,
       submissionStartAt: startAt,
       submissionEndAt: endAt,
-      submissionFinalizedAt: null,
+      submissionFinalizedAt: hasSelectionData ? (cycle.submissionFinalizedAt || serverTimestamp()) : null,
       updatedAt: serverTimestamp(),
     },
     { merge: true },
