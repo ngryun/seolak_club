@@ -24,9 +24,13 @@ import {
 import { getUserProfile } from './userService'
 
 const APPLICATIONS = 'applications'
+const DRAFTS = 'applicationDrafts'
 const CYCLES = 'recruitmentCycles'
 const CYCLE_DOC_ID = 'current'
 const MEMBERS_SUBCOLLECTION = 'members'
+const ASSIGNMENTS = 'recruitmentAssignments'
+const LEADER_AUTO_SOURCE = 'leader_auto'
+const ADMIN_FORCE_SOURCE = 'admin_force'
 
 const STATUS = {
   WAITING: 'waiting_round',
@@ -42,13 +46,22 @@ const REJECT_REASON = {
   HIGHER_CHOICE: 'higher_choice_assigned',
   FINAL_CLOSED: 'final_round_closed',
   ROUND_INELIGIBLE: 'round_ineligible',
+  APPROVAL_REVOKED: 'approval_revoked',
+  LEADER_ASSIGNED: 'leader_assigned',
+  ADMIN_FORCE_ASSIGNED: 'admin_force_assigned',
 }
 
 let localApplications = []
+let localDrafts = new Map()
 let localCycle = {
   id: CYCLE_DOC_ID,
   currentRound: 1,
   status: 'open',
+  preAssignmentStartAt: null,
+  preAssignmentEndAt: null,
+  submissionStartAt: null,
+  submissionEndAt: null,
+  submissionFinalizedAt: null,
   updatedAt: new Date().toISOString(),
 }
 const localMembersByClub = new Map()
@@ -63,12 +76,47 @@ function toRound(value, fallback = 1) {
   return fallback
 }
 
+function toIsoString(value) {
+  if (!value) return null
+
+  if (typeof value === 'string') {
+    const parsed = new Date(value)
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+  }
+
+  if (typeof value?.toDate === 'function') {
+    return value.toDate().toISOString()
+  }
+
+  if (typeof value?.seconds === 'number') {
+    return new Date(value.seconds * 1000).toISOString()
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString()
+  }
+
+  return null
+}
+
+function toDateValue(value) {
+  const iso = toIsoString(value)
+  if (!iso) return null
+  const parsed = new Date(iso)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
 function normalizeCycle(data) {
   return {
     id: CYCLE_DOC_ID,
     currentRound: toRound(data?.currentRound, 1),
     status: data?.status === 'closed' ? 'closed' : 'open',
-    updatedAt: data?.updatedAt || null,
+    preAssignmentStartAt: toIsoString(data?.preAssignmentStartAt),
+    preAssignmentEndAt: toIsoString(data?.preAssignmentEndAt),
+    submissionStartAt: toIsoString(data?.submissionStartAt),
+    submissionEndAt: toIsoString(data?.submissionEndAt),
+    submissionFinalizedAt: toIsoString(data?.submissionFinalizedAt),
+    updatedAt: toIsoString(data?.updatedAt) || data?.updatedAt || null,
   }
 }
 
@@ -86,6 +134,7 @@ function normalizeApplication(id, data) {
     wantedActivity: String(data?.wantedActivity || '').trim(),
     status: String(data?.status || STATUS.WAITING),
     rejectReason: String(data?.rejectReason || '').trim(),
+    decisionNote: String(data?.decisionNote || '').trim(),
     decidedByUid: String(data?.decidedByUid || '').trim(),
     selectionSource: String(data?.selectionSource || '').trim(),
     decidedAt: data?.decidedAt || null,
@@ -105,6 +154,193 @@ function normalizeMember(id, data) {
     addedByUid: String(data?.addedByUid || '').trim(),
     addedAt: data?.addedAt || null,
   }
+}
+
+function normalizeDraftPreference(row, index = 0) {
+  return {
+    clubId: String(row?.clubId || '').trim(),
+    preferenceRank: toRound(row?.preferenceRank, index + 1),
+    careerGoal: String(row?.careerGoal || '').trim(),
+    applyReason: String(row?.applyReason || '').trim(),
+    wantedActivity: String(row?.wantedActivity || '').trim(),
+  }
+}
+
+function normalizeDraft(id, data) {
+  const preferences = (Array.isArray(data?.preferences) ? data.preferences : [])
+    .map((row, index) => normalizeDraftPreference(row, index))
+    .sort((a, b) => a.preferenceRank - b.preferenceRank)
+
+  return {
+    id,
+    cycleId: String(data?.cycleId || CYCLE_DOC_ID).trim() || CYCLE_DOC_ID,
+    studentUid: String(data?.studentUid || '').trim(),
+    studentNo: String(data?.studentNo || '').trim(),
+    studentName: String(data?.studentName || '').trim(),
+    clubIds: Array.from(new Set(
+      (Array.isArray(data?.clubIds) ? data.clubIds : preferences.map((row) => row.clubId))
+        .map((value) => String(value || '').trim())
+        .filter(Boolean),
+    )),
+    preferences,
+    submittedAt: toIsoString(data?.submittedAt),
+    updatedAt: toIsoString(data?.updatedAt) || data?.updatedAt || null,
+  }
+}
+
+function buildAssignmentDocId(cycleId, studentUid) {
+  const normalizedCycleId = String(cycleId || CYCLE_DOC_ID).trim() || CYCLE_DOC_ID
+  const normalizedStudentUid = String(studentUid || '').trim()
+  return `${normalizedCycleId}__${normalizedStudentUid}`.replaceAll('/', '_')
+}
+
+function buildDraftDocId(cycleId, studentUid) {
+  const normalizedCycleId = String(cycleId || CYCLE_DOC_ID).trim() || CYCLE_DOC_ID
+  const normalizedStudentUid = String(studentUid || '').trim()
+  return `${normalizedCycleId}__${normalizedStudentUid}`.replaceAll('/', '_')
+}
+
+function buildApplicationDocId(cycleId, studentUid, preferenceRank) {
+  const normalizedCycleId = String(cycleId || CYCLE_DOC_ID).trim() || CYCLE_DOC_ID
+  const normalizedStudentUid = String(studentUid || '').trim()
+  return `${normalizedCycleId}__${normalizedStudentUid}__${toRound(preferenceRank, 1)}`.replaceAll('/', '_')
+}
+
+function buildSystemActor(club) {
+  const uid = String(club?.teacherUid || club?.createdByUid || 'system-sync').trim() || 'system-sync'
+  return {
+    uid,
+    role: 'admin',
+    name: 'system-sync',
+    studentNo: '',
+  }
+}
+
+function getReopenedStatus(preferenceRank, currentRound) {
+  const rank = toRound(preferenceRank, 0)
+  const round = toRound(currentRound, 1)
+  if (rank === round) return STATUS.PENDING
+  if (rank > round) return STATUS.WAITING
+  return ''
+}
+
+export function getSubmissionWindowState(cycle, nowValue = new Date()) {
+  const now = toDateValue(nowValue) || new Date()
+  const startAt = toDateValue(cycle?.submissionStartAt)
+  const endAt = toDateValue(cycle?.submissionEndAt)
+  const finalizedAt = toDateValue(cycle?.submissionFinalizedAt)
+  const configured = !!startAt && !!endAt && startAt.getTime() < endAt.getTime()
+
+  if (!configured) {
+    return {
+      configured: false,
+      phase: 'unconfigured',
+      startAt: null,
+      endAt: null,
+      finalizedAt,
+      canSubmit: false,
+      selectionReady: true,
+      needsFinalization: false,
+    }
+  }
+
+  if (now.getTime() < startAt.getTime()) {
+    return {
+      configured: true,
+      phase: 'before',
+      startAt,
+      endAt,
+      finalizedAt,
+      canSubmit: false,
+      selectionReady: false,
+      needsFinalization: false,
+    }
+  }
+
+  if (now.getTime() <= endAt.getTime()) {
+    return {
+      configured: true,
+      phase: 'open',
+      startAt,
+      endAt,
+      finalizedAt,
+      canSubmit: true,
+      selectionReady: false,
+      needsFinalization: false,
+    }
+  }
+
+  return {
+    configured: true,
+    phase: 'closed',
+    startAt,
+    endAt,
+    finalizedAt,
+    canSubmit: false,
+    selectionReady: true,
+    needsFinalization: !finalizedAt,
+  }
+}
+
+export function getTeacherPreAssignmentWindowState(cycle, nowValue = new Date()) {
+  const now = toDateValue(nowValue) || new Date()
+  const startAt = toDateValue(cycle?.preAssignmentStartAt)
+  const endAt = toDateValue(cycle?.preAssignmentEndAt)
+  const configured = !!startAt && !!endAt && startAt.getTime() < endAt.getTime()
+
+  if (!configured) {
+    return {
+      configured: false,
+      phase: 'unconfigured',
+      startAt: null,
+      endAt: null,
+      canAssign: false,
+    }
+  }
+
+  if (now.getTime() < startAt.getTime()) {
+    return {
+      configured: true,
+      phase: 'before',
+      startAt,
+      endAt,
+      canAssign: false,
+    }
+  }
+
+  if (now.getTime() <= endAt.getTime()) {
+    return {
+      configured: true,
+      phase: 'open',
+      startAt,
+      endAt,
+      canAssign: true,
+    }
+  }
+
+  return {
+    configured: true,
+    phase: 'closed',
+    startAt,
+    endAt,
+    canAssign: false,
+  }
+}
+
+function isSyntheticAssignedApplication(app) {
+  const source = String(app?.selectionSource || '').trim()
+  if (
+    source !== 'manual_assign'
+    && source !== 'interview_manual'
+    && source !== LEADER_AUTO_SOURCE
+    && source !== ADMIN_FORCE_SOURCE
+  ) {
+    return false
+  }
+
+  return !String(app?.careerGoal || '').trim()
+    && !String(app?.applyReason || '').trim()
+    && !String(app?.wantedActivity || '').trim()
 }
 
 function inferGradeFromStudentNo(studentNo) {
@@ -196,6 +432,166 @@ async function getApplicationsByClub(clubId) {
   return snapshot.docs.map((item) => normalizeApplication(item.id, item.data()))
 }
 
+async function listDraftsByCycle(cycleId) {
+  if (!isFirebaseEnabled()) {
+    return Array.from(localDrafts.values()).filter((row) => row.cycleId === cycleId)
+  }
+
+  const snapshot = await getDocs(query(collection(db, DRAFTS), where('cycleId', '==', cycleId)))
+  return snapshot.docs.map((item) => normalizeDraft(item.id, item.data()))
+}
+
+async function getStudentDraftByCycle(cycleId, studentUid) {
+  const targetCycleId = String(cycleId || CYCLE_DOC_ID).trim() || CYCLE_DOC_ID
+  const targetStudentUid = String(studentUid || '').trim()
+  if (!targetStudentUid) return null
+
+  const draftId = buildDraftDocId(targetCycleId, targetStudentUid)
+  if (!isFirebaseEnabled()) {
+    return localDrafts.get(draftId) || null
+  }
+
+  const snapshot = await getDoc(doc(db, DRAFTS, draftId))
+  if (!snapshot.exists()) return null
+  return normalizeDraft(snapshot.id, snapshot.data())
+}
+
+function assertSubmissionWindowEditable(cycle) {
+  const submission = getSubmissionWindowState(cycle)
+  if (cycle.status !== 'open') {
+    throw new Error('현재 모집 사이클이 종료되어 신청서를 수정할 수 없습니다.')
+  }
+  if (!submission.configured) {
+    throw new Error('관리자가 아직 동아리 신청 기간을 설정하지 않았습니다.')
+  }
+  if (submission.phase === 'before') {
+    throw new Error('동아리 신청 기간이 아직 시작되지 않았습니다.')
+  }
+  if (submission.phase === 'closed') {
+    throw new Error('동아리 신청 기간이 종료되어 더 이상 수정할 수 없습니다.')
+  }
+  return submission
+}
+
+async function normalizeStudentPreferences(studentNo, preferences) {
+  const rows = Array.isArray(preferences) ? preferences : []
+  const grade = inferGradeFromStudentNo(studentNo)
+  if (!grade) {
+    throw new Error('학번 첫 자리로 학년을 추정할 수 없습니다. 학번을 확인해주세요.')
+  }
+
+  if (rows.length < 1 || rows.length > 3) {
+    throw new Error('동아리 지망은 1~3개까지 제출할 수 있습니다.')
+  }
+
+  const uniqueClubIds = new Set()
+  const normalized = []
+
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]
+    const clubId = String(row?.clubId || '').trim()
+    if (!clubId) {
+      throw new Error(`${i + 1}지망 동아리를 선택해주세요.`)
+    }
+    if (uniqueClubIds.has(clubId)) {
+      throw new Error('동일한 동아리를 중복 지망할 수 없습니다.')
+    }
+
+    const club = await getScheduleById(clubId)
+    if (!club || club.legacy) {
+      throw new Error('유효하지 않은 동아리 선택입니다.')
+    }
+    if (club.isInterviewSelection) {
+      throw new Error('자체면접 동아리는 학생 신청으로 선택할 수 없습니다.')
+    }
+    if (!club.leaderUid) {
+      throw new Error(`${club.clubName} 동아리는 동아리장이 지정되지 않아 현재 신청할 수 없습니다.`)
+    }
+    if (!isStudentEligibleForClub(club, studentNo)) {
+      throw new Error(`${club.clubName}은(는) 대상학년에 해당하지 않습니다.`)
+    }
+
+    const careerGoal = String(row?.careerGoal || '').trim()
+    const applyReason = String(row?.applyReason || '').trim()
+    const wantedActivity = String(row?.wantedActivity || '').trim()
+    if (!careerGoal || !applyReason || !wantedActivity) {
+      throw new Error(`${i + 1}지망의 진로희망/신청사유/활동계획을 모두 입력해주세요.`)
+    }
+
+    uniqueClubIds.add(clubId)
+    normalized.push({
+      clubId,
+      preferenceRank: i + 1,
+      careerGoal,
+      applyReason,
+      wantedActivity,
+    })
+  }
+
+  return normalized
+}
+
+function buildApplicationsFromDraft(cycle, draft) {
+  return draft.preferences.map((item) => ({
+    id: buildApplicationDocId(cycle.id, draft.studentUid, item.preferenceRank),
+    cycleId: cycle.id,
+    studentUid: draft.studentUid,
+    studentNo: draft.studentNo,
+    studentName: draft.studentName,
+    clubId: item.clubId,
+    preferenceRank: item.preferenceRank,
+    careerGoal: item.careerGoal,
+    applyReason: item.applyReason,
+    wantedActivity: item.wantedActivity,
+    status: item.preferenceRank === 1 ? STATUS.PENDING : STATUS.WAITING,
+    rejectReason: '',
+    decisionNote: '',
+    decidedByUid: '',
+    selectionSource: '',
+  }))
+}
+
+async function ensureSelectionPhaseReady(options = {}) {
+  const allowPreAssignment = options?.allowPreAssignment === true
+  const cycle = await getCurrentRecruitmentCycle()
+  const submission = getSubmissionWindowState(cycle)
+  const preAssignment = getTeacherPreAssignmentWindowState(cycle)
+
+  if (allowPreAssignment && preAssignment.canAssign) {
+    return cycle
+  }
+
+  if (!submission.configured) {
+    return cycle
+  }
+  if (submission.phase === 'before') {
+    if (allowPreAssignment) {
+      if (!preAssignment.configured) {
+        throw new Error('교사 사전 학생 배정 기간이 설정되지 않았습니다.')
+      }
+      if (preAssignment.phase === 'before') {
+        throw new Error('교사 사전 학생 배정 기간이 아직 시작되지 않았습니다.')
+      }
+      if (preAssignment.phase === 'closed') {
+        throw new Error('교사 사전 학생 배정 기간이 종료되었습니다.')
+      }
+    }
+    throw new Error('동아리 신청 시작 전에는 선발을 진행할 수 없습니다.')
+  }
+  if (submission.phase === 'open') {
+    throw new Error(allowPreAssignment
+      ? '동아리 신청 기간에는 교사 사전 학생 배정을 진행할 수 없습니다.'
+      : '동아리 신청 기간이 끝난 뒤 선발을 진행해주세요.')
+  }
+
+  if (submission.needsFinalization) {
+    await finalizeCurrentCycleDraftsIfNeeded()
+    return getCurrentRecruitmentCycle()
+  }
+
+  return cycle
+}
+
 async function updateApplicationsStatusBulk(patches) {
   if (!patches.length) return
 
@@ -234,6 +630,7 @@ async function createApprovedDirectApplication({
   student,
   actor,
   source = 'manual_assign',
+  decisionNote = '',
 }) {
   const appPayload = {
     cycleId: cycle.id,
@@ -247,6 +644,7 @@ async function createApprovedDirectApplication({
     wantedActivity: '',
     status: STATUS.APPROVED,
     rejectReason: '',
+    decisionNote: String(decisionNote || '').trim(),
     decidedByUid: actor.uid,
     selectionSource: source,
   }
@@ -307,12 +705,22 @@ export async function getCurrentRecruitmentCycle() {
     await setDoc(ref, {
       currentRound: 1,
       status: 'open',
+      preAssignmentStartAt: null,
+      preAssignmentEndAt: null,
+      submissionStartAt: null,
+      submissionEndAt: null,
+      submissionFinalizedAt: null,
       updatedAt: serverTimestamp(),
     })
     return {
       id: CYCLE_DOC_ID,
       currentRound: 1,
       status: 'open',
+      preAssignmentStartAt: null,
+      preAssignmentEndAt: null,
+      submissionStartAt: null,
+      submissionEndAt: null,
+      submissionFinalizedAt: null,
       updatedAt: null,
     }
   }
@@ -320,7 +728,145 @@ export async function getCurrentRecruitmentCycle() {
   return normalizeCycle(snapshot.data())
 }
 
-export async function submitStudentPreferences(payload) {
+export async function getStudentPreferenceDraft(studentUid) {
+  const targetStudentUid = String(studentUid || '').trim()
+  if (!targetStudentUid) return null
+  const cycle = await getCurrentRecruitmentCycle()
+  return getStudentDraftByCycle(cycle.id, targetStudentUid)
+}
+
+export async function updateRecruitmentSubmissionWindow(payload) {
+  const user = assertActor(payload?.actor)
+  if (user.role !== 'admin') {
+    throw new Error('신청 기간 설정은 관리자만 가능합니다.')
+  }
+
+  const cycle = await getCurrentRecruitmentCycle()
+  if (cycle.status === 'closed') {
+    throw new Error('종료된 모집 사이클의 신청 기간은 변경할 수 없습니다.')
+  }
+
+  const startRaw = String(payload?.submissionStartAt || '').trim()
+  const endRaw = String(payload?.submissionEndAt || '').trim()
+  const startAt = startRaw ? toIsoString(startRaw) : null
+  const endAt = endRaw ? toIsoString(endRaw) : null
+  const preAssignmentEndAt = toIsoString(cycle.preAssignmentEndAt)
+
+  if ((startAt && !endAt) || (!startAt && endAt)) {
+    throw new Error('신청 시작/종료 일시를 모두 입력해주세요.')
+  }
+  if (startAt && endAt && new Date(startAt).getTime() >= new Date(endAt).getTime()) {
+    throw new Error('신청 종료 일시는 시작 일시보다 뒤여야 합니다.')
+  }
+  if (startAt && preAssignmentEndAt && new Date(preAssignmentEndAt).getTime() > new Date(startAt).getTime()) {
+    throw new Error('교사 사전 학생 배정 기간은 학생 신청 시작 전까지 끝나야 합니다.')
+  }
+
+  const existingApps = (await getAllApplications()).filter((row) => row.cycleId === cycle.id)
+  const existingDrafts = await listDraftsByCycle(cycle.id)
+  const hasSelectionData = existingApps.some((row) => row.selectionSource !== LEADER_AUTO_SOURCE || row.status !== STATUS.APPROVED)
+    || (!!cycle.submissionFinalizedAt)
+  if (hasSelectionData) {
+    throw new Error('이미 선발 단계가 시작된 모집 사이클은 신청 기간을 변경할 수 없습니다.')
+  }
+  if ((!startAt || !endAt) && existingDrafts.length > 0) {
+    throw new Error('이미 제출된 신청서가 있어 신청 기간을 비울 수 없습니다.')
+  }
+
+  if (!isFirebaseEnabled()) {
+    localCycle = {
+      ...localCycle,
+      submissionStartAt: startAt,
+      submissionEndAt: endAt,
+      submissionFinalizedAt: null,
+      updatedAt: nowIso(),
+    }
+    return { ...localCycle }
+  }
+
+  await setDoc(
+    doc(db, CYCLES, CYCLE_DOC_ID),
+    {
+      currentRound: cycle.currentRound,
+      status: cycle.status,
+      preAssignmentStartAt: cycle.preAssignmentStartAt || null,
+      preAssignmentEndAt: cycle.preAssignmentEndAt || null,
+      submissionStartAt: startAt,
+      submissionEndAt: endAt,
+      submissionFinalizedAt: null,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  )
+
+  return getCurrentRecruitmentCycle()
+}
+
+export async function updateRecruitmentPreAssignmentWindow(payload) {
+  const user = assertActor(payload?.actor)
+  if (user.role !== 'admin') {
+    throw new Error('교사 사전 학생 배정 기간 설정은 관리자만 가능합니다.')
+  }
+
+  const cycle = await getCurrentRecruitmentCycle()
+  if (cycle.status === 'closed') {
+    throw new Error('종료된 모집 사이클의 교사 사전 학생 배정 기간은 변경할 수 없습니다.')
+  }
+
+  const startRaw = String(payload?.preAssignmentStartAt || '').trim()
+  const endRaw = String(payload?.preAssignmentEndAt || '').trim()
+  const startAt = startRaw ? toIsoString(startRaw) : null
+  const endAt = endRaw ? toIsoString(endRaw) : null
+  const submissionStartAt = toIsoString(cycle.submissionStartAt)
+
+  if ((startAt && !endAt) || (!startAt && endAt)) {
+    throw new Error('교사 사전 학생 배정 시작/종료 일시를 모두 입력해주세요.')
+  }
+  if (startAt && endAt && new Date(startAt).getTime() >= new Date(endAt).getTime()) {
+    throw new Error('교사 사전 학생 배정 종료 일시는 시작 일시보다 뒤여야 합니다.')
+  }
+  if (startAt && endAt && submissionStartAt && new Date(endAt).getTime() > new Date(submissionStartAt).getTime()) {
+    throw new Error('교사 사전 학생 배정 기간은 학생 신청 시작 전까지 끝나야 합니다.')
+  }
+
+  const existingApps = (await getAllApplications()).filter((row) => row.cycleId === cycle.id)
+  const existingDrafts = await listDraftsByCycle(cycle.id)
+  const hasSelectionData = existingApps.some((row) => row.selectionSource !== LEADER_AUTO_SOURCE || row.status !== STATUS.APPROVED)
+    || existingDrafts.length > 0
+    || (!!cycle.submissionFinalizedAt)
+  if (hasSelectionData) {
+    throw new Error('이미 학생 신청 또는 선발 데이터가 있어 교사 사전 학생 배정 기간을 변경할 수 없습니다.')
+  }
+
+  if (!isFirebaseEnabled()) {
+    localCycle = {
+      ...localCycle,
+      preAssignmentStartAt: startAt,
+      preAssignmentEndAt: endAt,
+      updatedAt: nowIso(),
+    }
+    return { ...localCycle }
+  }
+
+  await setDoc(
+    doc(db, CYCLES, CYCLE_DOC_ID),
+    {
+      currentRound: cycle.currentRound,
+      status: cycle.status,
+      preAssignmentStartAt: startAt,
+      preAssignmentEndAt: endAt,
+      submissionStartAt: cycle.submissionStartAt || null,
+      submissionEndAt: cycle.submissionEndAt || null,
+      submissionFinalizedAt: cycle.submissionFinalizedAt || null,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  )
+
+  return getCurrentRecruitmentCycle()
+}
+
+export async function saveStudentPreferenceDraft(payload) {
   const studentUid = String(payload?.studentUid || '').trim()
   const studentNo = String(payload?.studentNo || '').trim()
   const studentName = String(payload?.studentName || '').trim()
@@ -336,112 +882,178 @@ export async function submitStudentPreferences(payload) {
     throw new Error('학생 이름이 필요합니다.')
   }
 
-  const grade = inferGradeFromStudentNo(studentNo)
-  if (!grade) {
-    throw new Error('학번 첫 자리로 학년을 추정할 수 없습니다. 학번을 확인해주세요.')
-  }
-
-  if (preferences.length < 1 || preferences.length > 3) {
-    throw new Error('동아리 지망은 1~3개까지 제출할 수 있습니다.')
-  }
-
   const cycle = await getCurrentRecruitmentCycle()
-  assertOpenCycle(cycle)
+  assertSubmissionWindowEditable(cycle)
 
-  const submittedRows = await getApplicationsByStudent(studentUid)
-  const alreadySubmitted = submittedRows.some((row) => row.cycleId === cycle.id)
-  if (alreadySubmitted) {
-    throw new Error('이미 동아리 지망을 제출했습니다. 재신청은 불가합니다.')
+  const existingApps = await getApplicationsByStudent(studentUid)
+  const alreadyFinalized = existingApps.some((row) => row.cycleId === cycle.id)
+  if (alreadyFinalized) {
+    throw new Error('이미 신청이 확정되어 더 이상 수정할 수 없습니다.')
   }
 
-  const uniqueClubIds = new Set()
-  const normalizedPreferences = []
-
-  for (let i = 0; i < preferences.length; i += 1) {
-    const row = preferences[i]
-    const clubId = String(row?.clubId || '').trim()
-    if (!clubId) {
-      throw new Error(`${i + 1}지망 동아리를 선택해주세요.`)
-    }
-    if (uniqueClubIds.has(clubId)) {
-      throw new Error('동일한 동아리를 중복 지망할 수 없습니다.')
-    }
-
-    const club = await getScheduleById(clubId)
-    if (!club || club.legacy) {
-      throw new Error('유효하지 않은 동아리 선택입니다.')
-    }
-    if (club.isInterviewSelection) {
-      throw new Error('자체면접 동아리는 학생 신청으로 선택할 수 없습니다.')
-    }
-    if (!club.leaderUid) {
-      throw new Error(`${club.clubName} 동아리는 동아리장이 지정되지 않아 현재 신청할 수 없습니다.`)
-    }
-    if (!isStudentEligibleForClub(club, studentNo)) {
-      throw new Error(`${club.clubName}은(는) 대상학년에 해당하지 않습니다.`)
-    }
-
-    const careerGoal = String(row?.careerGoal || '').trim()
-    const applyReason = String(row?.applyReason || '').trim()
-    const wantedActivity = String(row?.wantedActivity || '').trim()
-
-    if (!careerGoal || !applyReason || !wantedActivity) {
-      throw new Error(`${i + 1}지망의 진로희망/신청사유/활동계획을 모두 입력해주세요.`)
-    }
-
-    uniqueClubIds.add(clubId)
-    normalizedPreferences.push({
-      clubId,
-      careerGoal,
-      applyReason,
-      wantedActivity,
-      preferenceRank: i + 1,
-    })
-  }
-
-  const rows = normalizedPreferences.map((item) => ({
+  const normalizedPreferences = await normalizeStudentPreferences(studentNo, preferences)
+  const draftId = buildDraftDocId(cycle.id, studentUid)
+  const existingDraft = await getStudentDraftByCycle(cycle.id, studentUid)
+  const draft = normalizeDraft(draftId, {
     cycleId: cycle.id,
     studentUid,
     studentNo,
     studentName,
-    clubId: item.clubId,
-    preferenceRank: item.preferenceRank,
-    careerGoal: item.careerGoal,
-    applyReason: item.applyReason,
-    wantedActivity: item.wantedActivity,
-    status: item.preferenceRank === 1 ? STATUS.PENDING : STATUS.WAITING,
-    rejectReason: '',
-    decidedByUid: '',
-    selectionSource: '',
-  }))
-
-  if (!isFirebaseEnabled()) {
-    const now = nowIso()
-    const inserted = rows.map((row, index) => ({
-      id: `local-app-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
-      ...row,
-      createdAt: now,
-      updatedAt: now,
-      decidedAt: null,
-    }))
-    localApplications = [...localApplications, ...inserted]
-    return inserted
-  }
-
-  const batch = writeBatch(db)
-  const inserted = rows.map((row) => {
-    const ref = doc(collection(db, APPLICATIONS))
-    batch.set(ref, {
-      ...row,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      decidedAt: null,
-    })
-    return { id: ref.id, ...row }
+    clubIds: normalizedPreferences.map((row) => row.clubId),
+    preferences: normalizedPreferences,
+    submittedAt: existingDraft?.submittedAt || nowIso(),
+    updatedAt: nowIso(),
   })
 
-  await batch.commit()
-  return inserted
+  if (!isFirebaseEnabled()) {
+    localDrafts.set(draftId, draft)
+    return draft
+  }
+
+  const ref = doc(db, DRAFTS, draftId)
+  await setDoc(
+    ref,
+    {
+      cycleId: cycle.id,
+      studentUid,
+      studentNo,
+      studentName,
+      clubIds: normalizedPreferences.map((row) => row.clubId),
+      preferences: normalizedPreferences,
+      submittedAt: existingDraft?.submittedAt || serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  )
+  return getStudentDraftByCycle(cycle.id, studentUid)
+}
+
+export async function cancelStudentPreferenceDraft(payload) {
+  const studentUid = String(payload?.studentUid || '').trim()
+  if (!studentUid) {
+    throw new Error('학생 계정 정보가 필요합니다.')
+  }
+
+  const cycle = await getCurrentRecruitmentCycle()
+  assertSubmissionWindowEditable(cycle)
+
+  const draftId = buildDraftDocId(cycle.id, studentUid)
+  if (!isFirebaseEnabled()) {
+    localDrafts.delete(draftId)
+    return { ok: true }
+  }
+
+  await deleteDoc(doc(db, DRAFTS, draftId))
+  return { ok: true }
+}
+
+export async function finalizeCurrentCycleDraftsIfNeeded() {
+  const cycle = await getCurrentRecruitmentCycle()
+  const submission = getSubmissionWindowState(cycle)
+
+  if (!submission.configured || !submission.needsFinalization) {
+    return { finalized: false, created: 0, skipped: 0 }
+  }
+
+  const drafts = await listDraftsByCycle(cycle.id)
+  const existingApps = (await getAllApplications()).filter((row) => row.cycleId === cycle.id)
+  const existingByStudent = new Set(existingApps.map((row) => row.studentUid))
+  const draftIds = drafts.map((row) => buildDraftDocId(cycle.id, row.studentUid))
+  const appRows = []
+  let skipped = 0
+
+  for (const draft of drafts) {
+    if (existingByStudent.has(draft.studentUid)) {
+      skipped += 1
+      continue
+    }
+
+    const normalizedPreferences = await normalizeStudentPreferences(draft.studentNo, draft.preferences)
+    appRows.push(...buildApplicationsFromDraft(cycle, {
+      ...draft,
+      preferences: normalizedPreferences,
+    }))
+  }
+
+  if (!isFirebaseEnabled()) {
+    const nextMap = new Map(localApplications.map((row) => [row.id, row]))
+    const now = nowIso()
+    appRows.forEach((row) => {
+      nextMap.set(row.id, {
+        ...row,
+        createdAt: nextMap.get(row.id)?.createdAt || now,
+        updatedAt: now,
+        decidedAt: nextMap.get(row.id)?.decidedAt || null,
+      })
+    })
+    localApplications = Array.from(nextMap.values())
+    draftIds.forEach((id) => localDrafts.delete(id))
+    localCycle = {
+      ...localCycle,
+      submissionFinalizedAt: now,
+      updatedAt: now,
+    }
+    return { finalized: true, created: appRows.length, skipped }
+  }
+
+  for (const rows of chunk(appRows, 350)) {
+    const batch = writeBatch(db)
+    rows.forEach((row) => {
+      const ref = doc(db, APPLICATIONS, row.id)
+      batch.set(
+        ref,
+        {
+          cycleId: row.cycleId,
+          studentUid: row.studentUid,
+          studentNo: row.studentNo,
+          studentName: row.studentName,
+          clubId: row.clubId,
+          preferenceRank: row.preferenceRank,
+          careerGoal: row.careerGoal,
+          applyReason: row.applyReason,
+          wantedActivity: row.wantedActivity,
+          status: row.status,
+          rejectReason: row.rejectReason,
+          decisionNote: row.decisionNote,
+          decidedByUid: row.decidedByUid,
+          selectionSource: row.selectionSource,
+          decidedAt: null,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      )
+    })
+    await batch.commit()
+  }
+
+  for (const ids of chunk(draftIds, 350)) {
+    const batch = writeBatch(db)
+    ids.forEach((draftId) => batch.delete(doc(db, DRAFTS, draftId)))
+    await batch.commit()
+  }
+
+  await updateDoc(doc(db, CYCLES, CYCLE_DOC_ID), {
+    submissionFinalizedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  })
+
+  return { finalized: true, created: appRows.length, skipped }
+}
+
+export async function submitStudentPreferences(payload) {
+  return saveStudentPreferenceDraft(payload)
+}
+
+export async function listCurrentCycleApplications() {
+  const cycle = await getCurrentRecruitmentCycle()
+  const rows = await getAllApplications()
+  return rows.filter((row) => row.cycleId === cycle.id)
+}
+
+export async function listCurrentCycleDrafts() {
+  const cycle = await getCurrentRecruitmentCycle()
+  return listDraftsByCycle(cycle.id)
 }
 
 export async function listStudentApplications(studentUid, options = {}) {
@@ -491,7 +1103,7 @@ export async function listApplicationsBySchedule(clubId) {
 
 async function approveApplicationInternal({ applicationId, actor, source = 'approval' }) {
   const user = assertActor(actor)
-  const cycle = await getCurrentRecruitmentCycle()
+  const cycle = await ensureSelectionPhaseReady()
   assertOpenCycle(cycle)
 
   if (!isFirebaseEnabled()) {
@@ -578,6 +1190,12 @@ async function approveApplicationInternal({ applicationId, actor, source = 'appr
 
   const appRef = doc(db, APPLICATIONS, applicationId)
   const cycleRef = doc(db, CYCLES, CYCLE_DOC_ID)
+  const previewAppSnap = await getDoc(appRef)
+  if (!previewAppSnap.exists()) {
+    throw new Error('신청 정보를 찾을 수 없습니다.')
+  }
+  const previewApp = normalizeApplication(previewAppSnap.id, previewAppSnap.data())
+  const byStudent = await getApplicationsByStudent(previewApp.studentUid)
 
   await runTransaction(db, async (tx) => {
     const appSnap = await tx.get(appRef)
@@ -622,14 +1240,17 @@ async function approveApplicationInternal({ applicationId, actor, source = 'appr
     if (memberSnap.exists()) {
       throw new Error('이미 동아리 학생으로 확정된 계정입니다.')
     }
+    const assignmentRef = doc(db, ASSIGNMENTS, buildAssignmentDocId(app.cycleId, app.studentUid))
+    const assignmentSnap = await tx.get(assignmentRef)
+    const assignedClubId = String(assignmentSnap.data()?.clubId || '').trim()
+    if (assignedClubId && assignedClubId !== app.clubId) {
+      throw new Error('해당 학생은 이미 다른 동아리에 배정되었습니다.')
+    }
 
-    const byStudentSnap = await tx.get(
-      query(collection(db, APPLICATIONS), where('studentUid', '==', app.studentUid)),
+    const alreadyApproved = byStudent.some(
+      (row) => row.id !== app.id && row.cycleId === app.cycleId && row.status === STATUS.APPROVED,
     )
-    const byStudent = byStudentSnap.docs.map((item) => normalizeApplication(item.id, item.data()))
-
-    const alreadyApproved = byStudent.some((row) => row.cycleId === app.cycleId && row.status === STATUS.APPROVED)
-    if (alreadyApproved) {
+    if (!assignmentSnap.exists() && alreadyApproved) {
       throw new Error('해당 학생은 이미 다른 동아리에 배정되었습니다.')
     }
 
@@ -657,6 +1278,20 @@ async function approveApplicationInternal({ applicationId, actor, source = 'appr
       addedByUid: user.uid,
       addedAt: serverTimestamp(),
     })
+    tx.set(
+      assignmentRef,
+      {
+        cycleId: app.cycleId,
+        studentUid: app.studentUid,
+        clubId: app.clubId,
+        applicationId: app.id,
+        assignedByUid: user.uid,
+        source,
+        ...(assignmentSnap.exists() ? {} : { createdAt: serverTimestamp() }),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    )
 
     tx.update(clubRef, {
       memberCount: currentMemberCount + 1,
@@ -692,7 +1327,7 @@ export async function rejectApplication(payload) {
   const applicationId = String(payload?.applicationId || '')
   const reason = String(payload?.reason || REJECT_REASON.MANUAL)
   const user = assertActor(payload?.actor)
-  const cycle = await getCurrentRecruitmentCycle()
+  const cycle = await ensureSelectionPhaseReady()
   assertOpenCycle(cycle)
 
   if (!applicationId) {
@@ -762,6 +1397,233 @@ export async function rejectApplication(payload) {
   })
 }
 
+export async function revokeApprovedApplication(payload) {
+  const applicationId = String(payload?.applicationId || '')
+  const user = assertActor(payload?.actor)
+  if (!applicationId) {
+    throw new Error('신청 ID가 필요합니다.')
+  }
+
+  const allowClosedCycle = payload?.allowClosedCycle === true
+  const cycle = allowClosedCycle
+    ? await getCurrentRecruitmentCycle()
+    : await ensureSelectionPhaseReady()
+  const skipPermissionCheck = payload?.skipPermissionCheck === true
+  if (!allowClosedCycle) {
+    assertOpenCycle(cycle)
+  }
+  const canReopen = cycle.status === 'open'
+
+  if (!isFirebaseEnabled()) {
+    const app = localApplications.find((row) => row.id === applicationId)
+    if (!app) {
+      throw new Error('신청 정보를 찾을 수 없습니다.')
+    }
+    if (app.status !== STATUS.APPROVED) {
+      throw new Error('승인 상태 신청만 취소할 수 있습니다.')
+    }
+
+    const club = await getScheduleById(app.clubId)
+    if (!club) {
+      throw new Error('동아리 정보를 찾을 수 없습니다.')
+    }
+    if (!skipPermissionCheck && !canManageSelection(club, user)) {
+      throw new Error('승인 취소 권한이 없습니다.')
+    }
+
+    const members = getLocalMembers(club.id)
+    const studentApps = localApplications.filter((row) => row.studentUid === app.studentUid)
+    const synthetic = isSyntheticAssignedApplication(app)
+    const now = nowIso()
+
+    localApplications = localApplications.flatMap((row) => {
+      if (row.id === app.id) {
+        if (synthetic) {
+          return []
+        }
+
+        const reopenedStatus = canReopen ? getReopenedStatus(row.preferenceRank, cycle.currentRound) : ''
+        if (reopenedStatus) {
+          return [{
+            ...row,
+            status: reopenedStatus,
+            rejectReason: '',
+            decisionNote: '',
+            decidedByUid: '',
+            selectionSource: '',
+            decidedAt: null,
+            updatedAt: now,
+          }]
+        }
+
+        return [{
+          ...row,
+          status: STATUS.CANCELLED,
+          rejectReason: REJECT_REASON.APPROVAL_REVOKED,
+          decisionNote: '',
+          decidedByUid: user.uid,
+          selectionSource: '',
+          decidedAt: now,
+          updatedAt: now,
+        }]
+      }
+
+      if (
+        row.studentUid === app.studentUid
+        && row.cycleId === app.cycleId
+        && row.status === STATUS.CANCELLED
+        && row.rejectReason === REJECT_REASON.HIGHER_CHOICE
+      ) {
+        const reopenedStatus = canReopen ? getReopenedStatus(row.preferenceRank, cycle.currentRound) : ''
+        if (reopenedStatus) {
+          return [{
+            ...row,
+            status: reopenedStatus,
+            rejectReason: '',
+            decisionNote: '',
+            decidedByUid: '',
+            selectionSource: '',
+            decidedAt: null,
+            updatedAt: now,
+          }]
+        }
+      }
+
+      return [row]
+    })
+
+    localMembersByClub.set(
+      club.id,
+      members.filter((row) => row.studentUid !== app.studentUid),
+    )
+
+    await updateScheduleMemberCount(club.id, Math.max(0, Number(club.memberCount || 0) - 1))
+    return {
+      applicationId,
+      removedStudentUid: app.studentUid,
+      restoredCount: studentApps.filter(
+        (row) => row.cycleId === app.cycleId
+          && row.status === STATUS.CANCELLED
+          && row.rejectReason === REJECT_REASON.HIGHER_CHOICE
+          && !!getReopenedStatus(row.preferenceRank, cycle.currentRound),
+      ).length,
+    }
+  }
+
+  const appRef = doc(db, APPLICATIONS, applicationId)
+  const cycleRef = doc(db, CYCLES, CYCLE_DOC_ID)
+  const previewAppSnap = await getDoc(appRef)
+  if (!previewAppSnap.exists()) {
+    throw new Error('신청 정보를 찾을 수 없습니다.')
+  }
+
+  const previewApp = normalizeApplication(previewAppSnap.id, previewAppSnap.data())
+  const studentApps = await getApplicationsByStudent(previewApp.studentUid)
+
+  await runTransaction(db, async (tx) => {
+    const cycleSnap = await tx.get(cycleRef)
+    const cycleData = cycleSnap.exists()
+      ? normalizeCycle(cycleSnap.data())
+      : { id: CYCLE_DOC_ID, currentRound: 1, status: 'open' }
+    if (!allowClosedCycle && cycleData.status !== 'open') {
+      throw new Error('현재 모집 사이클이 닫혀 있습니다.')
+    }
+
+    const appSnap = await tx.get(appRef)
+    if (!appSnap.exists()) {
+      throw new Error('신청 정보를 찾을 수 없습니다.')
+    }
+
+    const app = normalizeApplication(appSnap.id, appSnap.data())
+    if (app.status !== STATUS.APPROVED) {
+      throw new Error('승인 상태 신청만 취소할 수 있습니다.')
+    }
+
+    const clubRef = doc(db, 'schedules', app.clubId)
+    const clubSnap = await tx.get(clubRef)
+    if (!clubSnap.exists()) {
+      throw new Error('동아리 정보를 찾을 수 없습니다.')
+    }
+
+    const club = {
+      id: clubSnap.id,
+      ...clubSnap.data(),
+    }
+    if (!skipPermissionCheck && !canManageSelection(club, user)) {
+      throw new Error('승인 취소 권한이 없습니다.')
+    }
+
+    const memberRef = doc(db, 'schedules', app.clubId, MEMBERS_SUBCOLLECTION, app.studentUid)
+    const assignmentRef = doc(db, ASSIGNMENTS, buildAssignmentDocId(app.cycleId, app.studentUid))
+    const synthetic = isSyntheticAssignedApplication(app)
+    const currentMemberCount = Number(club.memberCount || 0)
+
+    tx.delete(memberRef)
+    tx.delete(assignmentRef)
+    tx.update(clubRef, {
+      memberCount: Math.max(0, currentMemberCount - 1),
+      updatedAt: serverTimestamp(),
+    })
+
+    if (synthetic) {
+      tx.delete(appRef)
+    } else {
+      const reopenedStatus = cycleData.status === 'open'
+        ? getReopenedStatus(app.preferenceRank, cycleData.currentRound)
+        : ''
+      if (reopenedStatus) {
+        tx.update(appRef, {
+          status: reopenedStatus,
+          rejectReason: '',
+          decisionNote: '',
+          decidedByUid: '',
+          selectionSource: '',
+          decidedAt: null,
+          updatedAt: serverTimestamp(),
+        })
+      } else {
+        tx.update(appRef, {
+          status: STATUS.CANCELLED,
+          rejectReason: REJECT_REASON.APPROVAL_REVOKED,
+          decisionNote: '',
+          decidedByUid: user.uid,
+          selectionSource: '',
+          decidedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        })
+      }
+    }
+
+    studentApps
+      .filter(
+        (row) => row.id !== app.id
+          && row.cycleId === app.cycleId
+          && row.status === STATUS.CANCELLED
+          && row.rejectReason === REJECT_REASON.HIGHER_CHOICE,
+      )
+      .forEach((row) => {
+        const reopenedStatus = cycleData.status === 'open'
+          ? getReopenedStatus(row.preferenceRank, cycleData.currentRound)
+          : ''
+        if (!reopenedStatus) return
+        tx.update(doc(db, APPLICATIONS, row.id), {
+          status: reopenedStatus,
+          rejectReason: '',
+          decisionNote: '',
+          decidedByUid: '',
+          selectionSource: '',
+          decidedAt: null,
+          updatedAt: serverTimestamp(),
+        })
+      })
+  })
+
+  return {
+    applicationId,
+    removedStudentUid: previewApp.studentUid,
+  }
+}
+
 export async function randomSelectPending(payload) {
   const clubId = String(payload?.clubId || '')
   const user = assertActor(payload?.actor)
@@ -769,7 +1631,7 @@ export async function randomSelectPending(payload) {
     throw new Error('동아리 ID가 필요합니다.')
   }
 
-  const cycle = await getCurrentRecruitmentCycle()
+  const cycle = await ensureSelectionPhaseReady()
   assertOpenCycle(cycle)
 
   const club = await getScheduleById(clubId)
@@ -834,7 +1696,7 @@ export async function advanceRecruitmentRound(payload) {
     throw new Error('라운드 전환은 관리자만 가능합니다.')
   }
 
-  const cycle = await getCurrentRecruitmentCycle()
+  const cycle = await ensureSelectionPhaseReady()
   assertOpenCycle(cycle)
 
   const allApps = await getAllApplications()
@@ -970,13 +1832,25 @@ async function directAssignMemberInternal(payload, options = {}) {
   const source = String(options?.source || payload?.source || 'manual_assign').trim() || 'manual_assign'
   const requireInterview = options?.requireInterview === true
   const requireLeader = options?.requireLeader === true
+  const requireSelectionReady = options?.requireSelectionReady !== false
+  const allowPreAssignment = options?.allowPreAssignment === true
+  const requireOpenCycle = options?.requireOpenCycle !== false
+  const skipPermissionCheck = options?.skipPermissionCheck === true
+  const ignoreStudentEligibility = options?.ignoreStudentEligibility === true
+  const overrideApproved = options?.overrideApproved === true
+  const overrideRejectReason = String(options?.overrideRejectReason || REJECT_REASON.HIGHER_CHOICE)
+  const decisionNote = String(options?.decisionNote ?? payload?.decisionNote ?? '').trim()
 
   if (!clubId || !studentUid) {
     throw new Error('동아리와 학생을 선택해주세요.')
   }
 
-  const cycle = await getCurrentRecruitmentCycle()
-  assertOpenCycle(cycle)
+  const cycle = requireSelectionReady
+    ? await ensureSelectionPhaseReady({ allowPreAssignment })
+    : await getCurrentRecruitmentCycle()
+  if (requireOpenCycle) {
+    assertOpenCycle(cycle)
+  }
 
   const club = await getScheduleById(clubId)
   if (!club || club.legacy) {
@@ -988,7 +1862,7 @@ async function directAssignMemberInternal(payload, options = {}) {
   if (requireLeader && !club.leaderUid) {
     throw new Error('동아리장이 지정되지 않은 동아리는 직접 선발할 수 없습니다.')
   }
-  if (!canManageSelection(club, user)) {
+  if (!skipPermissionCheck && !canManageSelection(club, user)) {
     throw new Error('직접 선발 권한이 없습니다.')
   }
 
@@ -996,25 +1870,23 @@ async function directAssignMemberInternal(payload, options = {}) {
   if (!student || student.role !== 'student') {
     throw new Error('학생 계정을 찾을 수 없습니다.')
   }
-  if (!student.studentNo || !isStudentEligibleForClub(club, student.studentNo)) {
+  if (!ignoreStudentEligibility && (!student.studentNo || !isStudentEligibleForClub(club, student.studentNo))) {
     throw new Error('대상학년이 아닌 학생은 선발할 수 없습니다.')
   }
 
-  if (club.memberCount >= club.maxMembers) {
-    throw new Error('동아리 정원이 가득 찼습니다.')
-  }
-
   const studentApps = await getApplicationsByStudent(studentUid)
-  const approvedExists = studentApps.some(
+  const approvedApps = studentApps.filter(
     (row) => row.cycleId === cycle.id && row.status === STATUS.APPROVED,
   )
-  if (approvedExists) {
+  const approvedElsewhere = approvedApps.filter((row) => row.clubId !== club.id)
+  if (approvedElsewhere.length > 0 && !overrideApproved) {
     throw new Error('해당 학생은 이미 다른 동아리에 배정되었습니다.')
   }
 
   const existingMembers = await listClubMembers(club.id)
-  if (existingMembers.some((row) => row.studentUid === studentUid)) {
-    throw new Error('이미 선발된 학생입니다.')
+  const memberExists = existingMembers.some((row) => row.studentUid === studentUid)
+  if (!memberExists && club.memberCount >= club.maxMembers) {
+    throw new Error('동아리 정원이 가득 찼습니다.')
   }
 
   if (!isFirebaseEnabled()) {
@@ -1022,20 +1894,54 @@ async function directAssignMemberInternal(payload, options = {}) {
     const members = getLocalMembers(club.id)
     const targetApp = pickDirectAssignApplication(studentApps, cycle.id, club.id)
     let applicationId = targetApp?.id || ''
+    const releasedClubIds = new Set()
 
-    localApplications = localApplications.map((row) => {
+    for (const approved of approvedElsewhere) {
+      if (releasedClubIds.has(approved.clubId)) continue
+      const otherMembers = getLocalMembers(approved.clubId)
+      const hadMember = otherMembers.some((row) => row.studentUid === student.uid)
+      localMembersByClub.set(
+        approved.clubId,
+        otherMembers.filter((row) => row.studentUid !== student.uid),
+      )
+      if (hadMember) {
+        const approvedClub = await getScheduleById(approved.clubId)
+        if (approvedClub) {
+          await updateScheduleMemberCount(approved.clubId, Math.max(0, Number(approvedClub.memberCount || 0) - 1))
+        }
+        releasedClubIds.add(approved.clubId)
+      }
+    }
+
+    localApplications = localApplications.flatMap((row) => {
       if (targetApp && row.id === targetApp.id) {
-        return {
+        return [{
           ...row,
           studentNo: student.studentNo,
           studentName: student.name,
           status: STATUS.APPROVED,
           rejectReason: '',
+          decisionNote,
           decidedByUid: user.uid,
           selectionSource: source,
           decidedAt: now,
           updatedAt: now,
+        }]
+      }
+      if (approvedElsewhere.some((item) => item.id === row.id)) {
+        if (isSyntheticAssignedApplication(row)) {
+          return []
         }
+        return [{
+          ...row,
+          status: STATUS.CANCELLED,
+          rejectReason: overrideRejectReason,
+          decisionNote: '',
+          decidedByUid: user.uid,
+          selectionSource: '',
+          decidedAt: now,
+          updatedAt: now,
+        }]
       }
       if (
         row.cycleId === cycle.id
@@ -1043,15 +1949,18 @@ async function directAssignMemberInternal(payload, options = {}) {
         && row.id !== targetApp?.id
         && (row.status === STATUS.PENDING || row.status === STATUS.WAITING)
       ) {
-        return {
+        return [{
           ...row,
           status: STATUS.CANCELLED,
           rejectReason: REJECT_REASON.HIGHER_CHOICE,
+          decisionNote: '',
           decidedByUid: user.uid,
+          selectionSource: '',
+          decidedAt: now,
           updatedAt: now,
-        }
+        }]
       }
-      return row
+      return [row]
     })
 
     if (!targetApp) {
@@ -1061,22 +1970,27 @@ async function directAssignMemberInternal(payload, options = {}) {
         student,
         actor: user,
         source,
+        decisionNote,
       })
       applicationId = created.id
     }
 
-    members.push({
-      id: student.uid,
-      studentUid: student.uid,
-      studentNo: student.studentNo,
-      name: student.name,
-      source,
-      applicationId,
-      addedByUid: user.uid,
-      addedAt: now,
-    })
+    if (!memberExists) {
+      members.push({
+        id: student.uid,
+        studentUid: student.uid,
+        studentNo: student.studentNo,
+        name: student.name,
+        source,
+        applicationId,
+        addedByUid: user.uid,
+        addedAt: now,
+      })
+    }
 
-    await updateScheduleMemberCount(club.id, club.memberCount + 1)
+    if (!memberExists) {
+      await updateScheduleMemberCount(club.id, club.memberCount + 1)
+    }
     return { applicationId }
   }
 
@@ -1090,33 +2004,46 @@ async function directAssignMemberInternal(payload, options = {}) {
     }
 
     const clubLive = { id: clubSnap.id, ...clubSnap.data() }
-    if (!canManageSelection(clubLive, user)) {
+    if (!skipPermissionCheck && !canManageSelection(clubLive, user)) {
       throw new Error('직접 선발 권한이 없습니다.')
     }
 
     const memberRef = doc(db, 'schedules', club.id, MEMBERS_SUBCOLLECTION, student.uid)
     const memberSnap = await tx.get(memberRef)
-    if (memberSnap.exists()) {
-      throw new Error('이미 선발된 학생입니다.')
-    }
+    const targetMemberExists = memberSnap.exists()
 
     const count = Number(clubLive.memberCount || 0)
     const max = Number(clubLive.maxMembers || 0)
-    if (count >= max) {
+    if (!targetMemberExists && count >= max) {
       throw new Error('동아리 정원이 가득 찼습니다.')
     }
-
-    const studentAppsSnap = await tx.get(
-      query(collection(db, APPLICATIONS), where('studentUid', '==', student.uid)),
-    )
-    const studentAppsLocal = studentAppsSnap.docs.map((item) => normalizeApplication(item.id, item.data()))
-
-    const approved = studentAppsLocal.some((row) => row.cycleId === cycle.id && row.status === STATUS.APPROVED)
-    if (approved) {
+    const assignmentRef = doc(db, ASSIGNMENTS, buildAssignmentDocId(cycle.id, student.uid))
+    const assignmentSnap = await tx.get(assignmentRef)
+    const assignedClubId = String(assignmentSnap.data()?.clubId || '').trim()
+    if (assignedClubId && assignedClubId !== club.id && !overrideApproved) {
       throw new Error('해당 학생은 이미 다른 동아리에 배정되었습니다.')
     }
 
-    const targetApp = pickDirectAssignApplication(studentAppsLocal, cycle.id, club.id)
+    if (!assignmentSnap.exists() && approvedElsewhere.length > 0 && !overrideApproved) {
+      throw new Error('해당 학생은 이미 다른 동아리에 배정되었습니다.')
+    }
+
+    const otherClubRefs = new Map()
+    const otherClubSnaps = new Map()
+    const otherMemberSnaps = new Map()
+    for (const approved of approvedElsewhere) {
+      if (!otherClubRefs.has(approved.clubId)) {
+        const previousClubRef = doc(db, 'schedules', approved.clubId)
+        otherClubRefs.set(approved.clubId, previousClubRef)
+        otherClubSnaps.set(approved.clubId, await tx.get(previousClubRef))
+        otherMemberSnaps.set(
+          approved.clubId,
+          await tx.get(doc(db, 'schedules', approved.clubId, MEMBERS_SUBCOLLECTION, student.uid)),
+        )
+      }
+    }
+
+    const targetApp = pickDirectAssignApplication(studentApps, cycle.id, club.id)
     const assignedAppRef = targetApp
       ? doc(db, APPLICATIONS, targetApp.id)
       : doc(collection(db, APPLICATIONS))
@@ -1127,6 +2054,7 @@ async function directAssignMemberInternal(payload, options = {}) {
         studentName: student.name,
         status: STATUS.APPROVED,
         rejectReason: '',
+        decisionNote,
         decidedByUid: user.uid,
         selectionSource: source,
         decidedAt: serverTimestamp(),
@@ -1145,6 +2073,7 @@ async function directAssignMemberInternal(payload, options = {}) {
         wantedActivity: '',
         status: STATUS.APPROVED,
         rejectReason: '',
+        decisionNote,
         decidedByUid: user.uid,
         selectionSource: source,
         decidedAt: serverTimestamp(),
@@ -1153,22 +2082,71 @@ async function directAssignMemberInternal(payload, options = {}) {
       })
     }
 
-    tx.set(memberRef, {
-      studentUid: student.uid,
-      studentNo: student.studentNo,
-      name: student.name,
-      source,
-      applicationId: assignedAppRef.id,
-      addedByUid: user.uid,
-      addedAt: serverTimestamp(),
+    if (!targetMemberExists) {
+      tx.set(memberRef, {
+        studentUid: student.uid,
+        studentNo: student.studentNo,
+        name: student.name,
+        source,
+        applicationId: assignedAppRef.id,
+        addedByUid: user.uid,
+        addedAt: serverTimestamp(),
+      })
+    }
+    tx.set(
+      assignmentRef,
+      {
+        cycleId: cycle.id,
+        studentUid: student.uid,
+        clubId: club.id,
+        applicationId: assignedAppRef.id,
+        assignedByUid: user.uid,
+        source,
+        decisionNote,
+        ...(assignmentSnap.exists() ? {} : { createdAt: serverTimestamp() }),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    )
+
+    if (!targetMemberExists) {
+      tx.update(clubRef, {
+        memberCount: count + 1,
+        updatedAt: serverTimestamp(),
+      })
+    }
+
+    approvedElsewhere.forEach((row) => {
+      const approvedRef = doc(db, APPLICATIONS, row.id)
+      if (isSyntheticAssignedApplication(row)) {
+        tx.delete(approvedRef)
+      } else {
+        tx.update(approvedRef, {
+          status: STATUS.CANCELLED,
+          rejectReason: overrideRejectReason,
+          decisionNote: '',
+          decidedByUid: user.uid,
+          selectionSource: '',
+          decidedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        })
+      }
+      tx.delete(doc(db, 'schedules', row.clubId, MEMBERS_SUBCOLLECTION, student.uid))
     })
 
-    tx.update(clubRef, {
-      memberCount: count + 1,
-      updatedAt: serverTimestamp(),
-    })
+    for (const [previousClubId, previousClubRef] of otherClubRefs.entries()) {
+      const previousMemberSnap = otherMemberSnaps.get(previousClubId)
+      if (!previousMemberSnap?.exists()) continue
+      const previousClubSnap = otherClubSnaps.get(previousClubId)
+      if (!previousClubSnap.exists()) continue
+      const previousCount = Number(previousClubSnap.data()?.memberCount || 0)
+      tx.update(previousClubRef, {
+        memberCount: Math.max(0, previousCount - 1),
+        updatedAt: serverTimestamp(),
+      })
+    }
 
-    studentAppsLocal
+    studentApps
       .filter(
         (row) => row.id !== assignedAppRef.id
           && row.cycleId === cycle.id
@@ -1178,6 +2156,7 @@ async function directAssignMemberInternal(payload, options = {}) {
         tx.update(doc(db, APPLICATIONS, row.id), {
           status: STATUS.CANCELLED,
           rejectReason: REJECT_REASON.HIGHER_CHOICE,
+          decisionNote: '',
           decidedByUid: user.uid,
           updatedAt: serverTimestamp(),
         })
@@ -1194,6 +2173,28 @@ export async function directAssignStudentToClub(payload) {
     source: 'manual_assign',
     requireInterview: false,
     requireLeader: false,
+    allowPreAssignment: true,
+  })
+}
+
+export async function adminForceAssignStudentToClub(payload) {
+  const actor = assertActor(payload?.actor)
+  if (actor.role !== 'admin') {
+    throw new Error('강제 배정은 관리자만 가능합니다.')
+  }
+
+  const reason = String(payload?.reason || '').trim()
+  if (!reason) {
+    throw new Error('강제 배정 사유를 입력해주세요.')
+  }
+
+  return directAssignMemberInternal(payload, {
+    source: ADMIN_FORCE_SOURCE,
+    requireInterview: false,
+    requireLeader: false,
+    overrideApproved: true,
+    overrideRejectReason: REJECT_REASON.ADMIN_FORCE_ASSIGNED,
+    decisionNote: reason,
   })
 }
 
@@ -1202,7 +2203,183 @@ export async function directSelectInterviewMember(payload) {
     source: 'interview_manual',
     requireInterview: true,
     requireLeader: true,
+    allowPreAssignment: true,
   })
+}
+
+async function ensureApprovedMemberRecord({ club, app, student, actor }) {
+  const source = String(app?.selectionSource || LEADER_AUTO_SOURCE).trim() || LEADER_AUTO_SOURCE
+  const addedByUid = String(app?.decidedByUid || actor?.uid || buildSystemActor(club).uid).trim()
+    || buildSystemActor(club).uid
+
+  if (!isFirebaseEnabled()) {
+    const members = getLocalMembers(club.id)
+    const exists = members.some((row) => row.studentUid === student.uid)
+    if (!exists) {
+      members.push({
+        id: student.uid,
+        studentUid: student.uid,
+        studentNo: student.studentNo,
+        name: student.name,
+        source,
+        applicationId: app.id,
+        addedByUid,
+        addedAt: nowIso(),
+      })
+      await updateScheduleMemberCount(club.id, Number(club.memberCount || 0) + 1)
+      return { changed: true }
+    }
+    return { changed: false }
+  }
+
+  const clubRef = doc(db, 'schedules', club.id)
+  const memberRef = doc(db, 'schedules', club.id, MEMBERS_SUBCOLLECTION, student.uid)
+  const assignmentRef = doc(db, ASSIGNMENTS, buildAssignmentDocId(app.cycleId, student.uid))
+  let changed = false
+
+  await runTransaction(db, async (tx) => {
+    const clubSnap = await tx.get(clubRef)
+    if (!clubSnap.exists()) {
+      throw new Error('동아리 정보를 찾을 수 없습니다.')
+    }
+
+    const memberSnap = await tx.get(memberRef)
+    const assignmentSnap = await tx.get(assignmentRef)
+
+    if (!memberSnap.exists()) {
+      const count = Number(clubSnap.data()?.memberCount || 0)
+      tx.set(memberRef, {
+        studentUid: student.uid,
+        studentNo: student.studentNo,
+        name: student.name,
+        source,
+        applicationId: app.id,
+        addedByUid,
+        addedAt: serverTimestamp(),
+      })
+      tx.update(clubRef, {
+        memberCount: count + 1,
+        updatedAt: serverTimestamp(),
+      })
+      changed = true
+    }
+
+    tx.set(
+      assignmentRef,
+      {
+        cycleId: app.cycleId,
+        studentUid: student.uid,
+        clubId: club.id,
+        applicationId: app.id,
+        assignedByUid: addedByUid,
+        source,
+        ...(assignmentSnap.exists() ? {} : { createdAt: serverTimestamp() }),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    )
+  })
+
+  return { changed }
+}
+
+export async function syncLeaderAssignmentForClub(clubInput) {
+  const clubId = String(clubInput?.id || '').trim()
+  if (!clubId) {
+    throw new Error('동아리 ID가 필요합니다.')
+  }
+
+  const club = await getScheduleById(clubId)
+  if (!club || club.legacy) {
+    return { changed: false }
+  }
+
+  const cycle = await getCurrentRecruitmentCycle()
+  const actor = buildSystemActor(club)
+  let changed = false
+
+  const clubApps = (await getApplicationsByClub(club.id)).filter((row) => row.cycleId === cycle.id)
+  const staleLeaderApps = clubApps.filter(
+    (row) => row.selectionSource === LEADER_AUTO_SOURCE
+      && row.status === STATUS.APPROVED
+      && row.studentUid !== String(club.leaderUid || '').trim(),
+  )
+
+  for (const row of staleLeaderApps) {
+    await revokeApprovedApplication({
+      applicationId: row.id,
+      actor,
+      allowClosedCycle: true,
+      skipPermissionCheck: true,
+    })
+    changed = true
+  }
+
+  const leaderUid = String(club.leaderUid || '').trim()
+  if (!leaderUid) {
+    return { changed }
+  }
+
+  const student = await getUserProfile(leaderUid)
+  if (!student || student.role !== 'student') {
+    return { changed }
+  }
+
+  const studentApps = await getApplicationsByStudent(leaderUid)
+  const approvedSameClub = studentApps.find(
+    (row) => row.cycleId === cycle.id && row.clubId === club.id && row.status === STATUS.APPROVED,
+  )
+  const approvedElsewhere = studentApps.filter(
+    (row) => row.cycleId === cycle.id && row.clubId !== club.id && row.status === STATUS.APPROVED,
+  )
+
+  if (approvedSameClub && approvedElsewhere.length === 0) {
+    const repaired = await ensureApprovedMemberRecord({
+      club,
+      app: approvedSameClub,
+      student,
+      actor,
+    })
+    return { changed: changed || repaired.changed }
+  }
+
+  await directAssignMemberInternal(
+    {
+      clubId: club.id,
+      studentUid: leaderUid,
+      actor,
+    },
+    {
+      source: LEADER_AUTO_SOURCE,
+      requireInterview: false,
+      requireLeader: false,
+      requireSelectionReady: false,
+      requireOpenCycle: false,
+      skipPermissionCheck: true,
+      ignoreStudentEligibility: true,
+      overrideApproved: true,
+      overrideRejectReason: REJECT_REASON.LEADER_ASSIGNED,
+    },
+  )
+
+  return { changed: true }
+}
+
+export async function syncLeaderAssignmentsForClubs(clubs, options = {}) {
+  const rows = Array.isArray(clubs) ? clubs : []
+  const continueOnError = options?.continueOnError === true
+  let changed = 0
+
+  for (const club of rows) {
+    try {
+      const result = await syncLeaderAssignmentForClub(club)
+      if (result?.changed) changed += 1
+    } catch (error) {
+      if (!continueOnError) throw error
+    }
+  }
+
+  return { changed }
 }
 
 export async function purgeLegacyRecruitmentData(payload) {
@@ -1222,10 +2399,16 @@ export async function purgeLegacyRecruitmentData(payload) {
 
   if (!isFirebaseEnabled()) {
     localApplications = []
+    localDrafts.clear()
     localCycle = {
       id: CYCLE_DOC_ID,
       currentRound: 1,
       status: 'open',
+      preAssignmentStartAt: null,
+      preAssignmentEndAt: null,
+      submissionStartAt: null,
+      submissionEndAt: null,
+      submissionFinalizedAt: null,
       updatedAt: nowIso(),
     }
     localMembersByClub.clear()
@@ -1239,9 +2422,28 @@ export async function purgeLegacyRecruitmentData(payload) {
     await batch.commit()
   }
 
+  const assignmentsSnapshot = await getDocs(collection(db, ASSIGNMENTS))
+  for (const rows of chunk(assignmentsSnapshot.docs, 400)) {
+    const batch = writeBatch(db)
+    rows.forEach((row) => batch.delete(row.ref))
+    await batch.commit()
+  }
+
+  const draftsSnapshot = await getDocs(collection(db, DRAFTS))
+  for (const rows of chunk(draftsSnapshot.docs, 400)) {
+    const batch = writeBatch(db)
+    rows.forEach((row) => batch.delete(row.ref))
+    await batch.commit()
+  }
+
   await setDoc(doc(db, CYCLES, CYCLE_DOC_ID), {
     currentRound: 1,
     status: 'open',
+    preAssignmentStartAt: null,
+    preAssignmentEndAt: null,
+    submissionStartAt: null,
+    submissionEndAt: null,
+    submissionFinalizedAt: null,
     updatedAt: serverTimestamp(),
   })
 }

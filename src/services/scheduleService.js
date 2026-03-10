@@ -420,12 +420,20 @@ export async function deleteSchedule(scheduleId, options = {}) {
   const appsByScheduleSnap = await getDocs(
     query(collection(db, 'applications'), where('scheduleId', '==', scheduleId)),
   )
+  const assignmentsSnap = await getDocs(
+    query(collection(db, 'recruitmentAssignments'), where('clubId', '==', scheduleId)),
+  )
+  const draftsSnap = await getDocs(
+    query(collection(db, 'applicationDrafts'), where('clubIds', 'array-contains', scheduleId)),
+  )
 
   const refsMap = new Map()
   membersSnap.docs.forEach((row) => refsMap.set(row.ref.path, row.ref))
   studentsSnap.docs.forEach((row) => refsMap.set(row.ref.path, row.ref))
   appsByClubSnap.docs.forEach((row) => refsMap.set(row.ref.path, row.ref))
   appsByScheduleSnap.docs.forEach((row) => refsMap.set(row.ref.path, row.ref))
+  assignmentsSnap.docs.forEach((row) => refsMap.set(row.ref.path, row.ref))
+  draftsSnap.docs.forEach((row) => refsMap.set(row.ref.path, row.ref))
   refsMap.set(scheduleRef.path, scheduleRef)
 
   const refs = Array.from(refsMap.values())

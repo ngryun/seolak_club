@@ -24,11 +24,19 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /applicationDrafts/{draftId} {
+      allow read, write: if true;
+    }
+
     match /clubRooms/{roomId} {
       allow read, write: if true;
     }
 
     match /recruitmentCycles/{cycleId} {
+      allow read, write: if true;
+    }
+
+    match /recruitmentAssignments/{assignmentId} {
       allow read, write: if true;
     }
   }
