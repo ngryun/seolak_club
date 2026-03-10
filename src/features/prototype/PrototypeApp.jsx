@@ -731,6 +731,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
   const navByRole = {
     admin: [
       { key: "clubs", label: "동아리 관리" },
+      { key: "requestCards", label: "공통 신청 카드" },
       { key: "studentStatus", label: "학생 신청 현황" },
       { key: "round", label: "동아리 선발 진행" },
       { key: "users", label: "회원 관리" },
@@ -4407,32 +4408,32 @@ export default function PrototypeApp() {
               onOpenApplicants={openApplicantDialog}
               onOpenInterviewSelect={openInterviewDialog}
             />
-
-            {user.role === "admin" ? (
-              <RequestCardAdminPanel
-                cards={requestCards}
-                form={requestCardForm}
-                setForm={setRequestCardForm}
-                editingId={editingRequestCardId}
-                loading={requestCardLoading}
-                onRefresh={async () => {
-                  try {
-                    await refreshRequestCards();
-                    setMessage({ type: "ok", text: "신청 카드 목록을 새로고침했습니다." });
-                  } catch (error) {
-                    withMessageError(error, "신청 카드 목록 새로고침에 실패했습니다.");
-                  }
-                }}
-                onSubmit={handleSaveRequestCard}
-                onStartEdit={handleEditRequestCard}
-                onCancelEdit={resetRequestCardForm}
-                onDelete={handleDeleteRequestCard}
-                onDraw={handleDrawRequestCard}
-                onOpenApplications={openRequestCardDialog}
-              />
-            ) : null}
           </div>
         ) : null
+      ) : null}
+
+      {tab === "requestCards" && user.role === "admin" ? (
+        <RequestCardAdminPanel
+          cards={requestCards}
+          form={requestCardForm}
+          setForm={setRequestCardForm}
+          editingId={editingRequestCardId}
+          loading={requestCardLoading}
+          onRefresh={async () => {
+            try {
+              await refreshRequestCards();
+              setMessage({ type: "ok", text: "신청 카드 목록을 새로고침했습니다." });
+            } catch (error) {
+              withMessageError(error, "신청 카드 목록 새로고침에 실패했습니다.");
+            }
+          }}
+          onSubmit={handleSaveRequestCard}
+          onStartEdit={handleEditRequestCard}
+          onCancelEdit={resetRequestCardForm}
+          onDelete={handleDeleteRequestCard}
+          onDraw={handleDrawRequestCard}
+          onOpenApplications={openRequestCardDialog}
+        />
       ) : null}
 
       {tab === "myClubs" && user.role === "teacher" ? (
