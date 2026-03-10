@@ -739,25 +739,31 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
     ],
     teacher: [
       { key: "myClubs", label: "내 동아리" },
-      { key: "extraRequests", label: "기타신청현황" },
-      { key: "studentStatus", label: "학생 신청 현황" },
       { key: "clubOverview", label: "동아리개설현황" },
+      { key: "studentStatus", label: "학생 신청 현황" },
+      { type: "divider" },
+      { key: "extraRequests", label: "기타신청현황" },
+      { type: "divider" },
       { key: "profile", label: "내 정보" },
     ],
     student: isStudentLeader
       ? [
         { key: "apply", label: "동아리 신청" },
         { key: "my", label: "신청 현황" },
-        { key: "extraRequests", label: "기타신청현황" },
         { key: "clubOverview", label: "동아리개설현황" },
         { key: "clubs", label: "동아리 수정(동아리장)" },
+        { type: "divider" },
+        { key: "extraRequests", label: "기타신청현황" },
+        { type: "divider" },
         { key: "profile", label: "내 정보" },
       ]
       : [
         { key: "apply", label: "동아리 신청" },
         { key: "my", label: "신청 현황" },
-        { key: "extraRequests", label: "기타신청현황" },
         { key: "clubOverview", label: "동아리개설현황" },
+        { type: "divider" },
+        { key: "extraRequests", label: "기타신청현황" },
+        { type: "divider" },
         { key: "profile", label: "내 정보" },
       ],
   };
@@ -786,7 +792,15 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
           <div style={{ display: "grid", gap: 12 }}>
             <nav style={{ ...cardStyle, padding: 8 }}>
               <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>
-                {nav.map((item) => {
+                {nav.map((item, index) => {
+                  if (item.type === "divider") {
+                    return (
+                      <div
+                        key={`divider-${index}`}
+                        style={{ width: 1, minWidth: 1, alignSelf: "stretch", background: t.border, margin: "4px 2px" }}
+                      />
+                    );
+                  }
                   const active = tab === item.key;
                   return (
                     <button
@@ -813,7 +827,15 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
           <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 12 }}>
             <aside style={{ ...cardStyle, height: "fit-content", padding: 10 }}>
               <div style={{ display: "grid", gap: 6 }}>
-                {nav.map((item) => {
+                {nav.map((item, index) => {
+                  if (item.type === "divider") {
+                    return (
+                      <div
+                        key={`divider-${index}`}
+                        style={{ height: 1, background: t.border, margin: "4px 2px" }}
+                      />
+                    );
+                  }
                   const active = tab === item.key;
                   return (
                     <button
