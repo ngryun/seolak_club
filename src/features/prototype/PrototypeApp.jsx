@@ -739,6 +739,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
     ],
     teacher: [
       { key: "myClubs", label: "내 동아리" },
+      { key: "extraRequests", label: "기타신청현황" },
       { key: "studentStatus", label: "학생 신청 현황" },
       { key: "clubOverview", label: "동아리개설현황" },
       { key: "profile", label: "내 정보" },
@@ -747,6 +748,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
       ? [
         { key: "apply", label: "동아리 신청" },
         { key: "my", label: "신청 현황" },
+        { key: "extraRequests", label: "기타신청현황" },
         { key: "clubOverview", label: "동아리개설현황" },
         { key: "clubs", label: "동아리 수정(동아리장)" },
         { key: "profile", label: "내 정보" },
@@ -754,6 +756,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
       : [
         { key: "apply", label: "동아리 신청" },
         { key: "my", label: "신청 현황" },
+        { key: "extraRequests", label: "기타신청현황" },
         { key: "clubOverview", label: "동아리개설현황" },
         { key: "profile", label: "내 정보" },
       ],
@@ -2736,7 +2739,7 @@ function RequestCardUserSection({
       <div style={{ borderTop: `2px dashed ${t.border}`, paddingTop: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
           <div>
-            <h2 style={{ fontSize: 17 }}>기타 신청 카드</h2>
+            <h2 style={{ fontSize: 17 }}>기타 신청 현황</h2>
             <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
               동아리 외에 관리자가 연 신청 항목을 여기서 신청하고 추첨 결과를 확인할 수 있습니다.
             </div>
@@ -4437,76 +4440,40 @@ export default function PrototypeApp() {
       ) : null}
 
       {tab === "myClubs" && user.role === "teacher" ? (
-        <div style={{ display: "grid", gap: 12 }}>
-          <ClubTable
-            actor={user}
-            clubs={teacherOwnedClubs}
-            userMap={userMap}
-            cycle={cycle}
-            roundStats={roundStats}
-            canCreate={canCreateClub}
-            onCreate={openCreateClubDialog}
-            onOpenDetail={openClubDetail}
-            onEdit={handleEditClub}
-            onDelete={handleDeleteClub}
-            onOpenApplicants={openApplicantDialog}
-            onOpenInterviewSelect={openInterviewDialog}
-          />
-          <RequestCardUserSection
-            user={user}
-            cards={requestCards}
-            myApplications={myRequestCardApplications}
-            loading={requestCardLoading}
-            onRefresh={async () => {
-              try {
-                await Promise.all([refreshRequestCards(), refreshMyRequestCardApplications()]);
-                setMessage({ type: "ok", text: "추가 신청 카드 목록을 새로고침했습니다." });
-              } catch (error) {
-                withMessageError(error, "추가 신청 카드 목록 새로고침에 실패했습니다.");
-              }
-            }}
-            onApply={handleApplyRequestCard}
-            onCancel={handleCancelRequestCard}
-          />
-        </div>
+        <ClubTable
+          actor={user}
+          clubs={teacherOwnedClubs}
+          userMap={userMap}
+          cycle={cycle}
+          roundStats={roundStats}
+          canCreate={canCreateClub}
+          onCreate={openCreateClubDialog}
+          onOpenDetail={openClubDetail}
+          onEdit={handleEditClub}
+          onDelete={handleDeleteClub}
+          onOpenApplicants={openApplicantDialog}
+          onOpenInterviewSelect={openInterviewDialog}
+        />
       ) : null}
 
       {tab === "clubOverview" && (user.role === "teacher" || user.role === "student") ? (
-        <div style={{ display: "grid", gap: 12 }}>
-          <ClubTable
-            actor={user}
-            clubs={visibleClubs}
-            userMap={userMap}
-            cycle={cycle}
-            roundStats={roundStats}
-            canCreate={false}
-            onCreate={openCreateClubDialog}
-            onOpenDetail={openClubDetail}
-            onEdit={handleEditClub}
-            onDelete={handleDeleteClub}
-            onOpenApplicants={openApplicantDialog}
-            onOpenInterviewSelect={openInterviewDialog}
-            showCapacity={user.role !== "student"}
-            showRoundStatus={user.role !== "student"}
-            showActions={user.role !== "student"}
-          />
-          <RequestCardUserSection
-            user={user}
-            cards={requestCards}
-            myApplications={myRequestCardApplications}
-            loading={requestCardLoading}
-            onRefresh={async () => {
-              try {
-                await Promise.all([refreshRequestCards(), refreshMyRequestCardApplications()]);
-                setMessage({ type: "ok", text: "추가 신청 카드 목록을 새로고침했습니다." });
-              } catch (error) {
-                withMessageError(error, "추가 신청 카드 목록 새로고침에 실패했습니다.");
-              }
-            }}
-            onApply={handleApplyRequestCard}
-            onCancel={handleCancelRequestCard}
-          />
-        </div>
+        <ClubTable
+          actor={user}
+          clubs={visibleClubs}
+          userMap={userMap}
+          cycle={cycle}
+          roundStats={roundStats}
+          canCreate={false}
+          onCreate={openCreateClubDialog}
+          onOpenDetail={openClubDetail}
+          onEdit={handleEditClub}
+          onDelete={handleDeleteClub}
+          onOpenApplicants={openApplicantDialog}
+          onOpenInterviewSelect={openInterviewDialog}
+          showCapacity={user.role !== "student"}
+          showRoundStatus={user.role !== "student"}
+          showActions={user.role !== "student"}
+        />
       ) : null}
 
       {tab === "round" && user.role === "admin" ? (
@@ -4590,40 +4557,41 @@ export default function PrototypeApp() {
       ) : null}
 
       {tab === "apply" && user.role === "student" ? (
-        <div style={{ display: "grid", gap: 12 }}>
-          <StudentApplyPanel
-            key={studentApplyFormKey}
-            user={user}
-            cycle={cycle}
-            clubs={visibleClubs}
-            draft={myDraft}
-            submissionState={submissionState}
-            myApplications={myApplications}
-            submitting={studentSubmitLoading}
-            onSubmit={handleStudentPreferenceSubmit}
-            onCancelDraft={handleCancelStudentDraft}
-          />
-          <RequestCardUserSection
-            user={user}
-            cards={requestCards}
-            myApplications={myRequestCardApplications}
-            loading={requestCardLoading}
-            onRefresh={async () => {
-              try {
-                await Promise.all([refreshRequestCards(), refreshMyRequestCardApplications()]);
-                setMessage({ type: "ok", text: "추가 신청 카드 목록을 새로고침했습니다." });
-              } catch (error) {
-                withMessageError(error, "추가 신청 카드 목록 새로고침에 실패했습니다.");
-              }
-            }}
-            onApply={handleApplyRequestCard}
-            onCancel={handleCancelRequestCard}
-          />
-        </div>
+        <StudentApplyPanel
+          key={studentApplyFormKey}
+          user={user}
+          cycle={cycle}
+          clubs={visibleClubs}
+          draft={myDraft}
+          submissionState={submissionState}
+          myApplications={myApplications}
+          submitting={studentSubmitLoading}
+          onSubmit={handleStudentPreferenceSubmit}
+          onCancelDraft={handleCancelStudentDraft}
+        />
       ) : null}
 
       {tab === "my" && user.role === "student" ? (
         <StudentMyPanel apps={myApplications} />
+      ) : null}
+
+      {tab === "extraRequests" && (user.role === "teacher" || user.role === "student") ? (
+        <RequestCardUserSection
+          user={user}
+          cards={requestCards}
+          myApplications={myRequestCardApplications}
+          loading={requestCardLoading}
+          onRefresh={async () => {
+            try {
+              await Promise.all([refreshRequestCards(), refreshMyRequestCardApplications()]);
+              setMessage({ type: "ok", text: "기타 신청 카드 목록을 새로고침했습니다." });
+            } catch (error) {
+              withMessageError(error, "기타 신청 카드 목록 새로고침에 실패했습니다.");
+            }
+          }}
+          onApply={handleApplyRequestCard}
+          onCancel={handleCancelRequestCard}
+        />
       ) : null}
 
       {tab === "profile" ? (
