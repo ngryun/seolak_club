@@ -461,7 +461,7 @@ export async function downloadUserAccountTemplate() {
   const sampleRows = [
     ACCOUNT_HEADERS,
     ['김교사', 'teacher123', '김교사', '교사', '', '', '국어'],
-    ['26001', 'student123', '홍길동', '학생', '26001', '', ''],
+    ['20912', 'student123', '홍길동', '학생', '20912', '', ''],
   ]
   const ws = XLSX.utils.aoa_to_sheet(sampleRows)
   ws['!cols'] = [

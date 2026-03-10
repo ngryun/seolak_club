@@ -461,7 +461,7 @@ function LoginPanel({ onLogin, loading, error }) {
               value={loginId}
               onChange={(e) => setLoginId(e.target.value)}
               style={inputBase}
-              placeholder={tab === "teacher" ? "예: 김교사" : "예: 26001"}
+              placeholder={tab === "teacher" ? "예: 김교사" : "예: 20912"}
             />
           </div>
 
@@ -510,7 +510,7 @@ function LoginPanel({ onLogin, loading, error }) {
           </button>
 
           <div style={{ fontSize: 12, color: t.textSub, lineHeight: 1.5 }}>
-            학생은 학번(5자리 숫자) + 이름 + 비밀번호를 입력해야 로그인됩니다.
+            학생은 학번(5자리 숫자, 예: 20912) + 이름 + 비밀번호를 입력해야 로그인됩니다.
           </div>
         </div>
       </div>
