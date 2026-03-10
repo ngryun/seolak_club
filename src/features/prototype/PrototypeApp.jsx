@@ -58,6 +58,7 @@ import {
   downloadUserAccountTemplate,
   listUsers,
   parseUserAccountExcel,
+  resetStudentPasswordsByAdmin,
   resetUserPasswordByAdmin,
   updateMyProfile,
   updateMyPassword,
@@ -2881,7 +2882,9 @@ function UserManagementPanel({
   onUpdate,
   onDelete,
   onResetPassword,
+  onResetStudentPasswords,
   loading,
+  bulkResetLoading,
 }) {
   const [search, setSearch] = useState("");
   const [createForm, setCreateForm] = useState({
@@ -3012,12 +3015,26 @@ function UserManagementPanel({
       <section style={cardStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
           <h2 style={{ fontSize: 17 }}>회원 목록</h2>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ ...inputBase, width: 260 }}
-            placeholder="아이디/이름/학번 검색"
-          />
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              onClick={onResetStudentPasswords}
+              disabled={bulkResetLoading || loading}
+              style={{
+                ...buttonBase,
+                background: bulkResetLoading || loading ? "#cfd8e3" : "#fff3e0",
+                color: bulkResetLoading || loading ? "#6b7280" : t.warn,
+                fontWeight: 700,
+              }}
+            >
+              {bulkResetLoading ? "학생 비번 초기화 중..." : "학생 비번 일괄 초기화"}
+            </button>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ ...inputBase, width: 260 }}
+              placeholder="아이디/이름/학번 검색"
+            />
+          </div>
         </div>
 
         <div style={{ overflowX: "auto" }}>
@@ -3327,6 +3344,7 @@ export default function PrototypeApp() {
   const [loading, setLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [myPasswordLoading, setMyPasswordLoading] = useState(false);
+  const [bulkResetLoading, setBulkResetLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [message, setMessage] = useState({ type: "", text: "" });
 
@@ -4323,6 +4341,31 @@ export default function PrototypeApp() {
     }
   }
 
+  async function handleResetStudentPasswords() {
+    const studentCount = users.filter((row) => row.role === "student").length;
+    if (studentCount === 0) {
+      setMessage({ type: "warn", text: "초기화할 학생 계정이 없습니다." });
+      return;
+    }
+
+    const nextPassword = window.prompt(`학생 ${studentCount}명의 새 비밀번호를 입력하세요`, "123456");
+    if (!nextPassword) return;
+
+    if (!window.confirm(`학생 ${studentCount}명의 비밀번호를 모두 같은 값으로 초기화할까요?`)) {
+      return;
+    }
+
+    try {
+      setBulkResetLoading(true);
+      const result = await resetStudentPasswordsByAdmin(nextPassword);
+      setMessage({ type: "ok", text: `학생 비밀번호를 일괄 초기화했습니다. (${result.count}명)` });
+    } catch (error) {
+      withMessageError(error, "학생 비밀번호 일괄 초기화에 실패했습니다.");
+    } finally {
+      setBulkResetLoading(false);
+    }
+  }
+
   async function handleSaveMyProfile(form) {
     try {
       await updateMyProfile(user.uid, form);
@@ -4568,6 +4611,7 @@ export default function PrototypeApp() {
         <UserManagementPanel
           currentUser={user}
           users={users}
+          bulkResetLoading={bulkResetLoading}
           onRefresh={async () => {
             try {
               await refreshUsers();
@@ -4582,6 +4626,7 @@ export default function PrototypeApp() {
           onUpdate={handleUpdateUser}
           onDelete={handleDeleteUser}
           onResetPassword={handleResetPassword}
+          onResetStudentPasswords={handleResetStudentPasswords}
           loading={loading}
         />
       ) : null}
