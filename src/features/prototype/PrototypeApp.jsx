@@ -366,6 +366,11 @@ function requestCardPhaseDescription(card, state) {
   return "";
 }
 
+function canUseRequestCard(card, user) {
+  const normalizedRole = user?.role === "admin" ? "teacher" : user?.role;
+  return card?.targetRole === normalizedRole;
+}
+
 function MessageBar({ message, onClose }) {
   if (!message?.text) return null;
   const colors = {
@@ -731,10 +736,13 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
   const navByRole = {
     admin: [
       { key: "clubs", label: "동아리 관리" },
-      { key: "requestCards", label: "공통 신청 카드" },
       { key: "studentStatus", label: "학생 신청 현황" },
       { key: "round", label: "동아리 선발 진행" },
       { key: "users", label: "회원 관리" },
+      { type: "divider" },
+      { key: "extraRequests", label: "기타신청현황" },
+      { key: "requestCards", label: "공통 신청카드 관리" },
+      { type: "divider" },
       { key: "profile", label: "내 정보" },
     ],
     teacher: [
@@ -2745,7 +2753,7 @@ function RequestCardUserSection({
   const visibleCards = useMemo(() => {
     const phaseRank = { open: 0, before: 1, closed: 2, drawn: 3, unconfigured: 4 };
     return (cards || [])
-      .filter((card) => card.targetRole === user?.role)
+      .filter((card) => canUseRequestCard(card, user))
       .sort((a, b) => {
         const leftState = getRequestCardState(a);
         const rightState = getRequestCardState(b);
@@ -3453,7 +3461,7 @@ export default function PrototypeApp() {
   }
 
   async function refreshMyRequestCardApplications() {
-    if (user?.role !== "student" && user?.role !== "teacher") {
+    if (user?.role !== "student" && user?.role !== "teacher" && user?.role !== "admin") {
       setMyRequestCardApplications([]);
       return [];
     }
@@ -4597,7 +4605,7 @@ export default function PrototypeApp() {
         <StudentMyPanel apps={myApplications} />
       ) : null}
 
-      {tab === "extraRequests" && (user.role === "teacher" || user.role === "student") ? (
+      {tab === "extraRequests" && (user.role === "admin" || user.role === "teacher" || user.role === "student") ? (
         <RequestCardUserSection
           user={user}
           cards={requestCards}
