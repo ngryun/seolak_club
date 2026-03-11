@@ -991,40 +991,47 @@ export async function finalizeCurrentCycleDraftsIfNeeded() {
     return { finalized: true, created: appRows.length, skipped }
   }
 
-  for (const rows of chunk(appRows, 350)) {
-    const batch = writeBatch(db)
-    rows.forEach((row) => {
-      const ref = doc(db, APPLICATIONS, row.id)
-      batch.set(
-        ref,
-        {
-          cycleId: row.cycleId,
-          studentUid: row.studentUid,
-          studentNo: row.studentNo,
-          studentName: row.studentName,
-          clubId: row.clubId,
-          preferenceRank: row.preferenceRank,
-          careerGoal: row.careerGoal,
-          applyReason: row.applyReason,
-          wantedActivity: row.wantedActivity,
-          status: row.status,
-          rejectReason: row.rejectReason,
-          decisionNote: row.decisionNote,
-          decidedByUid: row.decidedByUid,
-          selectionSource: row.selectionSource,
-          decidedAt: null,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true },
-      )
+  // 지원서 생성과 초안 삭제를 같은 배치에 묶어 원자성 보장
+  // Firestore 배치 한도(500)를 고려하여 지원서+초안을 함께 청킹
+  const allOps = []
+  appRows.forEach((row) => {
+    allOps.push({
+      type: 'set',
+      ref: doc(db, APPLICATIONS, row.id),
+      data: {
+        cycleId: row.cycleId,
+        studentUid: row.studentUid,
+        studentNo: row.studentNo,
+        studentName: row.studentName,
+        clubId: row.clubId,
+        preferenceRank: row.preferenceRank,
+        careerGoal: row.careerGoal,
+        applyReason: row.applyReason,
+        wantedActivity: row.wantedActivity,
+        status: row.status,
+        rejectReason: row.rejectReason,
+        decisionNote: row.decisionNote,
+        decidedByUid: row.decidedByUid,
+        selectionSource: row.selectionSource,
+        decidedAt: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      },
     })
-    await batch.commit()
-  }
+  })
+  draftIds.forEach((draftId) => {
+    allOps.push({ type: 'delete', ref: doc(db, DRAFTS, draftId) })
+  })
 
-  for (const ids of chunk(draftIds, 350)) {
+  for (const ops of chunk(allOps, 400)) {
     const batch = writeBatch(db)
-    ids.forEach((draftId) => batch.delete(doc(db, DRAFTS, draftId)))
+    ops.forEach((op) => {
+      if (op.type === 'delete') {
+        batch.delete(op.ref)
+      } else {
+        batch.set(op.ref, op.data, { merge: true })
+      }
+    })
     await batch.commit()
   }
 
@@ -1185,12 +1192,6 @@ async function approveApplicationInternal({ applicationId, actor, source = 'appr
 
   const appRef = doc(db, APPLICATIONS, applicationId)
   const cycleRef = doc(db, CYCLES, CYCLE_DOC_ID)
-  const previewAppSnap = await getDoc(appRef)
-  if (!previewAppSnap.exists()) {
-    throw new Error('신청 정보를 찾을 수 없습니다.')
-  }
-  const previewApp = normalizeApplication(previewAppSnap.id, previewAppSnap.data())
-  const byStudent = await getApplicationsByStudent(previewApp.studentUid)
 
   await runTransaction(db, async (tx) => {
     const appSnap = await tx.get(appRef)
@@ -1241,6 +1242,12 @@ async function approveApplicationInternal({ applicationId, actor, source = 'appr
     if (assignedClubId && assignedClubId !== app.clubId) {
       throw new Error('해당 학생은 이미 다른 동아리에 배정되었습니다.')
     }
+
+    // 트랜잭션 내부에서 학생의 모든 지원서를 조회하여 race condition 방지
+    const byStudentSnap = await getDocs(
+      query(collection(db, APPLICATIONS), where('studentUid', '==', app.studentUid)),
+    )
+    const byStudent = byStudentSnap.docs.map((d) => normalizeApplication(d.id, d.data()))
 
     const alreadyApproved = byStudent.some(
       (row) => row.id !== app.id && row.cycleId === app.cycleId && row.status === STATUS.APPROVED,
@@ -1507,13 +1514,8 @@ export async function revokeApprovedApplication(payload) {
 
   const appRef = doc(db, APPLICATIONS, applicationId)
   const cycleRef = doc(db, CYCLES, CYCLE_DOC_ID)
-  const previewAppSnap = await getDoc(appRef)
-  if (!previewAppSnap.exists()) {
-    throw new Error('신청 정보를 찾을 수 없습니다.')
-  }
 
-  const previewApp = normalizeApplication(previewAppSnap.id, previewAppSnap.data())
-  const studentApps = await getApplicationsByStudent(previewApp.studentUid)
+  let removedStudentUid = ''
 
   await runTransaction(db, async (tx) => {
     const cycleSnap = await tx.get(cycleRef)
@@ -1533,6 +1535,7 @@ export async function revokeApprovedApplication(payload) {
     if (app.status !== STATUS.APPROVED) {
       throw new Error('승인 상태 신청만 취소할 수 있습니다.')
     }
+    removedStudentUid = app.studentUid
 
     const clubRef = doc(db, 'schedules', app.clubId)
     const clubSnap = await tx.get(clubRef)
@@ -1589,6 +1592,12 @@ export async function revokeApprovedApplication(payload) {
       }
     }
 
+    // 트랜잭션 내부에서 학생의 지원서를 조회하여 데이터 일관성 보장
+    const studentAppsSnap = await getDocs(
+      query(collection(db, APPLICATIONS), where('studentUid', '==', app.studentUid)),
+    )
+    const studentApps = studentAppsSnap.docs.map((d) => normalizeApplication(d.id, d.data()))
+
     studentApps
       .filter(
         (row) => row.id !== app.id
@@ -1615,7 +1624,7 @@ export async function revokeApprovedApplication(payload) {
 
   return {
     applicationId,
-    removedStudentUid: previewApp.studentUid,
+    removedStudentUid,
   }
 }
 
@@ -1650,25 +1659,39 @@ export async function randomSelectPending(payload) {
     throw new Error('현재 라운드 대기 신청자가 없습니다.')
   }
 
-  const seats = Math.max(0, Number(club.maxMembers || 0) - Number(club.memberCount || 0))
   const shuffled = shuffle(rows)
-  const selected = shuffled.slice(0, seats)
-  const rejected = shuffled.slice(seats)
+  let selectedCount = 0
+  let rejectedCount = 0
 
-  for (const row of selected) {
-    await approveApplicationInternal({
-      applicationId: row.id,
-      actor: user,
-      source: 'random',
-    })
-  }
-
-  for (const row of rejected) {
-    await rejectApplication({
-      applicationId: row.id,
-      actor: user,
-      reason: REJECT_REASON.RANDOM_UNSELECTED,
-    })
+  for (const row of shuffled) {
+    // 매 승인마다 최신 클럽 정보를 다시 읽어 정원 초과 방지
+    const freshClub = await getScheduleById(clubId)
+    const seats = Math.max(0, Number(freshClub.maxMembers || 0) - Number(freshClub.memberCount || 0))
+    if (seats > 0) {
+      try {
+        await approveApplicationInternal({
+          applicationId: row.id,
+          actor: user,
+          source: 'random',
+        })
+        selectedCount++
+      } catch {
+        // 이미 다른 동아리에 배정된 학생 등 승인 실패 시 반려 처리
+        await rejectApplication({
+          applicationId: row.id,
+          actor: user,
+          reason: REJECT_REASON.RANDOM_UNSELECTED,
+        })
+        rejectedCount++
+      }
+    } else {
+      await rejectApplication({
+        applicationId: row.id,
+        actor: user,
+        reason: REJECT_REASON.RANDOM_UNSELECTED,
+      })
+      rejectedCount++
+    }
   }
 
   await updateSchedule(
@@ -1680,8 +1703,8 @@ export async function randomSelectPending(payload) {
   )
 
   return {
-    selected: selected.length,
-    rejected: rejected.length,
+    selected: selectedCount,
+    rejected: rejectedCount,
   }
 }
 
@@ -1770,6 +1793,19 @@ export async function advanceRecruitmentRound(payload) {
 
     const club = await getScheduleById(row.clubId)
     if (!club || club.legacy || club.isInterviewSelection || !club.leaderUid || !isStudentEligibleForClub(club, row.studentNo)) {
+      patches.push({
+        id: row.id,
+        status: STATUS.REJECTED,
+        rejectReason: REJECT_REASON.ROUND_INELIGIBLE,
+        decidedByUid: user.uid,
+      })
+      continue
+    }
+
+    // 정원이 이미 찬 동아리의 대기 신청은 자동 반려
+    const currentMemberCount = Number(club.memberCount || 0)
+    const maxMembers = Number(club.maxMembers || 0)
+    if (maxMembers > 0 && currentMemberCount >= maxMembers) {
       patches.push({
         id: row.id,
         status: STATUS.REJECTED,
@@ -2019,14 +2055,23 @@ async function directAssignMemberInternal(payload, options = {}) {
       throw new Error('해당 학생은 이미 다른 동아리에 배정되었습니다.')
     }
 
-    if (!assignmentSnap.exists() && approvedElsewhere.length > 0 && !overrideApproved) {
+    // 트랜잭션 내부에서 학생의 지원서를 다시 조회하여 일관성 보장
+    const freshStudentAppsSnap = await getDocs(
+      query(collection(db, APPLICATIONS), where('studentUid', '==', student.uid)),
+    )
+    const freshStudentApps = freshStudentAppsSnap.docs.map((d) => normalizeApplication(d.id, d.data()))
+    const freshApprovedElsewhere = freshStudentApps.filter(
+      (row) => row.cycleId === cycle.id && row.status === STATUS.APPROVED && row.clubId !== club.id,
+    )
+
+    if (!assignmentSnap.exists() && freshApprovedElsewhere.length > 0 && !overrideApproved) {
       throw new Error('해당 학생은 이미 다른 동아리에 배정되었습니다.')
     }
 
     const otherClubRefs = new Map()
     const otherClubSnaps = new Map()
     const otherMemberSnaps = new Map()
-    for (const approved of approvedElsewhere) {
+    for (const approved of freshApprovedElsewhere) {
       if (!otherClubRefs.has(approved.clubId)) {
         const previousClubRef = doc(db, 'schedules', approved.clubId)
         otherClubRefs.set(approved.clubId, previousClubRef)
@@ -2038,7 +2083,7 @@ async function directAssignMemberInternal(payload, options = {}) {
       }
     }
 
-    const targetApp = pickDirectAssignApplication(studentApps, cycle.id, club.id)
+    const targetApp = pickDirectAssignApplication(freshStudentApps, cycle.id, club.id)
     const assignedAppRef = targetApp
       ? doc(db, APPLICATIONS, targetApp.id)
       : doc(collection(db, APPLICATIONS))
@@ -2111,7 +2156,7 @@ async function directAssignMemberInternal(payload, options = {}) {
       })
     }
 
-    approvedElsewhere.forEach((row) => {
+    freshApprovedElsewhere.forEach((row) => {
       const approvedRef = doc(db, APPLICATIONS, row.id)
       if (isSyntheticAssignedApplication(row)) {
         tx.delete(approvedRef)
@@ -2141,7 +2186,7 @@ async function directAssignMemberInternal(payload, options = {}) {
       })
     }
 
-    studentApps
+    freshStudentApps
       .filter(
         (row) => row.id !== assignedAppRef.id
           && row.cycleId === cycle.id

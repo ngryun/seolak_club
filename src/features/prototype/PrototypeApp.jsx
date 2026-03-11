@@ -1659,8 +1659,17 @@ function InterviewSelectDialog({
 
   const students = users.filter((u) => u.role === "student");
   const memberIds = new Set(members.map((m) => m.studentUid));
+  const targetGrades = Array.isArray(club?.targetGrades) ? club.targetGrades : [];
   const filtered = students
     .filter((s) => !memberIds.has(s.uid))
+    .filter((s) => {
+      // 대상학년 필터: 학번 첫 자리로 학년 추론
+      if (targetGrades.length > 0 && s.studentNo) {
+        const grade = Number(String(s.studentNo)[0]);
+        if (grade >= 1 && grade <= 3 && !targetGrades.includes(grade)) return false;
+      }
+      return true;
+    })
     .filter((s) => {
       if (!keyword.trim()) return true;
       const q = keyword.trim();
