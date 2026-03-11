@@ -3533,9 +3533,19 @@ export default function PrototypeApp() {
 
   async function refreshRoundStats(clubList = clubs, cycleInfo = cycle) {
     const targetClubs = (clubList || []).filter((club) => !club.legacy);
-    const next = await getRoundStatsByClubIds(
+    const stats = await getRoundStatsByClubIds(
       targetClubs.map((club) => club.id),
       { cycle: cycleInfo },
+    );
+    const next = Object.fromEntries(
+      targetClubs.map((club) => [
+        club.id,
+        {
+          ...stats[club.id],
+          clubId: club.id,
+          clubName: club.clubName,
+        },
+      ]),
     );
     setRoundStats(next);
     return next;
