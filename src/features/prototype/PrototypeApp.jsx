@@ -25,7 +25,6 @@ import {
   revokeApprovedApplication,
   saveStudentPreferenceDraft,
   syncLeaderAssignmentForClub,
-  syncLeaderAssignmentsForClubs,
   updateRecruitmentPreAssignmentWindow,
   updateRecruitmentSubmissionWindow,
 } from "../../services/applicationService";
@@ -3372,6 +3371,8 @@ export default function PrototypeApp() {
   const [submissionWindowForm, setSubmissionWindowForm] = useState({ start: "", end: "" });
   const [requestCards, setRequestCards] = useState([]);
   const [myRequestCardApplications, setMyRequestCardApplications] = useState([]);
+  const [requestCardsLoaded, setRequestCardsLoaded] = useState(false);
+  const [myRequestCardApplicationsLoaded, setMyRequestCardApplicationsLoaded] = useState(false);
 
   const [clubForm, setClubForm] = useState(newClubForm(user));
   const [editingClubId, setEditingClubId] = useState("");
@@ -3424,6 +3425,10 @@ export default function PrototypeApp() {
     setClubForm(newClubForm(user));
     setEditingRequestCardId("");
     setRequestCardForm(newRequestCardForm());
+    setRequestCards([]);
+    setMyRequestCardApplications([]);
+    setRequestCardsLoaded(false);
+    setMyRequestCardApplicationsLoaded(false);
   }, [isAuthenticated, user?.uid, user?.role]);
 
   async function refreshCycle() {
@@ -3485,16 +3490,19 @@ export default function PrototypeApp() {
   async function refreshRequestCards() {
     const rows = await listRequestCards();
     setRequestCards(rows);
+    setRequestCardsLoaded(true);
     return rows;
   }
 
   async function refreshMyRequestCardApplications() {
     if (user?.role !== "student" && user?.role !== "teacher" && user?.role !== "admin") {
       setMyRequestCardApplications([]);
+      setMyRequestCardApplicationsLoaded(true);
       return [];
     }
     const rows = await listRequestCardApplicationsByApplicant(user.uid);
     setMyRequestCardApplications(rows);
+    setMyRequestCardApplicationsLoaded(true);
     return rows;
   }
 
@@ -3548,47 +3556,37 @@ export default function PrototypeApp() {
     if (!isAuthenticated || !user) return;
     setLoading(true);
     try {
-      let clubRows = await refreshClubs();
+      const clubRows = await refreshClubs();
       const cycleInfo = await refreshCycle();
-      const syncResult = await syncLeaderAssignmentsForClubs(clubRows, { continueOnError: true });
-      if (syncResult.changed > 0) {
-        clubRows = await refreshClubs();
-      }
-
-      const commonTasks = [
-        refreshMyApplications(),
-        refreshMyDraft(),
-        refreshRequestCards(),
-        refreshMyRequestCardApplications(),
-      ];
+      const studentTasks = user.role === "student"
+        ? [refreshMyApplications(), refreshMyDraft()]
+        : [];
 
       if (user.role === "admin") {
-        const [userRows] = await Promise.all([
+        await Promise.all([
           refreshUsers(),
           refreshClubRooms(),
-          ...commonTasks,
+          ...studentTasks,
         ]);
         await refreshRoundStats(clubRows, cycleInfo);
         setStudentStatusRows([]);
-        void userRows;
       } else if (user.role === "teacher") {
-        const [userRows] = await Promise.all([
+        await Promise.all([
           refreshUsers(),
           refreshClubRooms(),
-          ...commonTasks,
+          ...studentTasks,
         ]);
         await refreshRoundStats(
           clubRows.filter((club) => String(club.teacherUid || "") === String(user.uid || "")),
           cycleInfo,
         );
         setStudentStatusRows([]);
-        void userRows;
       } else {
         setUsers([]);
         setClubRooms([]);
         setRoundStats({});
         setStudentStatusRows([]);
-        await Promise.all(commonTasks);
+        await Promise.all(studentTasks);
       }
 
       setMessage({ type: "", text: "" });
@@ -4542,6 +4540,45 @@ export default function PrototypeApp() {
     teacherOwnedClubIdsKey,
     user?.role,
     visibleClubIdsKey,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+
+    const needsAdminCards = tab === "requestCards" && user.role === "admin";
+    const needsUserCards = tab === "extraRequests";
+    if (!needsAdminCards && !needsUserCards) return;
+
+    const shouldLoadCards = !requestCardsLoaded;
+    const shouldLoadMyApps = needsUserCards && !myRequestCardApplicationsLoaded;
+    if (!shouldLoadCards && !shouldLoadMyApps) return;
+
+    let mounted = true;
+    setRequestCardLoading(true);
+
+    const tasks = [];
+    if (shouldLoadCards) tasks.push(refreshRequestCards());
+    if (shouldLoadMyApps) tasks.push(refreshMyRequestCardApplications());
+
+    Promise.all(tasks)
+      .catch((error) => {
+        if (!mounted) return;
+        withMessageError(error, "신청 카드 데이터를 불러오지 못했습니다.");
+      })
+      .finally(() => {
+        if (mounted) setRequestCardLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [
+    isAuthenticated,
+    myRequestCardApplicationsLoaded,
+    requestCardsLoaded,
+    tab,
+    user?.role,
+    user?.uid,
   ]);
 
   useEffect(() => {
