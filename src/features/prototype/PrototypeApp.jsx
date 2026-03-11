@@ -9,15 +9,12 @@ import {
   directSelectInterviewMember,
   finalizeCurrentCycleDraftsIfNeeded,
   getCurrentRecruitmentCycle,
-<<<<<<< HEAD
   getRoundStatsByClubIds,
-=======
   listCurrentCycleApplications,
   listCurrentCycleDrafts,
   getStudentPreferenceDraft,
   getSubmissionWindowState,
   getTeacherPreAssignmentWindowState,
->>>>>>> a1550b40095255830ffe6fa8db12d4d082a15999
   inferStudentGrade,
   listApplicationsBySchedule,
   listClubMembers,
@@ -3430,15 +3427,11 @@ export default function PrototypeApp() {
   }, [isAuthenticated, user?.uid, user?.role]);
 
   async function refreshCycle() {
-<<<<<<< HEAD
-    const current = await getCurrentRecruitmentCycle({ force: true });
-=======
-    let current = await getCurrentRecruitmentCycle();
+    let current = await getCurrentRecruitmentCycle({ force: true });
     if (getSubmissionWindowState(current).needsFinalization) {
       await finalizeCurrentCycleDraftsIfNeeded();
-      current = await getCurrentRecruitmentCycle();
+      current = await getCurrentRecruitmentCycle({ force: true });
     }
->>>>>>> a1550b40095255830ffe6fa8db12d4d082a15999
     setCycle(current);
     setPreAssignmentWindowForm({
       start: toDatetimeLocalValue(current.preAssignmentStartAt),
@@ -3555,45 +3548,49 @@ export default function PrototypeApp() {
     if (!isAuthenticated || !user) return;
     setLoading(true);
     try {
-<<<<<<< HEAD
-      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
-      const tasks = [refreshMyApplications()];
-
-      if (user.role === "admin") {
-        tasks.push(refreshUsers(), refreshClubRooms(), refreshRoundStats(clubRows, cycleInfo));
-      } else if (user.role === "teacher") {
-        tasks.push(
-          refreshUsers(),
-          refreshClubRooms(),
-          refreshRoundStats(
-            clubRows.filter((club) => String(club.teacherUid || "") === String(user.uid || "")),
-            cycleInfo,
-          ),
-        );
-      } else {
-        setUsers([]);
-        setClubRooms([]);
-        setRoundStats({});
-      }
-
-      await Promise.all(tasks);
-=======
       let clubRows = await refreshClubs();
       const cycleInfo = await refreshCycle();
       const syncResult = await syncLeaderAssignmentsForClubs(clubRows, { continueOnError: true });
       if (syncResult.changed > 0) {
         clubRows = await refreshClubs();
       }
-      const [userRows] = await Promise.all([
-        refreshUsers(),
+
+      const commonTasks = [
         refreshMyApplications(),
         refreshMyDraft(),
-        refreshClubRooms(),
         refreshRequestCards(),
         refreshMyRequestCardApplications(),
-      ]);
-      await refreshRecruitmentViews(clubRows, cycleInfo, userRows);
->>>>>>> a1550b40095255830ffe6fa8db12d4d082a15999
+      ];
+
+      if (user.role === "admin") {
+        const [userRows] = await Promise.all([
+          refreshUsers(),
+          refreshClubRooms(),
+          ...commonTasks,
+        ]);
+        await refreshRoundStats(clubRows, cycleInfo);
+        setStudentStatusRows([]);
+        void userRows;
+      } else if (user.role === "teacher") {
+        const [userRows] = await Promise.all([
+          refreshUsers(),
+          refreshClubRooms(),
+          ...commonTasks,
+        ]);
+        await refreshRoundStats(
+          clubRows.filter((club) => String(club.teacherUid || "") === String(user.uid || "")),
+          cycleInfo,
+        );
+        setStudentStatusRows([]);
+        void userRows;
+      } else {
+        setUsers([]);
+        setClubRooms([]);
+        setRoundStats({});
+        setStudentStatusRows([]);
+        await Promise.all(commonTasks);
+      }
+
       setMessage({ type: "", text: "" });
     } catch (error) {
       setMessage({ type: "error", text: error instanceof Error ? error.message : "데이터 로딩에 실패했습니다." });
@@ -3941,21 +3938,12 @@ export default function PrototypeApp() {
     if (!club) return;
     setApplicantDialog((prev) => ({ ...prev, loading: true }));
     try {
-<<<<<<< HEAD
       const [clubsData, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
       const rows = await listApplicationsBySchedule(club.id, {
         cycle: cycleInfo,
         profilesByUid: userMap,
       });
-      await refreshRoundStats(clubsData, cycleInfo);
-=======
-      const [rows, clubsData, cycleInfo] = await Promise.all([
-        listApplicationsBySchedule(club.id),
-        refreshClubs(),
-        refreshCycle(),
-      ]);
       await refreshRecruitmentViews(clubsData, cycleInfo);
->>>>>>> a1550b40095255830ffe6fa8db12d4d082a15999
 
       const latestClub = clubsData.find((item) => item.id === club.id) || club;
       setApplicantDialog({ open: true, club: latestClub, rows, loading: false });
@@ -4247,10 +4235,6 @@ export default function PrototypeApp() {
         preferences: normalized,
       });
 
-<<<<<<< HEAD
-      setMessage({ type: "ok", text: "1~3지망 신청을 제출했습니다." });
-      await refreshMyApplications();
-=======
       await refreshMyDraft();
       setMessage({
         type: "ok",
@@ -4258,7 +4242,6 @@ export default function PrototypeApp() {
           ? "신청서를 수정 저장했습니다."
           : "신청서를 제출했습니다. 마감 전까지 수정할 수 있습니다.",
       });
->>>>>>> a1550b40095255830ffe6fa8db12d4d082a15999
     } catch (error) {
       withMessageError(error, "신청 제출에 실패했습니다.");
     } finally {
@@ -4461,19 +4444,16 @@ export default function PrototypeApp() {
   const isStudentLeader = user?.role === "student" && leaderEditableClubs.length > 0;
   const clubsForManageTab = user?.role === "student" ? leaderEditableClubs : visibleClubs;
   const canCreateClub = user?.role === "admin" || user?.role === "teacher" || user?.loginId === "admin";
-<<<<<<< HEAD
   const visibleClubIdsKey = [...visibleClubs].map((club) => club.id).sort().join(",");
   const leaderEditableClubIdsKey = [...leaderEditableClubs].map((club) => club.id).sort().join(",");
   const teacherOwnedClubIdsKey = [...teacherOwnedClubs].map((club) => club.id).sort().join(",");
   const roundStatsClubIdsKey = Object.keys(roundStats).sort().join(",");
-=======
   const studentApplyFormKey = [
     user?.uid || "",
     myDraft?.id || "",
     myDraft?.updatedAt || myDraft?.submittedAt || "",
     myApplications.map((row) => `${row.id}:${row.updatedAt || row.createdAt || ""}`).join("|"),
   ].join("::");
->>>>>>> a1550b40095255830ffe6fa8db12d4d082a15999
   const applicantRandomLocked = applicantDialog.club
     ? Array.isArray(applicantDialog.club.randomDrawnRounds)
       && applicantDialog.club.randomDrawnRounds.includes(cycle.currentRound)
@@ -4562,6 +4542,34 @@ export default function PrototypeApp() {
     teacherOwnedClubIdsKey,
     user?.role,
     visibleClubIdsKey,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated || (user?.role !== "admin" && user?.role !== "teacher")) return;
+    if (tab !== "studentStatus" || studentStatusRows.length > 0) return;
+
+    let mounted = true;
+    setStudentStatusLoading(true);
+
+    Promise.all([refreshClubs(), refreshUsers(), refreshCycle()])
+      .then(([clubRows, userRows, cycleInfo]) => refreshRecruitmentViews(clubRows, cycleInfo, userRows))
+      .catch((error) => {
+        if (!mounted) return;
+        withMessageError(error, "학생 신청 현황을 불러오지 못했습니다.");
+      })
+      .finally(() => {
+        if (mounted) setStudentStatusLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [
+    isAuthenticated,
+    studentStatusRows.length,
+    tab,
+    user?.role,
+    user?.uid,
   ]);
 
   if (isLoading) {

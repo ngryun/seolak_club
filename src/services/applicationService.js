@@ -732,36 +732,9 @@ export async function getCurrentRecruitmentCycle(options = {}) {
     return { ...localCycle }
   }
 
-<<<<<<< HEAD
   const force = options?.force === true
   if (!force && cycleCache) {
     return cloneCycle(cycleCache)
-=======
-  const ref = doc(db, CYCLES, CYCLE_DOC_ID)
-  const snapshot = await getDoc(ref)
-  if (!snapshot.exists()) {
-    await setDoc(ref, {
-      currentRound: 1,
-      status: 'open',
-      preAssignmentStartAt: null,
-      preAssignmentEndAt: null,
-      submissionStartAt: null,
-      submissionEndAt: null,
-      submissionFinalizedAt: null,
-      updatedAt: serverTimestamp(),
-    })
-    return {
-      id: CYCLE_DOC_ID,
-      currentRound: 1,
-      status: 'open',
-      preAssignmentStartAt: null,
-      preAssignmentEndAt: null,
-      submissionStartAt: null,
-      submissionEndAt: null,
-      submissionFinalizedAt: null,
-      updatedAt: null,
-    }
->>>>>>> a1550b40095255830ffe6fa8db12d4d082a15999
   }
 
   if (!force && cyclePromise) {
@@ -775,12 +748,22 @@ export async function getCurrentRecruitmentCycle(options = {}) {
       await setDoc(ref, {
         currentRound: 1,
         status: 'open',
+        preAssignmentStartAt: null,
+        preAssignmentEndAt: null,
+        submissionStartAt: null,
+        submissionEndAt: null,
+        submissionFinalizedAt: null,
         updatedAt: serverTimestamp(),
       })
       return {
         id: CYCLE_DOC_ID,
         currentRound: 1,
         status: 'open',
+        preAssignmentStartAt: null,
+        preAssignmentEndAt: null,
+        submissionStartAt: null,
+        submissionEndAt: null,
+        submissionFinalizedAt: null,
         updatedAt: null,
       }
     }
