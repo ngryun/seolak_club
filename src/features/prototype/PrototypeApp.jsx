@@ -41,6 +41,7 @@ import {
   updateRequestCard,
 } from "../../services/requestCardService";
 import {
+  backfillScheduleDisplayFields,
   canEditClub,
   canManageSelection,
   createClubRoom,
@@ -49,6 +50,7 @@ import {
   deleteSchedule,
   listClubRooms,
   listSchedules,
+  syncClubDisplayFieldsForUser,
   updateSchedule,
 } from "../../services/scheduleService";
 import {
@@ -541,6 +543,26 @@ function formatStudentLabel(student) {
   const key = student.studentNo || student.loginId || "-";
   const name = student.name || "-";
   return `${key} / ${name}`;
+}
+
+function formatClubTeacherLabel(club, userMap) {
+  const teacher = userMap?.get?.(club?.teacherUid) || null;
+  const teacherName = String(club?.teacherName || "").trim();
+  const teacherLoginId = String(club?.teacherLoginId || "").trim();
+  if (teacherName && teacherLoginId) return `${teacherName}(${teacherLoginId})`;
+  if (teacherName) return teacherName;
+  if (teacher) return `${teacher.name}(${teacher.loginId})`;
+  return club?.teacherUid || "-";
+}
+
+function formatClubLeaderLabel(club, userMap) {
+  const leader = userMap?.get?.(club?.leaderUid) || null;
+  const leaderName = String(club?.leaderName || "").trim();
+  const leaderStudentNo = String(club?.leaderStudentNo || "").trim();
+  if (leaderStudentNo && leaderName) return `${leaderStudentNo} / ${leaderName}`;
+  if (leaderName) return leaderName;
+  if (leader) return `${leader.studentNo || leader.loginId} / ${leader.name}`;
+  return club?.leaderUid || "미지정";
 }
 
 function getDefaultRoomName(rooms) {
@@ -1230,8 +1252,6 @@ function ClubTable({
           </thead>
           <tbody>
             {clubs.map((club) => {
-              const teacher = userMap.get(club.teacherUid);
-              const leader = userMap.get(club.leaderUid);
               const editable = canEditClub(club, actor);
               const manageable = canManageSelection(club, actor);
               const stats = roundStats[club.id] || { pendingCurrent: 0, approved: 0, total: 0 };
@@ -1259,10 +1279,10 @@ function ClubTable({
                     {club.legacy ? <span style={{ marginLeft: 6, fontSize: 11, color: t.danger }}>[구형데이터]</span> : null}
                   </td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
-                    {teacher ? `${teacher.name}(${teacher.loginId})` : club.teacherUid || "-"}
+                    {formatClubTeacherLabel(club, userMap)}
                   </td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
-                    {leader ? `${leader.studentNo || leader.loginId} / ${leader.name}` : club.leaderUid || "미지정"}
+                    {formatClubLeaderLabel(club, userMap)}
                   </td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
                     {(club.targetGrades || []).map((g) => `${g}`).join(", ")}
@@ -1365,9 +1385,6 @@ function ClubDetailDialog({
 }) {
   if (!open || !club) return null;
 
-  const teacher = userMap.get(club.teacherUid);
-  const leader = userMap.get(club.leaderUid);
-
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
       <div style={{ maxWidth: 900, margin: "20px auto", ...cardStyle }}>
@@ -1380,10 +1397,10 @@ function ClubDetailDialog({
 
         <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
           <div style={{ fontSize: 13 }}>
-            <strong>담당교사:</strong> {teacher ? `${teacher.name} (${teacher.loginId})` : (club.teacherUid || "-")}
+            <strong>담당교사:</strong> {formatClubTeacherLabel(club, userMap)}
           </div>
           <div style={{ fontSize: 13 }}>
-            <strong>동아리장:</strong> {leader ? `${leader.studentNo || leader.loginId} / ${leader.name}` : (club.leaderUid || "미지정")}
+            <strong>동아리장:</strong> {formatClubLeaderLabel(club, userMap)}
           </div>
           <div style={{ fontSize: 13 }}>
             <strong>대상학년:</strong> {(club.targetGrades || []).join(", ")}
@@ -3373,6 +3390,7 @@ export default function PrototypeApp() {
   const [myRequestCardApplications, setMyRequestCardApplications] = useState([]);
   const [requestCardsLoaded, setRequestCardsLoaded] = useState(false);
   const [myRequestCardApplicationsLoaded, setMyRequestCardApplicationsLoaded] = useState(false);
+  const [usersLoaded, setUsersLoaded] = useState(false);
 
   const [clubForm, setClubForm] = useState(newClubForm(user));
   const [editingClubId, setEditingClubId] = useState("");
@@ -3410,6 +3428,7 @@ export default function PrototypeApp() {
   });
 
   const [studentSubmitLoading, setStudentSubmitLoading] = useState(false);
+  const clubDisplayBackfillAttemptedRef = useRef(false);
 
   const userMap = useMemo(() => new Map(users.map((u) => [u.uid, u])), [users]);
 
@@ -3423,12 +3442,15 @@ export default function PrototypeApp() {
     setTab(nextTab);
     setClubFormDialogOpen(false);
     setClubForm(newClubForm(user));
+    setUsers([]);
+    setUsersLoaded(false);
     setEditingRequestCardId("");
     setRequestCardForm(newRequestCardForm());
     setRequestCards([]);
     setMyRequestCardApplications([]);
     setRequestCardsLoaded(false);
     setMyRequestCardApplicationsLoaded(false);
+    clubDisplayBackfillAttemptedRef.current = false;
   }, [isAuthenticated, user?.uid, user?.role]);
 
   async function refreshCycle() {
@@ -3458,7 +3480,13 @@ export default function PrototypeApp() {
   async function refreshUsers() {
     const rows = await listUsers();
     setUsers(rows);
+    setUsersLoaded(true);
     return rows;
+  }
+
+  async function ensureUsersLoaded() {
+    if (usersLoaded) return users;
+    return refreshUsers();
   }
 
   async function refreshClubRooms() {
@@ -3556,15 +3584,29 @@ export default function PrototypeApp() {
     if (!isAuthenticated || !user) return;
     setLoading(true);
     try {
-      const clubRows = await refreshClubs();
+      let clubRows = await refreshClubs();
       const cycleInfo = await refreshCycle();
+      const needsBackfill = clubRows.some((club) => {
+        if (club.legacy) return false;
+        const missingTeacher = club.teacherUid && (!club.teacherName || !club.teacherLoginId);
+        const missingLeader = club.leaderUid && (!club.leaderName || !club.leaderStudentNo);
+        return missingTeacher || missingLeader;
+      });
+
+      if (user.role === "admin" && needsBackfill && !clubDisplayBackfillAttemptedRef.current) {
+        clubDisplayBackfillAttemptedRef.current = true;
+        const result = await backfillScheduleDisplayFields({ clubs: clubRows });
+        if (result.updatedCount > 0) {
+          clubRows = await refreshClubs();
+        }
+      }
+
       const studentTasks = user.role === "student"
         ? [refreshMyApplications(), refreshMyDraft()]
         : [];
 
       if (user.role === "admin") {
         await Promise.all([
-          refreshUsers(),
           refreshClubRooms(),
           ...studentTasks,
         ]);
@@ -3572,7 +3614,6 @@ export default function PrototypeApp() {
         setStudentStatusRows([]);
       } else if (user.role === "teacher") {
         await Promise.all([
-          refreshUsers(),
           refreshClubRooms(),
           ...studentTasks,
         ]);
@@ -3653,7 +3694,16 @@ export default function PrototypeApp() {
     resetClubForm();
   }
 
-  function openCreateClubDialog() {
+  async function openCreateClubDialog() {
+    setLoading(true);
+    try {
+      await ensureUsersLoaded();
+    } catch (error) {
+      withMessageError(error, "회원 목록을 불러오지 못했습니다.");
+      return;
+    } finally {
+      setLoading(false);
+    }
     resetClubForm();
     setClubFormDialogOpen(true);
   }
@@ -3725,7 +3775,16 @@ export default function PrototypeApp() {
     }
   }
 
-  function handleEditClub(club) {
+  async function handleEditClub(club) {
+    setLoading(true);
+    try {
+      await ensureUsersLoaded();
+    } catch (error) {
+      withMessageError(error, "회원 목록을 불러오지 못했습니다.");
+      return;
+    } finally {
+      setLoading(false);
+    }
     setEditingClubId(club.id);
     setClubForm({
       clubName: club.clubName || "",
@@ -3921,9 +3980,11 @@ export default function PrototypeApp() {
   async function openApplicantDialog(club) {
     setApplicantDialog({ open: true, club, rows: [], loading: true });
     try {
+      const loadedUsers = await ensureUsersLoaded();
+      const profilesByUid = new Map((loadedUsers || []).map((row) => [row.uid, row]));
       const rows = await listApplicationsBySchedule(club.id, {
         cycle,
-        profilesByUid: userMap,
+        profilesByUid,
       });
       setApplicantDialog({ open: true, club, rows, loading: false });
     } catch (error) {
@@ -3936,10 +3997,12 @@ export default function PrototypeApp() {
     if (!club) return;
     setApplicantDialog((prev) => ({ ...prev, loading: true }));
     try {
+      const loadedUsers = usersLoaded ? users : await ensureUsersLoaded();
+      const profilesByUid = new Map((loadedUsers || []).map((row) => [row.uid, row]));
       const [clubsData, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
       const rows = await listApplicationsBySchedule(club.id, {
         cycle: cycleInfo,
-        profilesByUid: userMap,
+        profilesByUid,
       });
       await refreshRecruitmentViews(clubsData, cycleInfo);
 
@@ -4095,6 +4158,7 @@ export default function PrototypeApp() {
     });
 
     try {
+      await ensureUsersLoaded();
       const members = await listClubMembers(club.id);
       setInterviewDialog({
         open: true,
@@ -4341,7 +4405,9 @@ export default function PrototypeApp() {
         studentNo: patch.studentNo,
         subject: patch.subject,
       });
+      await syncClubDisplayFieldsForUser(row.uid);
       setMessage({ type: "ok", text: "회원 정보를 수정했습니다." });
+      await refreshClubs();
       const userRows = await refreshUsers();
       await refreshStudentStatusRows(userRows);
     } catch (error) {
@@ -4376,7 +4442,15 @@ export default function PrototypeApp() {
   }
 
   async function handleResetStudentPasswords() {
-    const studentCount = users.filter((row) => row.role === "student").length;
+    let loadedUsers = users;
+    try {
+      loadedUsers = usersLoaded ? users : await ensureUsersLoaded();
+    } catch (error) {
+      withMessageError(error, "회원 목록을 불러오지 못했습니다.");
+      return;
+    }
+
+    const studentCount = loadedUsers.filter((row) => row.role === "student").length;
     if (studentCount === 0) {
       setMessage({ type: "warn", text: "초기화할 학생 계정이 없습니다." });
       return;
@@ -4403,6 +4477,8 @@ export default function PrototypeApp() {
   async function handleSaveMyProfile(form) {
     try {
       await updateMyProfile(user.uid, form);
+      await syncClubDisplayFieldsForUser(user.uid);
+      await refreshClubs();
       setMessage({ type: "ok", text: "내 정보를 저장했습니다. 다시 로그인하면 즉시 반영됩니다." });
     } catch (error) {
       withMessageError(error, "내 정보 저장에 실패했습니다.");
@@ -4471,7 +4547,6 @@ export default function PrototypeApp() {
 
     async function loadLeaderResources() {
       const tasks = [];
-      if (users.length === 0) tasks.push(refreshUsers());
       if (clubRooms.length === 0) tasks.push(refreshClubRooms());
       if (roundStatsClubIdsKey !== leaderEditableClubIdsKey) {
         tasks.push(refreshRoundStats(leaderEditableClubs, cycle));
@@ -4504,7 +4579,33 @@ export default function PrototypeApp() {
     tab,
     user?.role,
     user?.uid,
-    users.length,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated || user?.role !== "admin") return;
+    if (tab !== "users" || usersLoaded) return;
+
+    let mounted = true;
+    setLoading(true);
+
+    refreshUsers()
+      .catch((error) => {
+        if (!mounted) return;
+        withMessageError(error, "회원 목록을 불러오지 못했습니다.");
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [
+    isAuthenticated,
+    tab,
+    user?.role,
+    user?.uid,
+    usersLoaded,
   ]);
 
   useEffect(() => {

@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore'
 import { db, isFirebaseEnabled } from '../lib/firebase'
 import { mockSchedules } from './mockData'
+import { getUserProfile } from './userService'
 
 const COLLECTION_NAME = 'schedules'
 const ROOMS_COLLECTION_NAME = 'clubRooms'
@@ -60,7 +61,11 @@ function normalizeClub(id, data) {
   return {
     id,
     teacherUid: String(data?.teacherUid || '').trim(),
+    teacherName: String(data?.teacherName || '').trim(),
+    teacherLoginId: String(data?.teacherLoginId || '').trim(),
     leaderUid: String(data?.leaderUid || '').trim(),
+    leaderName: String(data?.leaderName || '').trim(),
+    leaderStudentNo: String(data?.leaderStudentNo || '').trim(),
     clubName: String(data?.clubName || data?.school || '').trim(),
     targetGrades: targetGrades.length > 0 ? targetGrades : [1, 2, 3],
     description: String(data?.description || '').trim(),
@@ -74,6 +79,54 @@ function normalizeClub(id, data) {
     updatedAt: data?.updatedAt || null,
     legacy,
   }
+}
+
+function buildDisplayFieldsFromProfiles(teacher, leader) {
+  return {
+    teacherName: String(teacher?.name || '').trim(),
+    teacherLoginId: String(teacher?.loginId || '').trim(),
+    leaderName: String(leader?.name || '').trim(),
+    leaderStudentNo: String(leader?.studentNo || '').trim(),
+  }
+}
+
+async function resolveClubDisplayFields({ teacherUid = '', leaderUid = '' } = {}) {
+  const [teacher, leader] = await Promise.all([
+    teacherUid ? getUserProfile(teacherUid) : Promise.resolve(null),
+    leaderUid ? getUserProfile(leaderUid) : Promise.resolve(null),
+  ])
+
+  return buildDisplayFieldsFromProfiles(teacher, leader)
+}
+
+function needsClubDisplayBackfill(club) {
+  const teacherUid = String(club?.teacherUid || '').trim()
+  const leaderUid = String(club?.leaderUid || '').trim()
+  const teacherName = String(club?.teacherName || '').trim()
+  const teacherLoginId = String(club?.teacherLoginId || '').trim()
+  const leaderName = String(club?.leaderName || '').trim()
+  const leaderStudentNo = String(club?.leaderStudentNo || '').trim()
+
+  return (teacherUid && (!teacherName || !teacherLoginId))
+    || (leaderUid && (!leaderName || !leaderStudentNo))
+}
+
+function hasDisplayFieldChanges(club, displayFields) {
+  return String(club?.teacherName || '').trim() !== String(displayFields.teacherName || '').trim()
+    || String(club?.teacherLoginId || '').trim() !== String(displayFields.teacherLoginId || '').trim()
+    || String(club?.leaderName || '').trim() !== String(displayFields.leaderName || '').trim()
+    || String(club?.leaderStudentNo || '').trim() !== String(displayFields.leaderStudentNo || '').trim()
+}
+
+function applyLocalClubPatch(clubId, patch) {
+  scheduleStore = scheduleStore.map((item) => {
+    if (item.id !== clubId) return item
+    return {
+      ...item,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    }
+  })
 }
 
 function normalizeRoom(id, data) {
@@ -317,9 +370,14 @@ export async function createSchedule(payload, options = {}) {
     },
     { requireTeacherUid: true },
   )
+  const displayFields = await resolveClubDisplayFields({
+    teacherUid: data.teacherUid,
+    leaderUid: data.leaderUid,
+  })
 
   const row = {
     ...data,
+    ...displayFields,
     memberCount: 0,
     createdByUid: actor.uid,
   }
@@ -371,6 +429,10 @@ export async function updateSchedule(scheduleId, payload, options = {}) {
     },
     { requireTeacherUid: true },
   )
+  const displayFields = await resolveClubDisplayFields({
+    teacherUid: nextPayload.teacherUid,
+    leaderUid: nextPayload.leaderUid,
+  })
 
   const currentMemberCount = Math.max(0, Number(existing.memberCount || 0))
   if (nextPayload.maxMembers < currentMemberCount) {
@@ -383,6 +445,7 @@ export async function updateSchedule(scheduleId, payload, options = {}) {
       return {
         ...item,
         ...nextPayload,
+        ...displayFields,
         memberCount: currentMemberCount,
         updatedAt: new Date().toISOString(),
       }
@@ -394,10 +457,134 @@ export async function updateSchedule(scheduleId, payload, options = {}) {
   const ref = doc(db, COLLECTION_NAME, scheduleId)
   await updateDoc(ref, {
     ...nextPayload,
+    ...displayFields,
     updatedAt: serverTimestamp(),
   })
 
   return getScheduleById(scheduleId)
+}
+
+export async function backfillScheduleDisplayFields(options = {}) {
+  const rows = Array.isArray(options?.clubs)
+    ? options.clubs.map((club) => normalizeClub(club.id, club))
+    : await listSchedules({ includeLegacy: true })
+
+  const targets = rows.filter((club) => !club.legacy && needsClubDisplayBackfill(club))
+  if (targets.length === 0) {
+    return { updatedCount: 0 }
+  }
+
+  if (!isFirebaseEnabled()) {
+    let updatedCount = 0
+    for (const club of targets) {
+      const displayFields = await resolveClubDisplayFields({
+        teacherUid: club.teacherUid,
+        leaderUid: club.leaderUid,
+      })
+      if (!hasDisplayFieldChanges(club, displayFields)) continue
+      applyLocalClubPatch(club.id, displayFields)
+      updatedCount += 1
+    }
+    return { updatedCount }
+  }
+
+  let updatedCount = 0
+  const patches = []
+  for (const club of targets) {
+    const displayFields = await resolveClubDisplayFields({
+      teacherUid: club.teacherUid,
+      leaderUid: club.leaderUid,
+    })
+    if (!hasDisplayFieldChanges(club, displayFields)) continue
+    patches.push({ clubId: club.id, displayFields })
+  }
+
+  for (let index = 0; index < patches.length; index += 400) {
+    const batch = writeBatch(db)
+    const chunk = patches.slice(index, index + 400)
+    chunk.forEach(({ clubId, displayFields }) => {
+      batch.update(doc(db, COLLECTION_NAME, clubId), {
+        ...displayFields,
+        updatedAt: serverTimestamp(),
+      })
+      updatedCount += 1
+    })
+    await batch.commit()
+  }
+
+  return { updatedCount }
+}
+
+export async function syncClubDisplayFieldsForUser(userUid) {
+  const targetUid = String(userUid || '').trim()
+  if (!targetUid) {
+    return { updatedCount: 0 }
+  }
+
+  const profile = await getUserProfile(targetUid)
+  if (!profile) {
+    return { updatedCount: 0 }
+  }
+
+  const teacherDisplayFields = {
+    teacherName: String(profile.name || '').trim(),
+    teacherLoginId: String(profile.loginId || '').trim(),
+  }
+  const leaderDisplayFields = {
+    leaderName: String(profile.name || '').trim(),
+    leaderStudentNo: String(profile.studentNo || '').trim(),
+  }
+
+  if (!isFirebaseEnabled()) {
+    let updatedCount = 0
+    scheduleStore.forEach((item) => {
+      const patch = {}
+      if (String(item?.teacherUid || '').trim() === targetUid) {
+        Object.assign(patch, teacherDisplayFields)
+      }
+      if (String(item?.leaderUid || '').trim() === targetUid) {
+        Object.assign(patch, leaderDisplayFields)
+      }
+      if (Object.keys(patch).length === 0) return
+      applyLocalClubPatch(item.id, patch)
+      updatedCount += 1
+    })
+    return { updatedCount }
+  }
+
+  const refsMap = new Map()
+  const teacherSnap = await getDocs(
+    query(collection(db, COLLECTION_NAME), where('teacherUid', '==', targetUid)),
+  )
+  teacherSnap.docs.forEach((row) => refsMap.set(row.id, { ref: row.ref, patch: { ...teacherDisplayFields } }))
+
+  const leaderSnap = await getDocs(
+    query(collection(db, COLLECTION_NAME), where('leaderUid', '==', targetUid)),
+  )
+  leaderSnap.docs.forEach((row) => {
+    const existing = refsMap.get(row.id) || { ref: row.ref, patch: {} }
+    refsMap.set(row.id, {
+      ref: row.ref,
+      patch: {
+        ...existing.patch,
+        ...leaderDisplayFields,
+      },
+    })
+  })
+
+  const refs = Array.from(refsMap.values())
+  for (let index = 0; index < refs.length; index += 400) {
+    const batch = writeBatch(db)
+    refs.slice(index, index + 400).forEach(({ ref, patch }) => {
+      batch.update(ref, {
+        ...patch,
+        updatedAt: serverTimestamp(),
+      })
+    })
+    await batch.commit()
+  }
+
+  return { updatedCount: refs.length }
 }
 
 export async function deleteSchedule(scheduleId, options = {}) {
