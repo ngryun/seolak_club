@@ -52,9 +52,29 @@ let localCycle = {
   updatedAt: new Date().toISOString(),
 }
 const localMembersByClub = new Map()
+let cycleCache = null
+let cyclePromise = null
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function cloneCycle(cycle) {
+  return cycle ? { ...cycle } : null
+}
+
+function setCycleCache(nextCycle) {
+  cycleCache = nextCycle ? { ...nextCycle } : null
+  cyclePromise = null
+  return cloneCycle(cycleCache)
+}
+
+function readProfileFromCache(profilesByUid, uid) {
+  if (!profilesByUid || !uid) return null
+  if (profilesByUid instanceof Map) {
+    return profilesByUid.get(uid) || null
+  }
+  return profilesByUid[uid] || null
 }
 
 function toRound(value, fallback = 1) {
@@ -296,28 +316,46 @@ export function inferStudentGrade(studentNo) {
   return inferGradeFromStudentNo(studentNo)
 }
 
-export async function getCurrentRecruitmentCycle() {
+export async function getCurrentRecruitmentCycle(options = {}) {
   if (!isFirebaseEnabled()) {
     return { ...localCycle }
   }
 
-  const ref = doc(db, CYCLES, CYCLE_DOC_ID)
-  const snapshot = await getDoc(ref)
-  if (!snapshot.exists()) {
-    await setDoc(ref, {
-      currentRound: 1,
-      status: 'open',
-      updatedAt: serverTimestamp(),
-    })
-    return {
-      id: CYCLE_DOC_ID,
-      currentRound: 1,
-      status: 'open',
-      updatedAt: null,
-    }
+  const force = options?.force === true
+  if (!force && cycleCache) {
+    return cloneCycle(cycleCache)
   }
 
-  return normalizeCycle(snapshot.data())
+  if (!force && cyclePromise) {
+    return cloneCycle(await cyclePromise)
+  }
+
+  cyclePromise = (async () => {
+    const ref = doc(db, CYCLES, CYCLE_DOC_ID)
+    const snapshot = await getDoc(ref)
+    if (!snapshot.exists()) {
+      await setDoc(ref, {
+        currentRound: 1,
+        status: 'open',
+        updatedAt: serverTimestamp(),
+      })
+      return {
+        id: CYCLE_DOC_ID,
+        currentRound: 1,
+        status: 'open',
+        updatedAt: null,
+      }
+    }
+
+    return normalizeCycle(snapshot.data())
+  })()
+
+  try {
+    return setCycleCache(await cyclePromise)
+  } catch (error) {
+    cyclePromise = null
+    throw error
+  }
 }
 
 export async function submitStudentPreferences(payload) {
@@ -445,7 +483,7 @@ export async function submitStudentPreferences(payload) {
 }
 
 export async function listStudentApplications(studentUid, options = {}) {
-  const cycle = await getCurrentRecruitmentCycle()
+  const cycle = options?.cycle || await getCurrentRecruitmentCycle()
   const rows = await getApplicationsByStudent(studentUid)
   const filtered = options?.allCycles
     ? rows
@@ -466,20 +504,31 @@ export async function listStudentApplications(studentUid, options = {}) {
     })
 }
 
-export async function listApplicationsBySchedule(clubId) {
-  const cycle = await getCurrentRecruitmentCycle()
+export async function listApplicationsBySchedule(clubId, options = {}) {
+  const cycle = options?.cycle || await getCurrentRecruitmentCycle()
   const rows = (await getApplicationsByClub(clubId)).filter((item) => item.cycleId === cycle.id)
+  const profilesByUid = options?.profilesByUid
 
-  const enriched = await Promise.all(
-    rows.map(async (row) => {
-      const profile = await getUserProfile(row.studentUid)
-      return {
-        ...row,
-        studentName: profile?.name || row.studentName,
-        studentNo: profile?.studentNo || row.studentNo,
-      }
-    }),
+  const cachedProfiles = rows.map((row) => readProfileFromCache(profilesByUid, row.studentUid))
+  const missingIndexes = cachedProfiles
+    .map((profile, index) => (profile ? -1 : index))
+    .filter((index) => index >= 0)
+  const missingIndexSet = new Set(missingIndexes)
+  const loadedProfiles = missingIndexes.length > 0
+    ? await Promise.all(missingIndexes.map((index) => getUserProfile(rows[index].studentUid)))
+    : []
+  const loadedProfileByIndex = new Map(
+    missingIndexes.map((index, loadedIndex) => [index, loadedProfiles[loadedIndex] || null]),
   )
+
+  const enriched = rows.map((row, index) => {
+    const profile = cachedProfiles[index] || (missingIndexSet.has(index) ? loadedProfileByIndex.get(index) : null)
+    return {
+      ...row,
+      studentName: profile?.name || row.studentName,
+      studentNo: profile?.studentNo || row.studentNo,
+    }
+  })
 
   return enriched.sort((a, b) => {
     if (a.preferenceRank !== b.preferenceRank) {
@@ -487,6 +536,58 @@ export async function listApplicationsBySchedule(clubId) {
     }
     return String(a.studentNo || '').localeCompare(String(b.studentNo || ''), 'ko')
   })
+}
+
+export async function getRoundStatsByClubIds(clubIds, options = {}) {
+  const ids = Array.from(
+    new Set(
+      (Array.isArray(clubIds) ? clubIds : [])
+        .map((item) => String(item || '').trim())
+        .filter((item) => !!item),
+    ),
+  )
+
+  const stats = Object.fromEntries(
+    ids.map((clubId) => [
+      clubId,
+      {
+        clubId,
+        pendingCurrent: 0,
+        total: 0,
+        approved: 0,
+        rejected: 0,
+        cancelled: 0,
+      },
+    ]),
+  )
+
+  if (ids.length === 0) {
+    return stats
+  }
+
+  const cycle = options?.cycle || await getCurrentRecruitmentCycle()
+  const currentRound = Number(cycle?.currentRound || 1)
+
+  const rows = !isFirebaseEnabled()
+    ? localApplications.filter((row) => row.cycleId === cycle.id)
+    : (await getDocs(query(collection(db, APPLICATIONS), where('cycleId', '==', cycle.id))))
+      .docs
+      .map((item) => normalizeApplication(item.id, item.data()))
+
+  rows.forEach((row) => {
+    const target = stats[row.clubId]
+    if (!target) return
+
+    target.total += 1
+    if (row.status === STATUS.PENDING && Number(row.preferenceRank) === currentRound) {
+      target.pendingCurrent += 1
+    }
+    if (row.status === STATUS.APPROVED) target.approved += 1
+    if (row.status === STATUS.REJECTED) target.rejected += 1
+    if (row.status === STATUS.CANCELLED) target.cancelled += 1
+  })
+
+  return stats
 }
 
 async function approveApplicationInternal({ applicationId, actor, source = 'approval' }) {
@@ -872,10 +973,15 @@ export async function advanceRecruitmentRound(payload) {
         status: 'closed',
         updatedAt: nowIso(),
       }
+      setCycleCache(localCycle)
     } else {
       await updateDoc(cycleRef, {
         status: 'closed',
         updatedAt: serverTimestamp(),
+      })
+      setCycleCache({
+        ...cycle,
+        status: 'closed',
       })
     }
 
@@ -938,10 +1044,15 @@ export async function advanceRecruitmentRound(payload) {
       currentRound: nextRound,
       updatedAt: nowIso(),
     }
+    setCycleCache(localCycle)
   } else {
     await updateDoc(cycleRef, {
       currentRound: nextRound,
       updatedAt: serverTimestamp(),
+    })
+    setCycleCache({
+      ...cycle,
+      currentRound: nextRound,
     })
   }
 
@@ -1228,6 +1339,7 @@ export async function purgeLegacyRecruitmentData(payload) {
       status: 'open',
       updatedAt: nowIso(),
     }
+    setCycleCache(localCycle)
     localMembersByClub.clear()
     return
   }
@@ -1243,6 +1355,12 @@ export async function purgeLegacyRecruitmentData(payload) {
     currentRound: 1,
     status: 'open',
     updatedAt: serverTimestamp(),
+  })
+  setCycleCache({
+    id: CYCLE_DOC_ID,
+    currentRound: 1,
+    status: 'open',
+    updatedAt: null,
   })
 }
 
