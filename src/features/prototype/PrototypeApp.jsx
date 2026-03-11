@@ -1,12 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
 import {
+  adminForceAssignStudentToClub,
   advanceRecruitmentRound,
   approveApplication,
+  cancelStudentPreferenceDraft,
   directAssignStudentToClub,
   directSelectInterviewMember,
+  finalizeCurrentCycleDraftsIfNeeded,
   getCurrentRecruitmentCycle,
+<<<<<<< HEAD
   getRoundStatsByClubIds,
+=======
+  listCurrentCycleApplications,
+  listCurrentCycleDrafts,
+  getStudentPreferenceDraft,
+  getSubmissionWindowState,
+  getTeacherPreAssignmentWindowState,
+>>>>>>> a1550b40095255830ffe6fa8db12d4d082a15999
   inferStudentGrade,
   listApplicationsBySchedule,
   listClubMembers,
@@ -14,8 +25,25 @@ import {
   purgeLegacyRecruitmentData,
   randomSelectPending,
   rejectApplication,
-  submitStudentPreferences,
+  revokeApprovedApplication,
+  saveStudentPreferenceDraft,
+  syncLeaderAssignmentForClub,
+  syncLeaderAssignmentsForClubs,
+  updateRecruitmentPreAssignmentWindow,
+  updateRecruitmentSubmissionWindow,
 } from "../../services/applicationService";
+import {
+  applyToRequestCard,
+  cancelRequestCardApplication,
+  createRequestCard,
+  deleteRequestCard,
+  drawRequestCardWinners,
+  getRequestCardState,
+  listRequestCardApplicationsByApplicant,
+  listRequestCardApplicationsByCard,
+  listRequestCards,
+  updateRequestCard,
+} from "../../services/requestCardService";
 import {
   canEditClub,
   canManageSelection,
@@ -34,6 +62,7 @@ import {
   downloadUserAccountTemplate,
   listUsers,
   parseUserAccountExcel,
+  resetStudentPasswordsByAdmin,
   resetUserPasswordByAdmin,
   updateMyProfile,
   updateMyPassword,
@@ -110,7 +139,92 @@ function rejectReasonLabel(value) {
   if (value === "higher_choice_assigned") return "다른 지망 배정";
   if (value === "final_round_closed") return "3라운드 종료 미배정";
   if (value === "round_ineligible") return "라운드 전환 시 신청 불가 처리";
+  if (value === "approval_revoked") return "승인 취소";
+  if (value === "leader_assigned") return "동아리장 자동 배정";
+  if (value === "admin_force_assigned") return "관리자 강제 배정 이동";
   return "";
+}
+
+function selectionSourceLabel(value) {
+  if (value === "approval") return "일반 승인";
+  if (value === "random") return "무작위 선발";
+  if (value === "manual_assign") return "수동 배정 승인";
+  if (value === "interview_manual") return "직접 선발";
+  if (value === "leader_auto") return "동아리장 자동 배정";
+  if (value === "admin_force") return "관리자 강제 배정";
+  return "";
+}
+
+function decisionLabel(row) {
+  return rejectReasonLabel(row?.rejectReason)
+    || String(row?.decisionNote || "").trim()
+    || selectionSourceLabel(row?.selectionSource)
+    || "-";
+}
+
+function submissionSourceLabel(value) {
+  if (value === "application") return "확정 신청";
+  if (value === "draft") return "제출본";
+  return "미제출";
+}
+
+function buildStudentApplicationStatusRows(students, clubs, applications, drafts) {
+  const studentRows = Array.isArray(students) ? students : [];
+  const clubMap = new Map((Array.isArray(clubs) ? clubs : []).map((club) => [club.id, club]));
+  const appsByStudent = new Map();
+  const draftByStudent = new Map();
+
+  (Array.isArray(applications) ? applications : []).forEach((row) => {
+    if (!appsByStudent.has(row.studentUid)) {
+      appsByStudent.set(row.studentUid, []);
+    }
+    appsByStudent.get(row.studentUid).push(row);
+  });
+
+  (Array.isArray(drafts) ? drafts : []).forEach((row) => {
+    draftByStudent.set(row.studentUid, row);
+  });
+
+  return [...studentRows]
+    .sort((a, b) => String(a.studentNo || a.loginId || "").localeCompare(String(b.studentNo || b.loginId || ""), "ko"))
+    .map((student) => {
+      const apps = [...(appsByStudent.get(student.uid) || [])].sort(
+        (a, b) => Number(a.preferenceRank || 0) - Number(b.preferenceRank || 0),
+      );
+      const draft = draftByStudent.get(student.uid) || null;
+      const sourceType = apps.length > 0 ? "application" : draft ? "draft" : "none";
+      const sourceRows = apps.length > 0 ? apps : (draft?.preferences || []);
+      const preferences = [1, 2, 3].map((rank) => {
+        const source = sourceRows.find((row) => Number(row.preferenceRank || 0) === rank) || null;
+        const club = source ? clubMap.get(source.clubId) : null;
+        return {
+          preferenceRank: rank,
+          clubId: source?.clubId || "",
+          clubName: club?.clubName || source?.clubId || "",
+          status: apps.length > 0 ? source?.status || "" : "",
+          rejectReason: apps.length > 0 ? source?.rejectReason || "" : "",
+          selectionSource: apps.length > 0 ? source?.selectionSource || "" : "",
+          decisionNote: apps.length > 0 ? source?.decisionNote || "" : "",
+          careerGoal: source?.careerGoal || "",
+          applyReason: source?.applyReason || "",
+          wantedActivity: source?.wantedActivity || "",
+          updatedAt: source?.updatedAt || source?.submittedAt || null,
+        };
+      });
+      const approved = apps.find((row) => row.status === "approved") || null;
+      const approvedClub = approved ? clubMap.get(approved.clubId) : null;
+      return {
+        studentUid: student.uid,
+        studentNo: student.studentNo || student.loginId || "",
+        studentName: student.name || "",
+        sourceType,
+        submittedAt: draft?.submittedAt || apps[0]?.createdAt || null,
+        updatedAt: draft?.updatedAt || apps[0]?.updatedAt || null,
+        finalClubId: approved?.clubId || "",
+        finalClubName: approvedClub?.clubName || approved?.clubId || "",
+        preferences,
+      };
+    });
 }
 
 function formatTime(value) {
@@ -130,6 +244,138 @@ function formatTime(value) {
   });
 }
 
+function toDatetimeLocalValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const pad = (num) => String(num).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function createPreferenceRows(source = []) {
+  return Array.from({ length: 3 }, (_, index) => {
+    const row = source[index] || {};
+    return {
+      clubId: row.clubId || "",
+      careerGoal: row.careerGoal || "",
+      applyReason: row.applyReason || "",
+      wantedActivity: row.wantedActivity || "",
+    };
+  });
+}
+
+function submissionPhaseLabel(state) {
+  if (!state?.configured) return "미설정";
+  if (state.phase === "before") return "신청 전";
+  if (state.phase === "open") return "신청 중";
+  if (state.phase === "closed" && state.needsFinalization) return "마감 후 확정 대기";
+  if (state.phase === "closed") return "선발 가능";
+  return "-";
+}
+
+function submissionPhaseDescription(state) {
+  if (!state?.configured) {
+    return "관리자가 아직 학생 신청 기간을 설정하지 않았습니다.";
+  }
+  if (state.phase === "before") {
+    return `신청 시작 전입니다. ${formatTime(state.startAt)}부터 제출할 수 있습니다.`;
+  }
+  if (state.phase === "open") {
+    return `신청 기간입니다. ${formatTime(state.endAt)}까지 제출·수정·취소할 수 있습니다.`;
+  }
+  if (state.phase === "closed" && state.needsFinalization) {
+    return "신청 기간이 끝났습니다. 제출본을 확정하는 중입니다.";
+  }
+  if (state.phase === "closed") {
+    return "신청 기간이 종료되어 학생 입력은 잠겨 있고 선발 단계만 진행할 수 있습니다.";
+  }
+  return "";
+}
+
+function preAssignmentPhaseLabel(state) {
+  if (!state?.configured) return "미설정";
+  if (state.phase === "before") return "시작 전";
+  if (state.phase === "open") return "진행 중";
+  if (state.phase === "closed") return "종료";
+  return "-";
+}
+
+function preAssignmentPhaseDescription(state) {
+  if (!state?.configured) {
+    return "관리자가 아직 교사 사전 학생 배정 기간을 설정하지 않았습니다.";
+  }
+  if (state.phase === "before") {
+    return `교사 사전 학생 배정 시작 전입니다. ${formatTime(state.startAt)}부터 직접 선발과 수동 배정을 진행할 수 있습니다.`;
+  }
+  if (state.phase === "open") {
+    return `교사 사전 학생 배정 기간입니다. ${formatTime(state.endAt)}까지 직접 선발과 수동 배정을 진행할 수 있습니다.`;
+  }
+  if (state.phase === "closed") {
+    return "교사 사전 학생 배정 기간이 종료되었습니다.";
+  }
+  return "";
+}
+
+function requestCardTargetLabel(value) {
+  if (value === "student") return "학생 대상";
+  if (value === "teacher") return "교사 대상";
+  return "-";
+}
+
+function requestCardPhaseMeta(state) {
+  if (state?.phase === "open") {
+    return { label: "신청 중", bg: "#eef7ee", border: "#cbe6cd", color: t.ok };
+  }
+  if (state?.phase === "before") {
+    return { label: "시작 전", bg: "#fff8e1", border: "#f3dfb9", color: t.warn };
+  }
+  if (state?.phase === "closed") {
+    return { label: "추첨 대기", bg: "#edf4ff", border: "#c8dcff", color: t.accent };
+  }
+  if (state?.phase === "drawn") {
+    return { label: "추첨 완료", bg: "#f3f4f6", border: "#d6dae3", color: t.textSub };
+  }
+  return { label: "미설정", bg: "#f3f4f6", border: "#d6dae3", color: t.textSub };
+}
+
+function requestCardResultMeta(status) {
+  if (status === "selected") {
+    return { label: "당첨", bg: "#e8f5e9", color: t.ok };
+  }
+  if (status === "not_selected") {
+    return { label: "미당첨", bg: "#ffebee", color: t.danger };
+  }
+  if (status === "applied") {
+    return { label: "신청 완료", bg: "#edf4ff", color: t.accent };
+  }
+  return { label: "-", bg: "#f3f4f6", color: t.textSub };
+}
+
+function requestCardPhaseDescription(card, state) {
+  if (!state?.configured) {
+    return "신청 기간이 아직 설정되지 않았습니다.";
+  }
+  if (state.phase === "before") {
+    return `신청 시작: ${formatTime(card.startAt)}`;
+  }
+  if (state.phase === "open") {
+    return `신청 마감: ${formatTime(card.endAt)}`;
+  }
+  if (state.phase === "closed") {
+    return "신청 기간이 종료되어 관리자의 랜덤 추첨을 기다리는 중입니다.";
+  }
+  if (state.phase === "drawn") {
+    return `추첨 완료: ${formatTime(card.drawExecutedAt)}`;
+  }
+  return "";
+}
+
+function canUseRequestCard(card, user) {
+  const normalizedRole = user?.role === "admin" ? "teacher" : user?.role;
+  return card?.targetRole === normalizedRole;
+}
+
 function MessageBar({ message, onClose }) {
   if (!message?.text) return null;
   const colors = {
@@ -140,15 +386,36 @@ function MessageBar({ message, onClose }) {
   const palette = colors[message.type] || colors.info;
 
   return (
-    <div style={{ ...cardStyle, background: palette.bg, borderColor: palette.border, color: palette.color, padding: "10px 12px" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <span style={{ fontSize: 13, fontWeight: 600 }}>{message.text}</span>
-        <button
-          onClick={onClose}
-          style={{ ...buttonBase, background: "transparent", color: palette.color, padding: "4px 8px" }}
-        >
-          닫기
-        </button>
+    <div
+      style={{
+        position: "fixed",
+        top: 16,
+        left: "50%",
+        transform: "translateX(-50%)",
+        width: "min(720px, calc(100vw - 32px))",
+        zIndex: 2000,
+        pointerEvents: "none",
+      }}
+    >
+      <div
+        style={{
+          ...cardStyle,
+          background: palette.bg,
+          borderColor: palette.border,
+          color: palette.color,
+          padding: "10px 12px",
+          pointerEvents: "auto",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{message.text}</span>
+          <button
+            onClick={onClose}
+            style={{ ...buttonBase, background: "transparent", color: palette.color, padding: "4px 8px" }}
+          >
+            닫기
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -198,7 +465,7 @@ function LoginPanel({ onLogin, loading, error }) {
               value={loginId}
               onChange={(e) => setLoginId(e.target.value)}
               style={inputBase}
-              placeholder={tab === "teacher" ? "예: 김교사" : "예: 26001"}
+              placeholder={tab === "teacher" ? "예: 김교사" : "예: 20912"}
             />
           </div>
 
@@ -247,7 +514,7 @@ function LoginPanel({ onLogin, loading, error }) {
           </button>
 
           <div style={{ fontSize: 12, color: t.textSub, lineHeight: 1.5 }}>
-            학생은 학번(5자리 숫자) + 이름 + 비밀번호를 입력해야 로그인됩니다.
+            학생은 학번(5자리 숫자, 예: 20912) + 이름 + 비밀번호를 입력해야 로그인됩니다.
           </div>
         </div>
       </div>
@@ -474,13 +741,22 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
   const navByRole = {
     admin: [
       { key: "clubs", label: "동아리 관리" },
-      { key: "round", label: "라운드 운영" },
+      { key: "studentStatus", label: "학생 신청 현황" },
+      { key: "round", label: "동아리 선발 진행" },
       { key: "users", label: "회원 관리" },
+      { type: "divider" },
+      { key: "extraRequests", label: "기타신청현황" },
+      { key: "requestCards", label: "공통 신청카드 관리" },
+      { type: "divider" },
       { key: "profile", label: "내 정보" },
     ],
     teacher: [
       { key: "myClubs", label: "내 동아리" },
       { key: "clubOverview", label: "동아리개설현황" },
+      { key: "studentStatus", label: "학생 신청 현황" },
+      { type: "divider" },
+      { key: "extraRequests", label: "기타신청현황" },
+      { type: "divider" },
       { key: "profile", label: "내 정보" },
     ],
     student: isStudentLeader
@@ -489,12 +765,18 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
         { key: "my", label: "신청 현황" },
         { key: "clubOverview", label: "동아리개설현황" },
         { key: "clubs", label: "동아리 수정(동아리장)" },
+        { type: "divider" },
+        { key: "extraRequests", label: "기타신청현황" },
+        { type: "divider" },
         { key: "profile", label: "내 정보" },
       ]
       : [
         { key: "apply", label: "동아리 신청" },
         { key: "my", label: "신청 현황" },
         { key: "clubOverview", label: "동아리개설현황" },
+        { type: "divider" },
+        { key: "extraRequests", label: "기타신청현황" },
+        { type: "divider" },
         { key: "profile", label: "내 정보" },
       ],
   };
@@ -523,7 +805,15 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
           <div style={{ display: "grid", gap: 12 }}>
             <nav style={{ ...cardStyle, padding: 8 }}>
               <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>
-                {nav.map((item) => {
+                {nav.map((item, index) => {
+                  if (item.type === "divider") {
+                    return (
+                      <div
+                        key={`divider-${index}`}
+                        style={{ width: 1, minWidth: 1, alignSelf: "stretch", background: t.border, margin: "4px 2px" }}
+                      />
+                    );
+                  }
                   const active = tab === item.key;
                   return (
                     <button
@@ -550,7 +840,15 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
           <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 12 }}>
             <aside style={{ ...cardStyle, height: "fit-content", padding: 10 }}>
               <div style={{ display: "grid", gap: 6 }}>
-                {nav.map((item) => {
+                {nav.map((item, index) => {
+                  if (item.type === "divider") {
+                    return (
+                      <div
+                        key={`divider-${index}`}
+                        style={{ height: 1, background: t.border, margin: "4px 2px" }}
+                      />
+                    );
+                  }
                   const active = tab === item.key;
                   return (
                     <button
@@ -1121,24 +1419,26 @@ function ApplicantsDialog({
   loading,
   club,
   cycle,
+  submissionState,
+  preAssignmentState,
   rows,
   users,
   onClose,
   onApprove,
   onReject,
+  onRevoke,
   onRandom,
   onManualAssign,
   randomLocked,
 }) {
   const [manualStudentUid, setManualStudentUid] = useState("");
 
-  useEffect(() => {
-    setManualStudentUid("");
-  }, [open, club?.id]);
-
+  const clubTargetGradesKey = Array.isArray(club?.targetGrades) ? club.targetGrades.join(",") : "";
   const students = useMemo(
     () => {
-      const targets = Array.isArray(club?.targetGrades) ? club.targetGrades : [];
+      const targets = clubTargetGradesKey
+        ? clubTargetGradesKey.split(",").map((value) => Number(value)).filter(Boolean)
+        : [];
       return (users || [])
         .filter((row) => row.role === "student")
         .filter((row) => {
@@ -1147,9 +1447,12 @@ function ApplicantsDialog({
           return grade ? targets.includes(grade) : false;
         });
     },
-    [users, club?.id, (club?.targetGrades || []).join(",")],
+    [users, clubTargetGradesKey],
   );
-  const manualDisabled = loading || cycle?.status !== "open" || !manualStudentUid;
+  const selectionReady = submissionState?.selectionReady !== false;
+  const preAssignmentReady = preAssignmentState?.canAssign === true;
+  const manualEnabled = cycle?.status === "open" && (selectionReady || preAssignmentReady);
+  const manualDisabled = loading || !manualEnabled || !manualStudentUid;
 
   if (!open) return null;
 
@@ -1157,7 +1460,7 @@ function ApplicantsDialog({
   const pendingCurrent = rows.filter(
     (row) => row.status === "pending" && Number(row.preferenceRank) === Number(currentRound),
   ).length;
-  const randomDisabled = loading || pendingCurrent === 0 || randomLocked || cycle?.status === "closed";
+  const randomDisabled = loading || pendingCurrent === 0 || randomLocked || cycle?.status === "closed" || !selectionReady;
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
@@ -1188,6 +1491,27 @@ function ApplicantsDialog({
           {randomLocked ? <span style={{ fontSize: 12, color: t.textSub }}>현재 라운드는 이미 무작위 선발을 실행했습니다.</span> : null}
         </div>
 
+        {!selectionReady ? (
+          <div
+            style={{
+              ...cardStyle,
+              marginBottom: 12,
+              background: preAssignmentReady ? "#eef7ee" : "#fff8e1",
+              borderColor: preAssignmentReady ? "#cbe6cd" : "#f3dfb9",
+              padding: 12,
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 800, color: preAssignmentReady ? t.ok : t.warn, marginBottom: 4 }}>
+              {preAssignmentReady ? "교사 사전 학생 배정 기간입니다." : "선발 기능이 잠겨 있습니다."}
+            </div>
+            <div style={{ fontSize: 12, color: t.textSub }}>
+              {preAssignmentReady
+                ? "지금은 학생 수동 배정만 먼저 진행할 수 있고, 일반 승인/반려/무작위 선발은 학생 신청 마감 후 가능합니다."
+                : submissionPhaseDescription(submissionState)}
+            </div>
+          </div>
+        ) : null}
+
         <div style={{ ...cardStyle, marginBottom: 12, background: "#f8fbff", borderColor: "#d8e5ff", padding: 12 }}>
           <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>
             학생 수동 배정 승인
@@ -1216,7 +1540,9 @@ function ApplicantsDialog({
             </button>
           </div>
           <div style={{ marginTop: 7, fontSize: 12, color: t.textSub }}>
-            대상학년 학생만 검색되며, 신청하지 않은 학생도 바로 배정할 수 있습니다.
+            {preAssignmentReady
+              ? "대상학년 학생만 검색되며, 교사 사전 학생 배정 기간에는 학생 신청 없이도 미리 배정할 수 있습니다."
+              : "대상학년 학생만 검색되며, 신청 마감 후에는 신청하지 않은 학생도 바로 배정할 수 있습니다."}
           </div>
         </div>
 
@@ -1236,7 +1562,12 @@ function ApplicantsDialog({
             </thead>
             <tbody>
               {rows.map((row) => {
-                const canDecide = row.status === "pending" && cycle?.status === "open";
+                const canDecide = row.status === "pending" && cycle?.status === "open" && selectionReady;
+                const canRevoke = row.status === "approved"
+                  && cycle?.status === "open"
+                  && selectionReady
+                  && row.selectionSource !== "random"
+                  && row.selectionSource !== "leader_auto";
                 return (
                   <tr key={row.id}>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.studentNo || "-"}</td>
@@ -1247,37 +1578,54 @@ function ApplicantsDialog({
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.applyReason || "-"}</td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.wantedActivity || "-"}</td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, color: t.textSub }}>
-                      {row.rejectReason ? rejectReasonLabel(row.rejectReason) : "-"}
+                      {decisionLabel(row)}
                     </td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}>
-                      <div style={{ display: "flex", gap: 6 }}>
+                      {canDecide ? (
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button
+                            onClick={() => onApprove(row)}
+                            disabled={loading}
+                            style={{
+                              ...buttonBase,
+                              padding: "5px 8px",
+                              background: !loading ? "#e8f5e9" : "#cfd8e3",
+                              color: !loading ? t.ok : "#6b7280",
+                              fontWeight: 700,
+                            }}
+                          >
+                            승인
+                          </button>
+                          <button
+                            onClick={() => onReject(row)}
+                            disabled={loading}
+                            style={{
+                              ...buttonBase,
+                              padding: "5px 8px",
+                              background: !loading ? "#ffebee" : "#cfd8e3",
+                              color: !loading ? t.danger : "#6b7280",
+                              fontWeight: 700,
+                            }}
+                          >
+                            반려
+                          </button>
+                        </div>
+                      ) : null}
+                      {canRevoke ? (
                         <button
-                          onClick={() => onApprove(row)}
-                          disabled={!canDecide || loading}
+                          onClick={() => onRevoke(row)}
+                          disabled={loading}
                           style={{
                             ...buttonBase,
                             padding: "5px 8px",
-                            background: canDecide && !loading ? "#e8f5e9" : "#cfd8e3",
-                            color: canDecide && !loading ? t.ok : "#6b7280",
+                            background: !loading ? "#fff4e5" : "#cfd8e3",
+                            color: !loading ? t.warn : "#6b7280",
                             fontWeight: 700,
                           }}
                         >
-                          승인
+                          승인 취소
                         </button>
-                        <button
-                          onClick={() => onReject(row)}
-                          disabled={!canDecide || loading}
-                          style={{
-                            ...buttonBase,
-                            padding: "5px 8px",
-                            background: canDecide && !loading ? "#ffebee" : "#cfd8e3",
-                            color: canDecide && !loading ? t.danger : "#6b7280",
-                            fontWeight: 700,
-                          }}
-                        >
-                          반려
-                        </button>
-                      </div>
+                      ) : null}
                     </td>
                   </tr>
                 );
@@ -1303,6 +1651,9 @@ function InterviewSelectDialog({
   users,
   members,
   loading,
+  selectionReady,
+  preAssignmentState,
+  cycleClosed,
   keyword,
   setKeyword,
   onClose,
@@ -1312,8 +1663,17 @@ function InterviewSelectDialog({
 
   const students = users.filter((u) => u.role === "student");
   const memberIds = new Set(members.map((m) => m.studentUid));
+  const targetGrades = Array.isArray(club?.targetGrades) ? club.targetGrades : [];
   const filtered = students
     .filter((s) => !memberIds.has(s.uid))
+    .filter((s) => {
+      // 대상학년 필터: 학번 첫 자리로 학년 추론
+      if (targetGrades.length > 0 && s.studentNo) {
+        const grade = Number(String(s.studentNo)[0]);
+        if (grade >= 1 && grade <= 3 && !targetGrades.includes(grade)) return false;
+      }
+      return true;
+    })
     .filter((s) => {
       if (!keyword.trim()) return true;
       const q = keyword.trim();
@@ -1324,6 +1684,9 @@ function InterviewSelectDialog({
       );
     })
     .slice(0, 80);
+  const preAssignmentReady = preAssignmentState?.canAssign === true;
+  const canSelect = selectionReady || preAssignmentReady;
+  const selectDisabled = loading || !canSelect || cycleClosed;
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
@@ -1339,6 +1702,26 @@ function InterviewSelectDialog({
         </div>
 
         <div style={{ display: "grid", gap: 12 }}>
+          {!selectionReady ? (
+            <div
+              style={{
+                ...cardStyle,
+                padding: 12,
+                background: preAssignmentReady ? "#eef7ee" : "#fff8e1",
+                borderColor: preAssignmentReady ? "#cbe6cd" : "#f3dfb9",
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 700, color: preAssignmentReady ? t.ok : t.warn, marginBottom: 4 }}>
+                {preAssignmentReady ? "교사 사전 학생 배정 기간입니다." : "신청 기간이 끝난 뒤 직접 선발할 수 있습니다."}
+              </div>
+              <div style={{ fontSize: 12, color: t.textSub }}>
+                {preAssignmentReady
+                  ? "지금은 면접으로 미리 선발한 학생을 바로 배정할 수 있습니다."
+                  : "학생 입력이 열려 있는 동안에는 직접 선발 기능을 잠급니다."}
+              </div>
+            </div>
+          ) : null}
+
           <div style={{ ...cardStyle, padding: 12, background: "#fafbfd" }}>
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
               현재 선발 인원: {club?.memberCount || 0}/{club?.maxMembers || 0}
@@ -1389,12 +1772,12 @@ function InterviewSelectDialog({
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px" }}>
                       <button
                         onClick={() => onSelect(s)}
-                        disabled={loading}
+                        disabled={selectDisabled}
                         style={{
                           ...buttonBase,
                           padding: "5px 8px",
-                          background: loading ? "#cfd8e3" : "#fff3e0",
-                          color: loading ? "#6b7280" : t.warn,
+                          background: selectDisabled ? "#cfd8e3" : "#fff3e0",
+                          color: selectDisabled ? "#6b7280" : t.warn,
                           fontWeight: 700,
                         }}
                       >
@@ -1419,19 +1802,48 @@ function InterviewSelectDialog({
   );
 }
 
-function RoundPanel({ cycle, stats, loading, onRefresh, onAdvance, onCleanup }) {
+function RoundPanel({
+  cycle,
+  stats,
+  loading,
+  preAssignmentState,
+  preAssignmentStartValue,
+  preAssignmentEndValue,
+  submissionState,
+  onPreAssignmentStartChange,
+  onPreAssignmentEndChange,
+  onSavePreAssignmentWindow,
+  submissionStartValue,
+  submissionEndValue,
+  onSubmissionStartChange,
+  onSubmissionEndChange,
+  onSaveSubmissionWindow,
+  onRefresh,
+  onAdvance,
+  onCleanup,
+}) {
   const pendingTotal = Object.values(stats).reduce((sum, row) => sum + Number(row.pendingCurrent || 0), 0);
+  const advanceDisabled = loading
+    || cycle?.status === "closed"
+    || pendingTotal > 0
+    || submissionState?.selectionReady === false;
 
   return (
     <section style={cardStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
         <div>
-          <h2 style={{ fontSize: 17 }}>라운드 순차 운영</h2>
+          <h2 style={{ fontSize: 17 }}>동아리 선발 진행</h2>
           <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
             현재 상태: {cycle?.status === "closed" ? "종료" : "진행중"} · 현재 라운드: {cycle?.currentRound || 1}
           </div>
           <div style={{ fontSize: 12, color: t.textSub, marginTop: 2 }}>
             현재 라운드 pending 합계: {pendingTotal}명
+          </div>
+          <div style={{ fontSize: 12, color: t.textSub, marginTop: 2 }}>
+            교사 사전 학생 배정 상태: {preAssignmentPhaseLabel(preAssignmentState)}
+          </div>
+          <div style={{ fontSize: 12, color: t.textSub, marginTop: 2 }}>
+            학생 신청 상태: {submissionPhaseLabel(submissionState)}
           </div>
         </div>
 
@@ -1445,10 +1857,10 @@ function RoundPanel({ cycle, stats, loading, onRefresh, onAdvance, onCleanup }) 
           </button>
           <button
             onClick={onAdvance}
-            disabled={loading || cycle?.status === "closed" || pendingTotal > 0}
+            disabled={advanceDisabled}
             style={{
               ...buttonBase,
-              background: loading || cycle?.status === "closed" || pendingTotal > 0 ? "#cfd8e3" : t.accent,
+              background: advanceDisabled ? "#cfd8e3" : t.accent,
               color: "#fff",
               fontWeight: 700,
             }}
@@ -1462,6 +1874,105 @@ function RoundPanel({ cycle, stats, loading, onRefresh, onAdvance, onCleanup }) 
           >
             기존 모집 데이터 전체 삭제
           </button>
+        </div>
+      </div>
+
+      <div style={{ ...cardStyle, marginBottom: 12, background: "#eef7ee", borderColor: "#cbe6cd", padding: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>교사 사전 학생 배정 기간 설정</div>
+        <div style={{ fontSize: 12, color: t.textSub, marginBottom: 4 }}>
+          현재 기간: {preAssignmentState?.configured
+            ? `${formatTime(preAssignmentState.startAt)} ~ ${formatTime(preAssignmentState.endAt)}`
+            : "미설정"}
+        </div>
+        <div style={{ fontSize: 12, color: t.textSub, marginBottom: 10 }}>
+          {preAssignmentPhaseDescription(preAssignmentState)}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 10 }}>
+          <Field label="사전 배정 시작 일시">
+            <input
+              type="datetime-local"
+              value={preAssignmentStartValue}
+              onChange={(e) => onPreAssignmentStartChange(e.target.value)}
+              style={inputBase}
+            />
+          </Field>
+          <Field label="사전 배정 종료 일시">
+            <input
+              type="datetime-local"
+              value={preAssignmentEndValue}
+              onChange={(e) => onPreAssignmentEndChange(e.target.value)}
+              style={inputBase}
+            />
+          </Field>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+          <button
+            onClick={onSavePreAssignmentWindow}
+            disabled={loading}
+            style={{
+              ...buttonBase,
+              background: loading ? "#cfd8e3" : t.ok,
+              color: "#fff",
+              fontWeight: 700,
+            }}
+          >
+            교사 사전 배정 기간 저장
+          </button>
+          <span style={{ fontSize: 12, color: t.textSub }}>
+            이 기간이 열려 있는 동안에는 직접 선발과 수동 배정을 추가로 허용합니다.
+          </span>
+        </div>
+      </div>
+
+      <div style={{ ...cardStyle, marginBottom: 12, background: "#f8fbff", borderColor: "#d8e5ff", padding: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>학생 신청 기간 설정</div>
+        <div style={{ fontSize: 12, color: t.textSub, marginBottom: 4 }}>
+          현재 기간: {submissionState?.configured
+            ? `${formatTime(submissionState.startAt)} ~ ${formatTime(submissionState.endAt)}`
+            : "미설정"}
+        </div>
+        <div style={{ fontSize: 12, color: t.textSub, marginBottom: 10 }}>
+          {submissionPhaseDescription(submissionState)}
+        </div>
+        {submissionState?.finalizedAt ? (
+          <div style={{ fontSize: 12, color: t.textSub, marginBottom: 10 }}>
+            최근 확정 시각: {formatTime(submissionState.finalizedAt)}
+          </div>
+        ) : null}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 10 }}>
+          <Field label="신청 시작 일시">
+            <input
+              type="datetime-local"
+              value={submissionStartValue}
+              onChange={(e) => onSubmissionStartChange(e.target.value)}
+              style={inputBase}
+            />
+          </Field>
+          <Field label="신청 종료 일시">
+            <input
+              type="datetime-local"
+              value={submissionEndValue}
+              onChange={(e) => onSubmissionEndChange(e.target.value)}
+              style={inputBase}
+            />
+          </Field>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+          <button
+            onClick={onSaveSubmissionWindow}
+            disabled={loading}
+            style={{
+              ...buttonBase,
+              background: loading ? "#cfd8e3" : t.accent,
+              color: "#fff",
+              fontWeight: 700,
+            }}
+          >
+            신청 기간 저장
+          </button>
+          <span style={{ fontSize: 12, color: t.textSub }}>
+            시작/종료를 모두 비우고 저장하면 미설정 상태로 되돌립니다.
+          </span>
         </div>
       </div>
 
@@ -1499,16 +2010,252 @@ function RoundPanel({ cycle, stats, loading, onRefresh, onAdvance, onCleanup }) 
   );
 }
 
+function StudentApplicationStatusPanel({
+  rows,
+  loading,
+  onRefresh,
+  onOpenDetail,
+}) {
+  const [query, setQuery] = useState("");
+
+  const filteredRows = useMemo(() => {
+    const keyword = String(query || "").trim().toLowerCase();
+    if (!keyword) return rows;
+    return rows.filter((row) => {
+      const values = [
+        row.studentNo,
+        row.studentName,
+        row.preferences[0]?.clubName,
+        row.preferences[1]?.clubName,
+        row.preferences[2]?.clubName,
+      ];
+      return values.some((value) => String(value || "").toLowerCase().includes(keyword));
+    });
+  }, [rows, query]);
+
+  return (
+    <section style={cardStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ fontSize: 17 }}>학생 동아리 신청 현황</h2>
+          <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
+            학생 행을 클릭하면 지원 사유와 배정 이력을 확인할 수 있습니다.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="학번, 이름, 동아리 검색"
+            style={{ ...inputBase, width: 240 }}
+          />
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+          >
+            새로고침
+          </button>
+        </div>
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+          <thead>
+            <tr>
+              {["학번", "이름", "1지망동아리", "2지망동아리", "3지망동아리"].map((head) => (
+                <th
+                  key={head}
+                  style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
+                >
+                  {head}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRows.map((row) => (
+              <tr
+                key={row.studentUid}
+                onClick={() => onOpenDetail(row.studentUid)}
+                style={{ cursor: "pointer" }}
+              >
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13 }}>{row.studentNo || "-"}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13, fontWeight: 700 }}>{row.studentName || "-"}</td>
+                {[0, 1, 2].map((index) => (
+                  <td key={index} style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13 }}>
+                    {row.preferences[index]?.clubName || "-"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {filteredRows.length === 0 ? (
+              <tr>
+                <td colSpan={5} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
+                  표시할 학생 신청 데이터가 없습니다.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function StudentApplicationDetailDialog({
+  open,
+  row,
+  cycle,
+  submissionState,
+  clubs,
+  isAdmin,
+  loading,
+  onClose,
+  onForceAssign,
+}) {
+  const defaultForceClubId = row?.finalClubId || row?.preferences.find((item) => item.clubId)?.clubId || "";
+  const [forceClubId, setForceClubId] = useState(defaultForceClubId);
+  const [forceReason, setForceReason] = useState("");
+
+  if (!open || !row) return null;
+
+  const selectableClubs = (clubs || []).filter((club) => !club.legacy);
+  const forceLocked = cycle?.status === "closed" || submissionState?.selectionReady === false;
+  const forceDisabled = loading
+    || forceLocked
+    || !row.studentUid
+    || !forceClubId
+    || !String(forceReason || "").trim();
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
+      <div style={{ maxWidth: 1080, margin: "20px auto", ...cardStyle }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>{row.studentNo} / {row.studentName}</div>
+            <div style={{ fontSize: 12, color: t.textSub }}>
+              제출 상태: {submissionSourceLabel(row.sourceType)}
+              {row.finalClubName ? ` · 최종배정: ${row.finalClubName}` : ""}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>닫기</button>
+        </div>
+
+        <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ ...cardStyle, background: "#fafbfd" }}>
+            <div style={{ fontSize: 12, color: t.textSub, marginBottom: 8 }}>
+              제출 시각: {formatTime(row.submittedAt)} · 최근 수정: {formatTime(row.updatedAt)}
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 }}>
+                <thead>
+                  <tr>
+                    {["지망", "동아리", "상태", "결정/사유", "진로희망", "신청사유", "활동계획"].map((head) => (
+                      <th
+                        key={head}
+                        style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
+                      >
+                        {head}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {row.preferences.map((item) => (
+                    <tr key={item.preferenceRank}>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{item.preferenceRank}지망</td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{item.clubName || "-"}</td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                        {item.status ? <StatusBadge status={item.status} /> : <span style={{ fontSize: 12, color: t.textSub }}>{item.clubName ? "제출" : "-"}</span>}
+                      </td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: t.textSub }}>{decisionLabel(item)}</td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{item.careerGoal || "-"}</td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{item.applyReason || "-"}</td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{item.wantedActivity || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {isAdmin ? (
+            <div style={{ ...cardStyle, background: "#fff7f2", borderColor: "#f2d7c4" }}>
+              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>관리자 강제 배정</div>
+              <div style={{ display: "grid", gap: 10 }}>
+                <Field label="동아리 선택">
+                  <Select value={forceClubId} onChange={(e) => setForceClubId(e.target.value)}>
+                    <option value="">동아리 선택</option>
+                    {selectableClubs.map((club) => (
+                      <option key={club.id} value={club.id}>
+                        {club.clubName} ({club.memberCount}/{club.maxMembers}{club.isInterviewSelection ? " · 면접" : ""})
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="강제 배정 사유" hint="학생 원본 신청서는 유지되고, 관리자 조정 기록만 추가됩니다.">
+                  <textarea
+                    value={forceReason}
+                    onChange={(e) => setForceReason(e.target.value)}
+                    style={{ ...inputBase, minHeight: 78, resize: "vertical" }}
+                    placeholder="예: 상담 결과에 따른 관리자 조정"
+                  />
+                </Field>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <button
+                    onClick={async () => {
+                      const success = await onForceAssign({
+                        studentUid: row.studentUid,
+                        clubId: forceClubId,
+                        reason: forceReason,
+                      });
+                      if (success) {
+                        setForceReason("");
+                      }
+                    }}
+                    disabled={forceDisabled}
+                    style={{
+                      ...buttonBase,
+                      background: forceDisabled ? "#cfd8e3" : "#d97706",
+                      color: "#fff",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {loading ? "배정 중..." : "강제 배정 실행"}
+                  </button>
+                  <span style={{ fontSize: 12, color: t.textSub }}>
+                    {submissionState?.selectionReady === false
+                      ? "학생 신청 기간이 끝난 뒤에만 강제 배정할 수 있습니다."
+                      : cycle?.status === "closed"
+                        ? "모집 종료 후에는 강제 배정할 수 없습니다."
+                        : "기존 승인 동아리가 있으면 선택한 동아리로 이동 처리합니다."}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StudentApplyPanel({
   user,
   cycle,
   clubs,
+  draft,
+  submissionState,
   myApplications,
   submitting,
   onSubmit,
+  onCancelDraft,
 }) {
   const grade = inferStudentGrade(user?.studentNo || user?.loginId);
-  const submitted = myApplications.length > 0;
+  const finalized = myApplications.length > 0;
+  const hasDraft = !!draft;
+  const canEdit = cycle?.status === "open" && submissionState?.canSubmit && !finalized;
 
   const available = clubs.filter((club) => {
     if (club.legacy) return false;
@@ -1518,23 +2265,29 @@ function StudentApplyPanel({
     return (club.targetGrades || []).includes(grade);
   });
 
+  const nonInterviewClubs = clubs.filter((club) => !club.legacy && !club.isInterviewSelection);
   const interviewClubs = clubs.filter((club) => !club.legacy && club.isInterviewSelection);
+  const readonlyRows = finalized
+    ? [...myApplications].sort((a, b) => Number(a.preferenceRank || 0) - Number(b.preferenceRank || 0))
+    : (draft?.preferences || []);
+  const selectableClubs = canEdit ? available : nonInterviewClubs;
 
-  const [rows, setRows] = useState([
-    { clubId: "", careerGoal: "", applyReason: "", wantedActivity: "" },
-    { clubId: "", careerGoal: "", applyReason: "", wantedActivity: "" },
-    { clubId: "", careerGoal: "", applyReason: "", wantedActivity: "" },
-  ]);
+  const [rows, setRows] = useState(() => createPreferenceRows(readonlyRows));
 
-  useEffect(() => {
-    if (!submitted) {
-      setRows([
-        { clubId: "", careerGoal: "", applyReason: "", wantedActivity: "" },
-        { clubId: "", careerGoal: "", applyReason: "", wantedActivity: "" },
-        { clubId: "", careerGoal: "", applyReason: "", wantedActivity: "" },
-      ]);
-    }
-  }, [submitted, user?.uid, cycle?.currentRound, cycle?.status]);
+  const showForm = canEdit || hasDraft || finalized || (cycle?.status === "open" && submissionState?.phase === "open");
+  const statusPalette = finalized
+    ? { bg: "#edf4ff", border: "#c8dcff", title: "신청이 확정되었습니다.", body: "이제 학생 화면에서는 수정할 수 없습니다." }
+    : hasDraft && canEdit
+      ? { bg: "#edf4ff", border: "#c8dcff", title: "제출이 완료되었습니다.", body: "마감 전까지 수정 저장 또는 제출 취소가 가능합니다." }
+      : cycle?.status !== "open"
+        ? { bg: "#ffebee", border: "#f2b8be", title: "현재 모집 사이클이 종료되었습니다.", body: "관리자가 새 모집 사이클을 열기 전까지 신청할 수 없습니다." }
+        : submissionState?.phase === "unconfigured"
+          ? { bg: "#fff8e1", border: "#f3dfb9", title: "아직 신청 기간이 설정되지 않았습니다.", body: "관리자가 신청 시작/종료 일시를 저장하면 제출할 수 있습니다." }
+          : submissionState?.phase === "before"
+            ? { bg: "#fff8e1", border: "#f3dfb9", title: "신청 시작 전입니다.", body: `신청 시작 시각: ${formatTime(submissionState.startAt)}` }
+            : submissionState?.phase === "closed"
+              ? { bg: "#fff8e1", border: "#f3dfb9", title: "신청 기간이 종료되었습니다.", body: finalized ? "선발 결과는 내 신청 현황에서 확인할 수 있습니다." : "학생 입력은 잠겨 있고 선발 단계만 진행됩니다." }
+              : { bg: "#eef7ee", border: "#cbe6cd", title: "현재 신청 기간입니다.", body: `신청 마감 시각: ${formatTime(submissionState?.endAt)}` };
 
   return (
     <section style={cardStyle}>
@@ -1545,22 +2298,25 @@ function StudentApplyPanel({
       <div style={{ fontSize: 12, color: t.textSub, marginBottom: 12 }}>
         내 학년 추정: {grade ? `${grade}학년` : "학번 첫 자리로 학년 추정 불가"}
       </div>
+      <div style={{ fontSize: 12, color: t.textSub, marginBottom: 12 }}>
+        신청 기간 상태: {submissionPhaseLabel(submissionState)}{submissionState?.configured ? ` · ${formatTime(submissionState.startAt)} ~ ${formatTime(submissionState.endAt)}` : ""}
+      </div>
 
-      {submitted ? (
-        <div style={{ ...cardStyle, background: "#edf4ff", borderColor: "#c8dcff" }}>
-          <div style={{ fontWeight: 700, marginBottom: 4 }}>이미 1~3지망을 제출했습니다.</div>
-          <div style={{ fontSize: 12, color: t.textSub }}>정책상 재신청은 불가합니다.</div>
+      <div style={{ ...cardStyle, background: statusPalette.bg, borderColor: statusPalette.border, marginBottom: 12 }}>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>{statusPalette.title}</div>
+        <div style={{ fontSize: 12, color: t.textSub }}>{statusPalette.body}</div>
+      </div>
+
+      {canEdit && available.length === 0 ? (
+        <div style={{ ...cardStyle, background: "#fff8e1", borderColor: "#f3dfb9", marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4, color: t.warn }}>신청 가능한 동아리가 없습니다.</div>
+          <div style={{ fontSize: 12, color: t.textSub }}>
+            학년 제한, 동아리장 미지정, 자체면접 여부를 확인해주세요.
+          </div>
         </div>
       ) : null}
 
-      {!submitted && cycle?.status !== "open" ? (
-        <div style={{ ...cardStyle, background: "#ffebee", borderColor: "#f2b8be" }}>
-          <div style={{ fontWeight: 700, marginBottom: 4, color: t.danger }}>현재 모집 사이클이 종료되었습니다.</div>
-          <div style={{ fontSize: 12, color: t.textSub }}>관리자가 새 모집 사이클을 열기 전까지 신청할 수 없습니다.</div>
-        </div>
-      ) : null}
-
-      {!submitted && cycle?.status === "open" ? (
+      {showForm ? (
         <div style={{ display: "grid", gap: 12 }}>
           {[0, 1, 2].map((idx) => (
             <div key={idx} style={{ ...cardStyle, background: "#fafbfd" }}>
@@ -1569,6 +2325,7 @@ function StudentApplyPanel({
                 <Field label="동아리 선택">
                   <Select
                     value={rows[idx].clubId}
+                    disabled={!canEdit}
                     onChange={(e) => {
                       const next = [...rows];
                       next[idx] = { ...next[idx], clubId: e.target.value };
@@ -1576,7 +2333,7 @@ function StudentApplyPanel({
                     }}
                   >
                     <option value="">선택 안함</option>
-                    {available.map((club) => (
+                    {selectableClubs.map((club) => (
                       <option key={club.id} value={club.id}>
                         {club.clubName} ({club.room})
                       </option>
@@ -1587,6 +2344,7 @@ function StudentApplyPanel({
                 <Field label="진로희망">
                   <input
                     value={rows[idx].careerGoal}
+                    disabled={!canEdit}
                     onChange={(e) => {
                       const next = [...rows];
                       next[idx] = { ...next[idx], careerGoal: e.target.value };
@@ -1600,6 +2358,7 @@ function StudentApplyPanel({
                 <Field label="신청사유">
                   <textarea
                     value={rows[idx].applyReason}
+                    disabled={!canEdit}
                     onChange={(e) => {
                       const next = [...rows];
                       next[idx] = { ...next[idx], applyReason: e.target.value };
@@ -1612,6 +2371,7 @@ function StudentApplyPanel({
                 <Field label="원하는 활동">
                   <textarea
                     value={rows[idx].wantedActivity}
+                    disabled={!canEdit}
                     onChange={(e) => {
                       const next = [...rows];
                       next[idx] = { ...next[idx], wantedActivity: e.target.value };
@@ -1624,19 +2384,37 @@ function StudentApplyPanel({
             </div>
           ))}
 
-          <button
-            onClick={() => onSubmit(rows)}
-            disabled={submitting}
-            style={{
-              ...buttonBase,
-              background: submitting ? "#cfd8e3" : t.accent,
-              color: "#fff",
-              fontWeight: 700,
-              justifySelf: "start",
-            }}
-          >
-            {submitting ? "제출 중..." : "1~3지망 제출"}
-          </button>
+          {canEdit ? (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={() => onSubmit(rows)}
+                disabled={submitting || available.length === 0}
+                style={{
+                  ...buttonBase,
+                  background: submitting || available.length === 0 ? "#cfd8e3" : t.accent,
+                  color: "#fff",
+                  fontWeight: 700,
+                }}
+              >
+                {submitting ? (hasDraft ? "저장 중..." : "제출 중...") : hasDraft ? "수정 저장" : "제출"}
+              </button>
+              {hasDraft ? (
+                <button
+                  onClick={onCancelDraft}
+                  disabled={submitting}
+                  style={{
+                    ...buttonBase,
+                    background: submitting ? "#cfd8e3" : "#fff",
+                    border: `1px solid ${t.border}`,
+                    color: t.textSub,
+                    fontWeight: 700,
+                  }}
+                >
+                  제출 취소
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -1664,7 +2442,7 @@ function StudentMyPanel({ apps }) {
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 }}>
           <thead>
             <tr>
-              {["지망", "동아리", "상태", "반려사유", "진로희망", "신청사유", "활동계획", "수정일"].map((head) => (
+              {["지망", "동아리", "상태", "결정/사유", "진로희망", "신청사유", "활동계획", "수정일"].map((head) => (
                 <th key={head} style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}>
                   {head}
                 </th>
@@ -1677,7 +2455,7 @@ function StudentMyPanel({ apps }) {
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.preferenceRank}지망</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.club?.clubName || row.clubId}</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}><StatusBadge status={row.status} /></td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: t.textSub }}>{rejectReasonLabel(row.rejectReason) || "-"}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: t.textSub }}>{decisionLabel(row)}</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.careerGoal || "-"}</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.applyReason || "-"}</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.wantedActivity || "-"}</td>
@@ -1698,6 +2476,415 @@ function StudentMyPanel({ apps }) {
   );
 }
 
+function RequestCardApplicationsDialog({
+  open,
+  card,
+  rows,
+  loading,
+  onClose,
+}) {
+  if (!open) return null;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
+      <div style={{ maxWidth: 960, margin: "20px auto", ...cardStyle }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>{card?.title || "신청 카드"} 신청 현황</div>
+            <div style={{ fontSize: 12, color: t.textSub }}>
+              {requestCardTargetLabel(card?.targetRole)} · 모집 {card?.capacity || 0}명 · 신청 {card?.applicantCount || 0}명
+            </div>
+          </div>
+          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>닫기</button>
+        </div>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
+            <thead>
+              <tr>
+                {["신청자", "아이디", "학번", "역할", "상태", "신청시각"].map((head) => (
+                  <th
+                    key={head}
+                    style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
+                  >
+                    {head}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const resultMeta = requestCardResultMeta(row.status);
+                return (
+                  <tr key={row.id}>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.applicantName || "-"}</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.applicantLoginId || "-"}</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.applicantStudentNo || "-"}</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{roleLabel(row.applicantRole)}</td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                      <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: resultMeta.bg, color: resultMeta.color }}>
+                        {resultMeta.label}
+                      </span>
+                    </td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: t.textSub }}>{formatTime(row.createdAt)}</td>
+                  </tr>
+                );
+              })}
+              {!loading && rows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
+                    신청 내역이 없습니다.
+                  </td>
+                </tr>
+              ) : null}
+              {loading ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
+                    신청 현황을 불러오는 중...
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RequestCardAdminPanel({
+  cards,
+  form,
+  setForm,
+  editingId,
+  loading,
+  onRefresh,
+  onSubmit,
+  onStartEdit,
+  onCancelEdit,
+  onDelete,
+  onDraw,
+  onOpenApplications,
+}) {
+  return (
+    <section style={cardStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <div>
+          <h2 style={{ fontSize: 17 }}>공통 신청 카드 관리</h2>
+          <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
+            학생 또는 교사를 대상으로 별도 신청 카드와 랜덤 추첨을 운영합니다.
+          </div>
+        </div>
+        <button
+          onClick={onRefresh}
+          disabled={loading}
+          style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+        >
+          새로고침
+        </button>
+      </div>
+
+      <div style={{ ...cardStyle, background: "#fafbfd", marginBottom: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 10 }}>
+          {editingId ? "신청 카드 수정" : "신청 카드 생성"}
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.2fr) minmax(0,0.8fr) minmax(0,0.6fr)", gap: 10 }}>
+            <Field label="카드 제목">
+              <input
+                value={form.title}
+                onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
+                style={inputBase}
+                placeholder="예: 체육대회 진행요원 신청"
+              />
+            </Field>
+            <Field label="대상">
+              <Select
+                value={form.targetRole}
+                onChange={(e) => setForm((prev) => ({ ...prev, targetRole: e.target.value }))}
+              >
+                <option value="student">학생 대상</option>
+                <option value="teacher">교사 대상</option>
+              </Select>
+            </Field>
+            <Field label="모집인원">
+              <input
+                type="number"
+                min={1}
+                value={form.capacity}
+                onChange={(e) => setForm((prev) => ({ ...prev, capacity: e.target.value }))}
+                style={inputBase}
+              />
+            </Field>
+          </div>
+
+          <Field label="내용">
+            <textarea
+              value={form.description}
+              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+              style={{ ...inputBase, minHeight: 88, resize: "vertical" }}
+              placeholder="신청 대상에게 보여줄 안내 내용을 입력하세요."
+            />
+          </Field>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 10 }}>
+            <Field label="신청 시작 일시">
+              <input
+                type="datetime-local"
+                value={form.startAt}
+                onChange={(e) => setForm((prev) => ({ ...prev, startAt: e.target.value }))}
+                style={inputBase}
+              />
+            </Field>
+            <Field label="신청 종료 일시">
+              <input
+                type="datetime-local"
+                value={form.endAt}
+                onChange={(e) => setForm((prev) => ({ ...prev, endAt: e.target.value }))}
+                style={inputBase}
+              />
+            </Field>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              onClick={onSubmit}
+              disabled={loading}
+              style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700 }}
+            >
+              {editingId ? "수정 저장" : "카드 생성"}
+            </button>
+            {editingId ? (
+              <button
+                onClick={onCancelEdit}
+                disabled={loading}
+                style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+              >
+                수정 취소
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+          <thead>
+            <tr>
+              {["제목", "대상", "상태", "신청기간", "모집", "신청", "당첨", "작업"].map((head) => (
+                <th
+                  key={head}
+                  style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
+                >
+                  {head}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {cards.map((card) => {
+              const state = getRequestCardState(card);
+              const phaseMeta = requestCardPhaseMeta(state);
+              const drawDisabled = loading || state.phase !== "closed";
+              return (
+                <tr key={card.id}>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13, fontWeight: 700 }}>{card.title}</td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{requestCardTargetLabel(card.targetRole)}</td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}>
+                    <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, color: phaseMeta.color }}>
+                      {phaseMeta.label}
+                    </span>
+                  </td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, color: t.textSub }}>
+                    {formatTime(card.startAt)} ~ {formatTime(card.endAt)}
+                  </td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{card.capacity}명</td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{card.applicantCount || 0}명</td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{card.selectedCount || 0}명</td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <button
+                        onClick={() => onOpenApplications(card)}
+                        disabled={loading}
+                        style={{ ...buttonBase, padding: "5px 8px", background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+                      >
+                        신청현황
+                      </button>
+                      <button
+                        onClick={() => onDraw(card)}
+                        disabled={drawDisabled}
+                        style={{ ...buttonBase, padding: "5px 8px", background: drawDisabled ? "#cfd8e3" : "#fff3e0", color: drawDisabled ? "#6b7280" : t.warn, fontWeight: 700 }}
+                      >
+                        랜덤 추첨
+                      </button>
+                      <button
+                        onClick={() => onStartEdit(card)}
+                        disabled={loading || state.phase === "drawn"}
+                        style={{ ...buttonBase, padding: "5px 8px", background: "#edf4ff", color: t.accent, fontWeight: 700 }}
+                      >
+                        수정
+                      </button>
+                      <button
+                        onClick={() => onDelete(card)}
+                        disabled={loading || state.phase === "drawn"}
+                        style={{ ...buttonBase, padding: "5px 8px", background: "#ffebee", color: t.danger, fontWeight: 700 }}
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {cards.length === 0 ? (
+              <tr>
+                <td colSpan={8} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
+                  아직 생성된 신청 카드가 없습니다.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function RequestCardUserSection({
+  user,
+  cards,
+  myApplications,
+  loading,
+  onRefresh,
+  onApply,
+  onCancel,
+}) {
+  const appMap = useMemo(
+    () => new Map((myApplications || []).map((row) => [row.cardId, row])),
+    [myApplications],
+  );
+
+  const visibleCards = useMemo(() => {
+    const phaseRank = { open: 0, before: 1, closed: 2, drawn: 3, unconfigured: 4 };
+    return (cards || [])
+      .filter((card) => canUseRequestCard(card, user))
+      .sort((a, b) => {
+        const leftState = getRequestCardState(a);
+        const rightState = getRequestCardState(b);
+        const leftRank = phaseRank[leftState.phase] ?? 9;
+        const rightRank = phaseRank[rightState.phase] ?? 9;
+        if (leftRank !== rightRank) return leftRank - rightRank;
+        return String(a.title || a.id).localeCompare(String(b.title || b.id), "ko");
+      });
+  }, [cards, user?.role]);
+
+  return (
+    <section style={cardStyle}>
+      <div style={{ borderTop: `2px dashed ${t.border}`, paddingTop: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <div>
+            <h2 style={{ fontSize: 17 }}>기타 신청 현황</h2>
+            <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
+              동아리 외에 관리자가 연 신청 항목을 여기서 신청하고 추첨 결과를 확인할 수 있습니다.
+            </div>
+          </div>
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+          >
+            새로고침
+          </button>
+        </div>
+
+        {visibleCards.length === 0 ? (
+          <div style={{ fontSize: 13, color: t.textSub }}>현재 신청 가능한 추가 카드가 없습니다.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {visibleCards.map((card) => {
+              const state = getRequestCardState(card);
+              const phaseMeta = requestCardPhaseMeta(state);
+              const myApplication = appMap.get(card.id) || null;
+              const resultMeta = requestCardResultMeta(myApplication?.status);
+              const canApply = !myApplication && state.phase === "open";
+              const canCancel = myApplication?.status === "applied" && state.phase === "open";
+              return (
+                <div key={card.id} style={{ ...cardStyle, background: "#fafbfd" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                        <div style={{ fontSize: 16, fontWeight: 800 }}>{card.title}</div>
+                        <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, color: phaseMeta.color }}>
+                          {phaseMeta.label}
+                        </span>
+                        {myApplication ? (
+                          <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: resultMeta.bg, color: resultMeta.color }}>
+                            {resultMeta.label}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div style={{ fontSize: 12, color: t.textSub }}>
+                        {requestCardPhaseDescription(card, state)}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 12, color: t.textSub, textAlign: "right" }}>
+                      모집 {card.capacity}명 · 신청 {card.applicantCount || 0}명
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6, marginBottom: 10 }}>
+                    {card.description}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    {canApply ? (
+                      <button
+                        onClick={() => onApply(card.id)}
+                        disabled={loading}
+                        style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700 }}
+                      >
+                        신청
+                      </button>
+                    ) : null}
+                    {canCancel ? (
+                      <button
+                        onClick={() => onCancel(card.id)}
+                        disabled={loading}
+                        style={{ ...buttonBase, background: loading ? "#cfd8e3" : "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
+                      >
+                        신청 취소
+                      </button>
+                    ) : null}
+                    {!canApply && !canCancel ? (
+                      <span style={{ fontSize: 12, color: t.textSub }}>
+                        {myApplication?.status === "selected"
+                          ? "추첨 결과에 당첨되었습니다."
+                          : myApplication?.status === "not_selected"
+                            ? "이번 추첨에서는 선발되지 않았습니다."
+                            : myApplication?.status === "applied"
+                              ? state.phase === "closed"
+                                ? "신청이 완료되었고 관리자의 랜덤 추첨을 기다리는 중입니다."
+                                : "신청이 완료되었습니다."
+                              : state.phase === "before"
+                                ? "신청 시작 전입니다."
+                                : state.phase === "closed"
+                                  ? "신청 기간이 종료되어 추첨을 기다리는 중입니다."
+                                  : state.phase === "drawn"
+                                    ? "추첨이 완료되었습니다."
+                                    : "현재는 신청할 수 없습니다."}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function UserManagementPanel({
   currentUser,
   users,
@@ -1708,7 +2895,9 @@ function UserManagementPanel({
   onUpdate,
   onDelete,
   onResetPassword,
+  onResetStudentPasswords,
   loading,
+  bulkResetLoading,
 }) {
   const [search, setSearch] = useState("");
   const [createForm, setCreateForm] = useState({
@@ -1839,12 +3028,26 @@ function UserManagementPanel({
       <section style={cardStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
           <h2 style={{ fontSize: 17 }}>회원 목록</h2>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ ...inputBase, width: 260 }}
-            placeholder="아이디/이름/학번 검색"
-          />
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              onClick={onResetStudentPasswords}
+              disabled={bulkResetLoading || loading}
+              style={{
+                ...buttonBase,
+                background: bulkResetLoading || loading ? "#cfd8e3" : "#fff3e0",
+                color: bulkResetLoading || loading ? "#6b7280" : t.warn,
+                fontWeight: 700,
+              }}
+            >
+              {bulkResetLoading ? "학생 비번 초기화 중..." : "학생 비번 일괄 초기화"}
+            </button>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ ...inputBase, width: 260 }}
+              placeholder="아이디/이름/학번 검색"
+            />
+          </div>
         </div>
 
         <div style={{ overflowX: "auto" }}>
@@ -2129,6 +3332,17 @@ function newClubForm(user, defaultRoom = "미정") {
   };
 }
 
+function newRequestCardForm() {
+  return {
+    title: "",
+    targetRole: "student",
+    capacity: 1,
+    description: "",
+    startAt: "",
+    endAt: "",
+  };
+}
+
 export default function PrototypeApp() {
   const {
     user,
@@ -2143,6 +3357,7 @@ export default function PrototypeApp() {
   const [loading, setLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [myPasswordLoading, setMyPasswordLoading] = useState(false);
+  const [bulkResetLoading, setBulkResetLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [message, setMessage] = useState({ type: "", text: "" });
 
@@ -2151,13 +3366,31 @@ export default function PrototypeApp() {
   const [users, setUsers] = useState([]);
   const [cycle, setCycle] = useState({ id: "current", currentRound: 1, status: "open" });
   const [roundStats, setRoundStats] = useState({});
+  const [myDraft, setMyDraft] = useState(null);
   const [myApplications, setMyApplications] = useState([]);
+  const [studentStatusRows, setStudentStatusRows] = useState([]);
+  const [studentStatusLoading, setStudentStatusLoading] = useState(false);
+  const [studentStatusDialog, setStudentStatusDialog] = useState({ open: false, studentUid: "" });
+  const [preAssignmentWindowForm, setPreAssignmentWindowForm] = useState({ start: "", end: "" });
+  const [submissionWindowForm, setSubmissionWindowForm] = useState({ start: "", end: "" });
+  const [requestCards, setRequestCards] = useState([]);
+  const [myRequestCardApplications, setMyRequestCardApplications] = useState([]);
 
   const [clubForm, setClubForm] = useState(newClubForm(user));
   const [editingClubId, setEditingClubId] = useState("");
   const [savingClub, setSavingClub] = useState(false);
   const [savingRoom, setSavingRoom] = useState(false);
+  const [forceAssignLoading, setForceAssignLoading] = useState(false);
   const [clubFormDialogOpen, setClubFormDialogOpen] = useState(false);
+  const [requestCardForm, setRequestCardForm] = useState(newRequestCardForm());
+  const [editingRequestCardId, setEditingRequestCardId] = useState("");
+  const [requestCardLoading, setRequestCardLoading] = useState(false);
+  const [requestCardDialog, setRequestCardDialog] = useState({
+    open: false,
+    card: null,
+    rows: [],
+    loading: false,
+  });
 
   const [applicantDialog, setApplicantDialog] = useState({
     open: false,
@@ -2192,11 +3425,29 @@ export default function PrototypeApp() {
     setTab(nextTab);
     setClubFormDialogOpen(false);
     setClubForm(newClubForm(user));
+    setEditingRequestCardId("");
+    setRequestCardForm(newRequestCardForm());
   }, [isAuthenticated, user?.uid, user?.role]);
 
   async function refreshCycle() {
+<<<<<<< HEAD
     const current = await getCurrentRecruitmentCycle({ force: true });
+=======
+    let current = await getCurrentRecruitmentCycle();
+    if (getSubmissionWindowState(current).needsFinalization) {
+      await finalizeCurrentCycleDraftsIfNeeded();
+      current = await getCurrentRecruitmentCycle();
+    }
+>>>>>>> a1550b40095255830ffe6fa8db12d4d082a15999
     setCycle(current);
+    setPreAssignmentWindowForm({
+      start: toDatetimeLocalValue(current.preAssignmentStartAt),
+      end: toDatetimeLocalValue(current.preAssignmentEndAt),
+    });
+    setSubmissionWindowForm({
+      start: toDatetimeLocalValue(current.submissionStartAt),
+      end: toDatetimeLocalValue(current.submissionEndAt),
+    });
     return current;
   }
 
@@ -2228,6 +3479,58 @@ export default function PrototypeApp() {
     return rows;
   }
 
+  async function refreshMyDraft() {
+    if (!user?.uid || user?.role !== "student") {
+      setMyDraft(null);
+      return null;
+    }
+    const draft = await getStudentPreferenceDraft(user.uid);
+    setMyDraft(draft);
+    return draft;
+  }
+
+  async function refreshRequestCards() {
+    const rows = await listRequestCards();
+    setRequestCards(rows);
+    return rows;
+  }
+
+  async function refreshMyRequestCardApplications() {
+    if (user?.role !== "student" && user?.role !== "teacher" && user?.role !== "admin") {
+      setMyRequestCardApplications([]);
+      return [];
+    }
+    const rows = await listRequestCardApplicationsByApplicant(user.uid);
+    setMyRequestCardApplications(rows);
+    return rows;
+  }
+
+  async function refreshStudentStatusRows(studentUsers = null, clubRows = null) {
+    if (user?.role !== "admin" && user?.role !== "teacher") {
+      setStudentStatusRows([]);
+      return [];
+    }
+
+    const baseStudents = Array.isArray(studentUsers)
+      ? studentUsers.filter((row) => row.role === "student")
+      : users.filter((row) => row.role === "student");
+    const baseClubs = Array.isArray(clubRows) ? clubRows : clubs;
+    const [applications, drafts] = await Promise.all([
+      listCurrentCycleApplications(),
+      listCurrentCycleDrafts(),
+    ]);
+    const rows = buildStudentApplicationStatusRows(baseStudents, baseClubs, applications, drafts);
+    setStudentStatusRows(rows);
+    return rows;
+  }
+
+  async function refreshRecruitmentViews(clubRows = clubs, cycleInfo = cycle, studentUsers = users) {
+    await Promise.all([
+      refreshRoundStats(clubRows, cycleInfo),
+      refreshStudentStatusRows(studentUsers, clubRows),
+    ]);
+  }
+
   async function refreshRoundStats(clubList = clubs, cycleInfo = cycle) {
     const targetClubs = (clubList || []).filter((club) => !club.legacy);
     const next = await getRoundStatsByClubIds(
@@ -2242,6 +3545,7 @@ export default function PrototypeApp() {
     if (!isAuthenticated || !user) return;
     setLoading(true);
     try {
+<<<<<<< HEAD
       const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
       const tasks = [refreshMyApplications()];
 
@@ -2263,6 +3567,23 @@ export default function PrototypeApp() {
       }
 
       await Promise.all(tasks);
+=======
+      let clubRows = await refreshClubs();
+      const cycleInfo = await refreshCycle();
+      const syncResult = await syncLeaderAssignmentsForClubs(clubRows, { continueOnError: true });
+      if (syncResult.changed > 0) {
+        clubRows = await refreshClubs();
+      }
+      const [userRows] = await Promise.all([
+        refreshUsers(),
+        refreshMyApplications(),
+        refreshMyDraft(),
+        refreshClubRooms(),
+        refreshRequestCards(),
+        refreshMyRequestCardApplications(),
+      ]);
+      await refreshRecruitmentViews(clubRows, cycleInfo, userRows);
+>>>>>>> a1550b40095255830ffe6fa8db12d4d082a15999
       setMessage({ type: "", text: "" });
     } catch (error) {
       setMessage({ type: "error", text: error instanceof Error ? error.message : "데이터 로딩에 실패했습니다." });
@@ -2280,6 +3601,14 @@ export default function PrototypeApp() {
     if (!lastSyncError) return;
     setMessage({ type: "error", text: lastSyncError });
   }, [lastSyncError]);
+
+  useEffect(() => {
+    if (!message?.text) return undefined;
+    const timeoutId = window.setTimeout(() => {
+      setMessage({ type: "", text: "" });
+    }, 3200);
+    return () => window.clearTimeout(timeoutId);
+  }, [message?.text, message?.type]);
 
   async function handleLogin({ loginId, password, tab: loginTab, studentName }) {
     setLoginLoading(true);
@@ -2324,6 +3653,37 @@ export default function PrototypeApp() {
     setClubFormDialogOpen(true);
   }
 
+  function resetRequestCardForm() {
+    setEditingRequestCardId("");
+    setRequestCardForm(newRequestCardForm());
+  }
+
+  async function reloadRequestCardDialog(card) {
+    if (!card?.id) return;
+    setRequestCardDialog((prev) => ({ ...prev, loading: true }));
+    try {
+      const [cardRows, rows] = await Promise.all([
+        refreshRequestCards(),
+        listRequestCardApplicationsByCard(card.id),
+      ]);
+      const latestCard = cardRows.find((item) => item.id === card.id) || card;
+      setRequestCardDialog({
+        open: true,
+        card: latestCard,
+        rows,
+        loading: false,
+      });
+    } catch (error) {
+      withMessageError(error, "신청 카드 현황을 불러오지 못했습니다.");
+      setRequestCardDialog((prev) => ({ ...prev, loading: false }));
+    }
+  }
+
+  async function openRequestCardDialog(card) {
+    setRequestCardDialog({ open: true, card, rows: [], loading: true });
+    await reloadRequestCardDialog(card);
+  }
+
   async function handleSaveClub() {
     setSavingClub(true);
     try {
@@ -2338,18 +3698,21 @@ export default function PrototypeApp() {
         isInterviewSelection: Boolean(clubForm.isInterviewSelection),
       };
 
+      const savedClub = editingClubId
+        ? await updateSchedule(editingClubId, payload, { actor: user })
+        : await createSchedule(payload, { actor: user });
+      await syncLeaderAssignmentForClub(savedClub);
+
       if (editingClubId) {
-        await updateSchedule(editingClubId, payload, { actor: user });
         setMessage({ type: "ok", text: "동아리 정보를 수정했습니다." });
       } else {
-        await createSchedule(payload, { actor: user });
         setMessage({ type: "ok", text: "동아리를 생성했습니다." });
       }
 
       setClubFormDialogOpen(false);
       resetClubForm();
       const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
-      await refreshRoundStats(clubRows, cycleInfo);
+      await refreshRecruitmentViews(clubRows, cycleInfo);
     } catch (error) {
       withMessageError(error, "동아리 저장에 실패했습니다.");
     } finally {
@@ -2414,12 +3777,131 @@ export default function PrototypeApp() {
       await deleteSchedule(club.id, { actor: user });
       setMessage({ type: "ok", text: "동아리를 삭제했습니다." });
       const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
-      await refreshRoundStats(clubRows, cycleInfo);
+      await refreshRecruitmentViews(clubRows, cycleInfo);
       if (editingClubId === club.id) {
         closeClubFormDialog();
       }
     } catch (error) {
       withMessageError(error, "동아리 삭제에 실패했습니다.");
+    }
+  }
+
+  async function handleSaveRequestCard() {
+    setRequestCardLoading(true);
+    try {
+      const payload = {
+        title: String(requestCardForm.title || "").trim(),
+        targetRole: String(requestCardForm.targetRole || "student").trim(),
+        capacity: Number(requestCardForm.capacity || 0),
+        description: String(requestCardForm.description || "").trim(),
+        startAt: requestCardForm.startAt,
+        endAt: requestCardForm.endAt,
+      };
+
+      if (editingRequestCardId) {
+        await updateRequestCard(editingRequestCardId, payload, { actor: user });
+        setMessage({ type: "ok", text: "신청 카드를 수정했습니다." });
+      } else {
+        await createRequestCard(payload, { actor: user });
+        setMessage({ type: "ok", text: "신청 카드를 생성했습니다." });
+      }
+
+      resetRequestCardForm();
+      const rows = await refreshRequestCards();
+      if (requestCardDialog.open && requestCardDialog.card?.id) {
+        const latestCard = rows.find((row) => row.id === requestCardDialog.card.id) || requestCardDialog.card;
+        await reloadRequestCardDialog(latestCard);
+      }
+    } catch (error) {
+      withMessageError(error, "신청 카드 저장에 실패했습니다.");
+    } finally {
+      setRequestCardLoading(false);
+    }
+  }
+
+  function handleEditRequestCard(card) {
+    setEditingRequestCardId(card.id);
+    setRequestCardForm({
+      title: card.title || "",
+      targetRole: card.targetRole || "student",
+      capacity: card.capacity || 1,
+      description: card.description || "",
+      startAt: toDatetimeLocalValue(card.startAt),
+      endAt: toDatetimeLocalValue(card.endAt),
+    });
+  }
+
+  async function handleDeleteRequestCard(card) {
+    if (!window.confirm(`신청 카드 '${card.title}'를 삭제하시겠습니까?`)) return;
+
+    setRequestCardLoading(true);
+    try {
+      await deleteRequestCard(card.id, { actor: user });
+      setMessage({ type: "ok", text: "신청 카드를 삭제했습니다." });
+      if (editingRequestCardId === card.id) {
+        resetRequestCardForm();
+      }
+      if (requestCardDialog.open && requestCardDialog.card?.id === card.id) {
+        setRequestCardDialog({ open: false, card: null, rows: [], loading: false });
+      }
+      await Promise.all([refreshRequestCards(), refreshMyRequestCardApplications()]);
+    } catch (error) {
+      withMessageError(error, "신청 카드 삭제에 실패했습니다.");
+    } finally {
+      setRequestCardLoading(false);
+    }
+  }
+
+  async function handleDrawRequestCard(card) {
+    const confirmMessage = [
+      `'${card.title}' 카드를 랜덤 추첨할까요?`,
+      `모집 ${card.capacity}명 / 현재 신청 ${card.applicantCount || 0}명`,
+    ].join("\n");
+    if (!window.confirm(confirmMessage)) return;
+
+    setRequestCardLoading(true);
+    try {
+      const result = await drawRequestCardWinners({ cardId: card.id, actor: user });
+      setMessage({
+        type: "ok",
+        text: `랜덤 추첨 완료: 총 ${result.applicantCount}명 중 ${result.selectedCount}명 선발`,
+      });
+      await Promise.all([refreshRequestCards(), refreshMyRequestCardApplications()]);
+      if (requestCardDialog.open && requestCardDialog.card?.id === card.id) {
+        await reloadRequestCardDialog(card);
+      }
+    } catch (error) {
+      withMessageError(error, "랜덤 추첨에 실패했습니다.");
+    } finally {
+      setRequestCardLoading(false);
+    }
+  }
+
+  async function handleApplyRequestCard(cardId) {
+    setRequestCardLoading(true);
+    try {
+      await applyToRequestCard({ cardId, actor: user });
+      setMessage({ type: "ok", text: "신청했습니다." });
+      await Promise.all([refreshRequestCards(), refreshMyRequestCardApplications()]);
+    } catch (error) {
+      withMessageError(error, "신청에 실패했습니다.");
+    } finally {
+      setRequestCardLoading(false);
+    }
+  }
+
+  async function handleCancelRequestCard(cardId) {
+    if (!window.confirm("신청을 취소할까요?")) return;
+
+    setRequestCardLoading(true);
+    try {
+      await cancelRequestCardApplication({ cardId, actor: user });
+      setMessage({ type: "ok", text: "신청을 취소했습니다." });
+      await Promise.all([refreshRequestCards(), refreshMyRequestCardApplications()]);
+    } catch (error) {
+      withMessageError(error, "신청 취소에 실패했습니다.");
+    } finally {
+      setRequestCardLoading(false);
     }
   }
 
@@ -2449,12 +3931,21 @@ export default function PrototypeApp() {
     if (!club) return;
     setApplicantDialog((prev) => ({ ...prev, loading: true }));
     try {
+<<<<<<< HEAD
       const [clubsData, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
       const rows = await listApplicationsBySchedule(club.id, {
         cycle: cycleInfo,
         profilesByUid: userMap,
       });
       await refreshRoundStats(clubsData, cycleInfo);
+=======
+      const [rows, clubsData, cycleInfo] = await Promise.all([
+        listApplicationsBySchedule(club.id),
+        refreshClubs(),
+        refreshCycle(),
+      ]);
+      await refreshRecruitmentViews(clubsData, cycleInfo);
+>>>>>>> a1550b40095255830ffe6fa8db12d4d082a15999
 
       const latestClub = clubsData.find((item) => item.id === club.id) || club;
       setApplicantDialog({ open: true, club: latestClub, rows, loading: false });
@@ -2483,6 +3974,21 @@ export default function PrototypeApp() {
       await refreshMyApplications();
     } catch (error) {
       withMessageError(error, "반려 처리에 실패했습니다.");
+    }
+  }
+
+  async function handleRevokeApprovedApplication(row) {
+    if (!window.confirm(`${row.studentName || "해당 학생"}의 승인 상태를 취소할까요?`)) {
+      return;
+    }
+
+    try {
+      await revokeApprovedApplication({ applicationId: row.id, actor: user });
+      setMessage({ type: "ok", text: "승인 취소 처리했습니다." });
+      await reloadApplicantDialog(applicantDialog.club);
+      await refreshMyApplications();
+    } catch (error) {
+      withMessageError(error, "승인 취소에 실패했습니다.");
     }
   }
 
@@ -2531,6 +4037,58 @@ export default function PrototypeApp() {
     }
   }
 
+  async function handleAdminForceAssign({ studentUid, clubId, reason }) {
+    const targetStudent = users.find((row) => row.uid === studentUid);
+    const targetClub = clubs.find((row) => row.id === clubId);
+
+    if (!studentUid || !clubId) {
+      setMessage({ type: "error", text: "학생과 동아리를 먼저 선택해주세요." });
+      return false;
+    }
+
+    const confirmMessage = [
+      `${targetStudent?.name || "선택한 학생"} 학생을`,
+      `${targetClub?.clubName || "선택한 동아리"}로 강제 배정할까요?`,
+      "",
+      `사유: ${String(reason || "").trim()}`,
+    ].join("\n");
+    if (!window.confirm(confirmMessage)) {
+      return false;
+    }
+
+    setForceAssignLoading(true);
+    try {
+      await adminForceAssignStudentToClub({
+        studentUid,
+        clubId,
+        reason,
+        actor: user,
+      });
+      setMessage({
+        type: "ok",
+        text: `${targetStudent?.name || "선택한 학생"} 학생을 ${targetClub?.clubName || "선택한 동아리"}로 강제 배정했습니다.`,
+      });
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      await Promise.all([
+        refreshRecruitmentViews(clubRows, cycleInfo),
+        refreshMyDraft(),
+        refreshMyApplications(),
+      ]);
+      if (applicantDialog.open && applicantDialog.club) {
+        await reloadApplicantDialog(applicantDialog.club);
+      }
+      if (interviewDialog.open && interviewDialog.club) {
+        await reloadInterviewDialog(interviewDialog.club);
+      }
+      return true;
+    } catch (error) {
+      withMessageError(error, "강제 배정에 실패했습니다.");
+      return false;
+    } finally {
+      setForceAssignLoading(false);
+    }
+  }
+
   async function openInterviewDialog(club) {
     setInterviewDialog({
       open: true,
@@ -2564,7 +4122,7 @@ export default function PrototypeApp() {
         refreshClubs(),
         refreshCycle(),
       ]);
-      await refreshRoundStats(clubsData, cycleInfo);
+      await refreshRecruitmentViews(clubsData, cycleInfo);
 
       const latestClub = clubsData.find((item) => item.id === club.id) || club;
       setInterviewDialog((prev) => ({
@@ -2601,7 +4159,7 @@ export default function PrototypeApp() {
       setCycle(next);
       const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
       await Promise.all([
-        refreshRoundStats(clubRows, cycleInfo),
+        refreshRecruitmentViews(clubRows, cycleInfo),
         refreshMyApplications(),
       ]);
       setMessage({ type: "ok", text: cycleInfo.status === "closed" ? "모집 사이클을 종료했습니다." : `${cycleInfo.currentRound}라운드로 전환했습니다.` });
@@ -2619,7 +4177,8 @@ export default function PrototypeApp() {
       setMessage({ type: "ok", text: "모집 데이터를 초기화했습니다." });
       const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
       await Promise.all([
-        refreshRoundStats(clubRows, cycleInfo),
+        refreshRecruitmentViews(clubRows, cycleInfo),
+        refreshMyDraft(),
         refreshMyApplications(),
       ]);
       if (applicantDialog.open) {
@@ -2636,6 +4195,7 @@ export default function PrototypeApp() {
   async function handleStudentPreferenceSubmit(rows) {
     setStudentSubmitLoading(true);
     try {
+      const hadDraft = !!myDraft;
       const normalized = [];
       let firstEmptyAfterUsed = false;
 
@@ -2670,19 +4230,76 @@ export default function PrototypeApp() {
         throw new Error("최소 1개 지망을 입력해주세요.");
       }
 
-      await submitStudentPreferences({
+      await saveStudentPreferenceDraft({
         studentUid: user.uid,
         studentNo: user.studentNo || user.loginId,
         studentName: user.name,
         preferences: normalized,
       });
 
+<<<<<<< HEAD
       setMessage({ type: "ok", text: "1~3지망 신청을 제출했습니다." });
       await refreshMyApplications();
+=======
+      await refreshMyDraft();
+      setMessage({
+        type: "ok",
+        text: hadDraft
+          ? "신청서를 수정 저장했습니다."
+          : "신청서를 제출했습니다. 마감 전까지 수정할 수 있습니다.",
+      });
+>>>>>>> a1550b40095255830ffe6fa8db12d4d082a15999
     } catch (error) {
       withMessageError(error, "신청 제출에 실패했습니다.");
     } finally {
       setStudentSubmitLoading(false);
+    }
+  }
+
+  async function handleCancelStudentDraft() {
+    if (!window.confirm("제출한 신청서를 취소할까요?")) {
+      return;
+    }
+
+    setStudentSubmitLoading(true);
+    try {
+      await cancelStudentPreferenceDraft({ studentUid: user.uid });
+      await refreshMyDraft();
+      setMessage({ type: "ok", text: "제출한 신청서를 취소했습니다." });
+    } catch (error) {
+      withMessageError(error, "신청서 취소에 실패했습니다.");
+    } finally {
+      setStudentSubmitLoading(false);
+    }
+  }
+
+  async function handleSaveSubmissionWindow() {
+    try {
+      await updateRecruitmentSubmissionWindow({
+        actor: user,
+        submissionStartAt: submissionWindowForm.start,
+        submissionEndAt: submissionWindowForm.end,
+      });
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      await refreshRecruitmentViews(clubRows, cycleInfo);
+      setMessage({ type: "ok", text: "학생 신청 기간을 저장했습니다." });
+    } catch (error) {
+      withMessageError(error, "학생 신청 기간 저장에 실패했습니다.");
+    }
+  }
+
+  async function handleSavePreAssignmentWindow() {
+    try {
+      await updateRecruitmentPreAssignmentWindow({
+        actor: user,
+        preAssignmentStartAt: preAssignmentWindowForm.start,
+        preAssignmentEndAt: preAssignmentWindowForm.end,
+      });
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      await refreshRecruitmentViews(clubRows, cycleInfo);
+      setMessage({ type: "ok", text: "교사 사전 학생 배정 기간을 저장했습니다." });
+    } catch (error) {
+      withMessageError(error, "교사 사전 학생 배정 기간 저장에 실패했습니다.");
     }
   }
 
@@ -2697,7 +4314,8 @@ export default function PrototypeApp() {
         subject: String(form.subject || "").trim(),
       });
       setMessage({ type: "ok", text: "계정을 생성했습니다." });
-      await refreshUsers();
+      const userRows = await refreshUsers();
+      await refreshStudentStatusRows(userRows);
     } catch (error) {
       withMessageError(error, "계정 생성에 실패했습니다.");
     }
@@ -2717,7 +4335,8 @@ export default function PrototypeApp() {
         summary.push(failMessages.join(" / "));
       }
       setMessage({ type: result.failed.length > 0 ? "info" : "ok", text: summary.join(" · ") });
-      await refreshUsers();
+      const userRows = await refreshUsers();
+      await refreshStudentStatusRows(userRows);
     } catch (error) {
       withMessageError(error, "엑셀 일괄 등록에 실패했습니다.");
     }
@@ -2732,7 +4351,8 @@ export default function PrototypeApp() {
         subject: patch.subject,
       });
       setMessage({ type: "ok", text: "회원 정보를 수정했습니다." });
-      await refreshUsers();
+      const userRows = await refreshUsers();
+      await refreshStudentStatusRows(userRows);
     } catch (error) {
       withMessageError(error, "회원 수정에 실패했습니다.");
     }
@@ -2745,8 +4365,8 @@ export default function PrototypeApp() {
       await deleteUserByAdmin(row.uid);
       setMessage({ type: "ok", text: "회원을 삭제했습니다." });
       const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
-      await refreshUsers();
-      await refreshRoundStats(clubRows, cycleInfo);
+      const userRows = await refreshUsers();
+      await refreshRecruitmentViews(clubRows, cycleInfo, userRows);
     } catch (error) {
       withMessageError(error, "회원 삭제에 실패했습니다.");
     }
@@ -2761,6 +4381,31 @@ export default function PrototypeApp() {
       setMessage({ type: "ok", text: `비밀번호를 초기화했습니다. (${row.loginId})` });
     } catch (error) {
       withMessageError(error, "비밀번호 초기화에 실패했습니다.");
+    }
+  }
+
+  async function handleResetStudentPasswords() {
+    const studentCount = users.filter((row) => row.role === "student").length;
+    if (studentCount === 0) {
+      setMessage({ type: "warn", text: "초기화할 학생 계정이 없습니다." });
+      return;
+    }
+
+    const nextPassword = window.prompt(`학생 ${studentCount}명의 새 비밀번호를 입력하세요`, "123456");
+    if (!nextPassword) return;
+
+    if (!window.confirm(`학생 ${studentCount}명의 비밀번호를 모두 같은 값으로 초기화할까요?`)) {
+      return;
+    }
+
+    try {
+      setBulkResetLoading(true);
+      const result = await resetStudentPasswordsByAdmin(nextPassword);
+      setMessage({ type: "ok", text: `학생 비밀번호를 일괄 초기화했습니다. (${result.count}명)` });
+    } catch (error) {
+      withMessageError(error, "학생 비밀번호 일괄 초기화에 실패했습니다.");
+    } finally {
+      setBulkResetLoading(false);
     }
   }
 
@@ -2794,16 +4439,31 @@ export default function PrototypeApp() {
     }
   }
 
+  const preAssignmentState = useMemo(() => getTeacherPreAssignmentWindowState(cycle), [cycle]);
+  const submissionState = useMemo(() => getSubmissionWindowState(cycle), [cycle]);
   const visibleClubs = clubs.filter((club) => !club.legacy);
   const leaderEditableClubs = visibleClubs.filter((club) => canEditClub(club, user));
   const teacherOwnedClubs = visibleClubs.filter((club) => String(club.teacherUid || "") === String(user?.uid || ""));
+  const selectedStudentStatusRow = useMemo(
+    () => studentStatusRows.find((row) => row.studentUid === studentStatusDialog.studentUid) || null,
+    [studentStatusDialog.studentUid, studentStatusRows],
+  );
   const isStudentLeader = user?.role === "student" && leaderEditableClubs.length > 0;
   const clubsForManageTab = user?.role === "student" ? leaderEditableClubs : visibleClubs;
   const canCreateClub = user?.role === "admin" || user?.role === "teacher" || user?.loginId === "admin";
+<<<<<<< HEAD
   const visibleClubIdsKey = [...visibleClubs].map((club) => club.id).sort().join(",");
   const leaderEditableClubIdsKey = [...leaderEditableClubs].map((club) => club.id).sort().join(",");
   const teacherOwnedClubIdsKey = [...teacherOwnedClubs].map((club) => club.id).sort().join(",");
   const roundStatsClubIdsKey = Object.keys(roundStats).sort().join(",");
+=======
+  const studentApplyFormKey = [
+    user?.uid || "",
+    myDraft?.id || "",
+    myDraft?.updatedAt || myDraft?.submittedAt || "",
+    myApplications.map((row) => `${row.id}:${row.updatedAt || row.createdAt || ""}`).join("|"),
+  ].join("::");
+>>>>>>> a1550b40095255830ffe6fa8db12d4d082a15999
   const applicantRandomLocked = applicantDialog.club
     ? Array.isArray(applicantDialog.club.randomDrawnRounds)
       && applicantDialog.club.randomDrawnRounds.includes(cycle.currentRound)
@@ -2957,6 +4617,30 @@ export default function PrototypeApp() {
         ) : null
       ) : null}
 
+      {tab === "requestCards" && user.role === "admin" ? (
+        <RequestCardAdminPanel
+          cards={requestCards}
+          form={requestCardForm}
+          setForm={setRequestCardForm}
+          editingId={editingRequestCardId}
+          loading={requestCardLoading}
+          onRefresh={async () => {
+            try {
+              await refreshRequestCards();
+              setMessage({ type: "ok", text: "신청 카드 목록을 새로고침했습니다." });
+            } catch (error) {
+              withMessageError(error, "신청 카드 목록 새로고침에 실패했습니다.");
+            }
+          }}
+          onSubmit={handleSaveRequestCard}
+          onStartEdit={handleEditRequestCard}
+          onCancelEdit={resetRequestCardForm}
+          onDelete={handleDeleteRequestCard}
+          onDraw={handleDrawRequestCard}
+          onOpenApplications={openRequestCardDialog}
+        />
+      ) : null}
+
       {tab === "myClubs" && user.role === "teacher" ? (
         <ClubTable
           actor={user}
@@ -2999,16 +4683,28 @@ export default function PrototypeApp() {
           cycle={cycle}
           stats={roundStats}
           loading={loading}
+          preAssignmentState={preAssignmentState}
+          preAssignmentStartValue={preAssignmentWindowForm.start}
+          preAssignmentEndValue={preAssignmentWindowForm.end}
+          submissionState={submissionState}
+          onPreAssignmentStartChange={(value) => setPreAssignmentWindowForm((prev) => ({ ...prev, start: value }))}
+          onPreAssignmentEndChange={(value) => setPreAssignmentWindowForm((prev) => ({ ...prev, end: value }))}
+          onSavePreAssignmentWindow={handleSavePreAssignmentWindow}
+          submissionStartValue={submissionWindowForm.start}
+          submissionEndValue={submissionWindowForm.end}
+          onSubmissionStartChange={(value) => setSubmissionWindowForm((prev) => ({ ...prev, start: value }))}
+          onSubmissionEndChange={(value) => setSubmissionWindowForm((prev) => ({ ...prev, end: value }))}
+          onSaveSubmissionWindow={handleSaveSubmissionWindow}
           onRefresh={async () => {
             try {
               const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
               await Promise.all([
-                refreshRoundStats(clubRows, cycleInfo),
+                refreshRecruitmentViews(clubRows, cycleInfo),
                 refreshMyApplications(),
               ]);
-              setMessage({ type: "ok", text: "라운드 정보를 새로고침했습니다." });
+              setMessage({ type: "ok", text: "동아리 선발 정보를 새로고침했습니다." });
             } catch (error) {
-              withMessageError(error, "라운드 정보 갱신에 실패했습니다.");
+              withMessageError(error, "동아리 선발 정보 갱신에 실패했습니다.");
             }
           }}
           onAdvance={handleAdvanceRound}
@@ -3016,10 +4712,35 @@ export default function PrototypeApp() {
         />
       ) : null}
 
+      {tab === "studentStatus" && (user.role === "admin" || user.role === "teacher") ? (
+        <StudentApplicationStatusPanel
+          rows={studentStatusRows}
+          loading={studentStatusLoading || loading}
+          onRefresh={async () => {
+            setStudentStatusLoading(true);
+            try {
+              const [clubRows, userRows, cycleInfo] = await Promise.all([
+                refreshClubs(),
+                refreshUsers(),
+                refreshCycle(),
+              ]);
+              await refreshRecruitmentViews(clubRows, cycleInfo, userRows);
+              setMessage({ type: "ok", text: "학생 신청 현황을 새로고침했습니다." });
+            } catch (error) {
+              withMessageError(error, "학생 신청 현황을 새로고침하지 못했습니다.");
+            } finally {
+              setStudentStatusLoading(false);
+            }
+          }}
+          onOpenDetail={(studentUid) => setStudentStatusDialog({ open: true, studentUid })}
+        />
+      ) : null}
+
       {tab === "users" && user.role === "admin" ? (
         <UserManagementPanel
           currentUser={user}
           users={users}
+          bulkResetLoading={bulkResetLoading}
           onRefresh={async () => {
             try {
               await refreshUsers();
@@ -3034,23 +4755,47 @@ export default function PrototypeApp() {
           onUpdate={handleUpdateUser}
           onDelete={handleDeleteUser}
           onResetPassword={handleResetPassword}
+          onResetStudentPasswords={handleResetStudentPasswords}
           loading={loading}
         />
       ) : null}
 
       {tab === "apply" && user.role === "student" ? (
         <StudentApplyPanel
+          key={studentApplyFormKey}
           user={user}
           cycle={cycle}
           clubs={visibleClubs}
+          draft={myDraft}
+          submissionState={submissionState}
           myApplications={myApplications}
           submitting={studentSubmitLoading}
           onSubmit={handleStudentPreferenceSubmit}
+          onCancelDraft={handleCancelStudentDraft}
         />
       ) : null}
 
       {tab === "my" && user.role === "student" ? (
         <StudentMyPanel apps={myApplications} />
+      ) : null}
+
+      {tab === "extraRequests" && (user.role === "admin" || user.role === "teacher" || user.role === "student") ? (
+        <RequestCardUserSection
+          user={user}
+          cards={requestCards}
+          myApplications={myRequestCardApplications}
+          loading={requestCardLoading}
+          onRefresh={async () => {
+            try {
+              await Promise.all([refreshRequestCards(), refreshMyRequestCardApplications()]);
+              setMessage({ type: "ok", text: "기타 신청 카드 목록을 새로고침했습니다." });
+            } catch (error) {
+              withMessageError(error, "기타 신청 카드 목록 새로고침에 실패했습니다.");
+            }
+          }}
+          onApply={handleApplyRequestCard}
+          onCancel={handleCancelRequestCard}
+        />
       ) : null}
 
       {tab === "profile" ? (
@@ -3090,15 +4835,19 @@ export default function PrototypeApp() {
       />
 
       <ApplicantsDialog
+        key={`${applicantDialog.club?.id || "none"}:${applicantDialog.open ? "open" : "closed"}`}
         open={applicantDialog.open}
         loading={applicantDialog.loading}
         club={applicantDialog.club}
         cycle={cycle}
+        submissionState={submissionState}
+        preAssignmentState={preAssignmentState}
         rows={applicantDialog.rows}
         users={users}
         onClose={() => setApplicantDialog({ open: false, club: null, rows: [], loading: false })}
         onApprove={handleApproveApplication}
         onReject={handleRejectApplication}
+        onRevoke={handleRevokeApprovedApplication}
         onRandom={handleRandomSelection}
         onManualAssign={handleManualAssignStudent}
         randomLocked={applicantRandomLocked}
@@ -3110,10 +4859,39 @@ export default function PrototypeApp() {
         users={users}
         members={interviewDialog.members}
         loading={interviewDialog.loading}
+        selectionReady={submissionState.selectionReady}
+        preAssignmentState={preAssignmentState}
+        cycleClosed={cycle?.status === "closed"}
         keyword={interviewDialog.keyword}
         setKeyword={(value) => setInterviewDialog((prev) => ({ ...prev, keyword: value }))}
         onClose={() => setInterviewDialog({ open: false, club: null, members: [], keyword: "", loading: false })}
         onSelect={handleDirectSelect}
+      />
+
+      <RequestCardApplicationsDialog
+        open={requestCardDialog.open}
+        card={requestCardDialog.card}
+        rows={requestCardDialog.rows}
+        loading={requestCardDialog.loading}
+        onClose={() => setRequestCardDialog({ open: false, card: null, rows: [], loading: false })}
+      />
+
+      <StudentApplicationDetailDialog
+        key={[
+          studentStatusDialog.studentUid || "none",
+          selectedStudentStatusRow?.finalClubId || "",
+          selectedStudentStatusRow?.updatedAt || "",
+          selectedStudentStatusRow?.sourceType || "",
+        ].join(":")}
+        open={studentStatusDialog.open}
+        row={selectedStudentStatusRow}
+        cycle={cycle}
+        submissionState={submissionState}
+        clubs={visibleClubs}
+        isAdmin={user.role === "admin"}
+        loading={forceAssignLoading}
+        onClose={() => setStudentStatusDialog({ open: false, studentUid: "" })}
+        onForceAssign={handleAdminForceAssign}
       />
     </Layout>
   );

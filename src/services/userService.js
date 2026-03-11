@@ -461,7 +461,7 @@ export async function downloadUserAccountTemplate() {
   const sampleRows = [
     ACCOUNT_HEADERS,
     ['김교사', 'teacher123', '김교사', '교사', '', '', '국어'],
-    ['26001', 'student123', '홍길동', '학생', '26001', '', ''],
+    ['20912', 'student123', '홍길동', '학생', '20912', '', ''],
   ]
   const ws = XLSX.utils.aoa_to_sheet(sampleRows)
   ws['!cols'] = [
@@ -714,6 +714,62 @@ export async function resetUserPasswordByAdmin(uid, nextPassword) {
     updatedAt: serverTimestamp(),
   })
   return { ok: true }
+}
+
+export async function resetStudentPasswordsByAdmin(nextPassword) {
+  const password = String(nextPassword || '')
+  if (!password) {
+    throw new Error('비밀번호를 입력해주세요.')
+  }
+
+  if (!isFirebaseEnabled()) {
+    let count = 0
+    for (const [uid, existing] of localUsers.entries()) {
+      if (normalizeRole(existing?.role) !== 'student') continue
+      const passwordHash = await hashPassword(existing.loginId, password)
+      localUsers.set(uid, {
+        ...existing,
+        password,
+        passwordHash,
+      })
+      count += 1
+    }
+
+    if (count === 0) {
+      throw new Error('초기화할 학생 계정이 없습니다.')
+    }
+
+    return { count }
+  }
+
+  const snapshot = await getDocs(query(collection(db, COLLECTION), where('role', '==', 'student')))
+  if (snapshot.empty) {
+    throw new Error('초기화할 학생 계정이 없습니다.')
+  }
+
+  const docs = snapshot.docs.filter((item) => String(item.data()?.loginId || '').trim())
+  if (docs.length === 0) {
+    throw new Error('초기화할 학생 계정이 없습니다.')
+  }
+
+  const chunkSize = 400
+  for (let index = 0; index < docs.length; index += chunkSize) {
+    const batch = writeBatch(db)
+    const chunk = docs.slice(index, index + chunkSize)
+
+    for (const item of chunk) {
+      const loginId = String(item.data()?.loginId || '').trim()
+      const passwordHash = await hashPassword(loginId, password)
+      batch.update(item.ref, {
+        passwordHash,
+        updatedAt: serverTimestamp(),
+      })
+    }
+
+    await batch.commit()
+  }
+
+  return { count: docs.length }
 }
 
 export async function updateMyPassword(uid, currentPassword, nextPassword) {
