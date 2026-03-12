@@ -2943,7 +2943,6 @@ function RequestCardUserSection({
                       ) : null}
                     </div>
                   ) : null}
-                  </div>
                 </div>
               );
             })}
