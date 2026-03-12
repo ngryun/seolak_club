@@ -400,9 +400,6 @@ export async function updateRequestCard(cardId, payload, options = {}) {
   if (!existing) {
     throw new Error('신청 카드를 찾을 수 없습니다.')
   }
-  if (existing.drawExecutedAt) {
-    throw new Error('추첨이 끝난 신청 카드는 수정할 수 없습니다.')
-  }
 
   const data = assertRequestCardPayload({
     ...existing,
@@ -411,6 +408,9 @@ export async function updateRequestCard(cardId, payload, options = {}) {
 
   if (existing.applicantCount > 0 && data.targetRole !== existing.targetRole) {
     throw new Error('이미 신청자가 있는 카드는 대상을 변경할 수 없습니다.')
+  }
+  if (existing.drawExecutedAt && data.capacity < existing.selectedCount) {
+    throw new Error('선정 인원보다 모집 인원을 더 적게 수정할 수 없습니다.')
   }
 
   if (!isFirebaseEnabled()) {

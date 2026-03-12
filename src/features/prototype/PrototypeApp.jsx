@@ -2865,7 +2865,7 @@ function RequestCardAdminPanel({
                       ) : null}
                       <button
                         onClick={() => onStartEdit(card)}
-                        disabled={loading || resultLocked}
+                        disabled={loading}
                         style={{ ...buttonBase, padding: "5px 8px", background: "#edf4ff", color: t.accent, fontWeight: 700 }}
                       >
                         수정
