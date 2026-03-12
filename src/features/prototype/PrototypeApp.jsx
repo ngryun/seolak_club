@@ -1769,8 +1769,8 @@ function InterviewSelectDialog({
   selectionReady,
   preAssignmentState,
   cycleClosed,
-  keyword,
-  setKeyword,
+  selectedStudentUid,
+  setSelectedStudentUid,
   onClose,
   onSelect,
   onRevoke,
@@ -1780,7 +1780,7 @@ function InterviewSelectDialog({
   const students = users.filter((u) => u.role === "student");
   const memberIds = new Set(members.map((m) => m.studentUid));
   const targetGrades = Array.isArray(club?.targetGrades) ? club.targetGrades : [];
-  const filtered = students
+  const candidateStudents = students
     .filter((s) => !memberIds.has(s.uid))
     .filter((s) => {
       // 대상학년 필터: 학번 첫 자리로 학년 추론
@@ -1789,30 +1789,26 @@ function InterviewSelectDialog({
         if (grade >= 1 && grade <= 3 && !targetGrades.includes(grade)) return false;
       }
       return true;
-    })
-    .filter((s) => {
-      if (!keyword.trim()) return true;
-      const q = keyword.trim();
-      return (
-        String(s.studentNo || "").includes(q)
-        || String(s.name || "").includes(q)
-        || String(s.loginId || "").includes(q)
-      );
-    })
-    .slice(0, 80);
+    });
+  const selectedStudent = candidateStudents.find((row) => row.uid === selectedStudentUid) || null;
+  const memberRows = [...members].sort((a, b) => {
+    const left = String(a.studentNo || a.name || a.studentUid || "");
+    const right = String(b.studentNo || b.name || b.studentUid || "");
+    return left.localeCompare(right, "ko");
+  });
   const preAssignmentReady = preAssignmentState?.canAssign === true;
   const canSelect = selectionReady || preAssignmentReady;
-  const selectDisabled = loading || !canSelect || cycleClosed;
+  const selectDisabled = loading || !canSelect || cycleClosed || !selectedStudent;
   const revokeEnabled = canSelect && !cycleClosed;
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
-      <div style={{ maxWidth: 960, margin: "20px auto", ...cardStyle }}>
+      <div style={{ maxWidth: 1180, margin: "20px auto", ...cardStyle }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 800 }}>{club?.clubName} 직접 선발</div>
             <div style={{ fontSize: 12, color: t.textSub }}>
-              자체면접 동아리는 학생 신청 없이 담당교사가 직접 선발합니다.
+              현재 선발 {club?.memberCount || 0}명 / 정원 {club?.maxMembers || 0}명
             </div>
           </div>
           <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>닫기</button>
@@ -1839,104 +1835,93 @@ function InterviewSelectDialog({
             </div>
           ) : null}
 
-          <div style={{ ...cardStyle, padding: 12, background: "#fafbfd" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
-              현재 선발 인원: {club?.memberCount || 0}/{club?.maxMembers || 0}
+          <div style={{ ...cardStyle, marginBottom: 12, background: "#f8fbff", borderColor: "#d8e5ff", padding: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>
+              학생 직접 선발
             </div>
-            <div style={{ display: "grid", gap: 8 }}>
-              {members.map((member) => {
-                const canRevoke = revokeEnabled
-                  && !!member.applicationId
-                  && member.source !== "leader_auto";
-                return (
-                  <div
-                    key={member.id}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: 8,
-                      border: `1px solid ${t.border}`,
-                      borderRadius: 10,
-                      padding: "8px 10px",
-                      background: "#fff",
-                    }}
-                  >
-                    <div style={{ display: "grid", gap: 2 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700 }}>
-                        {member.studentNo || "-"} / {member.name || "-"}
-                      </div>
-                      <div style={{ fontSize: 11, color: t.textSub }}>
-                        {selectionSourceLabel(member.source) || "선발"}
-                      </div>
-                    </div>
-                    {canRevoke ? (
-                      <button
-                        onClick={() => onRevoke(member)}
-                        disabled={loading}
-                        style={{
-                          ...buttonBase,
-                          padding: "5px 8px",
-                          background: !loading ? "#fff4e5" : "#cfd8e3",
-                          color: !loading ? t.warn : "#6b7280",
-                          fontWeight: 700,
-                        }}
-                      >
-                        선발 취소
-                      </button>
-                    ) : null}
-                  </div>
-                );
-              })}
-              {members.length === 0 ? <span style={{ fontSize: 12, color: t.textSub }}>아직 선발된 학생이 없습니다.</span> : null}
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8 }}>
+              <StudentSearchCombobox
+                students={candidateStudents}
+                value={selectedStudentUid}
+                onChange={setSelectedStudentUid}
+              />
+              <button
+                onClick={async () => {
+                  if (!selectedStudent) return;
+                  const ok = await onSelect(selectedStudent);
+                  if (ok) setSelectedStudentUid("");
+                }}
+                disabled={selectDisabled}
+                style={{
+                  ...buttonBase,
+                  background: selectDisabled ? "#cfd8e3" : "#fff3e0",
+                  color: selectDisabled ? "#6b7280" : t.warn,
+                  fontWeight: 700,
+                  minWidth: 136,
+                }}
+              >
+                직접 선발
+              </button>
+            </div>
+            <div style={{ marginTop: 7, fontSize: 12, color: t.textSub }}>
+              {preAssignmentReady
+                ? "대상학년 학생만 검색되며, 교사 사전 학생 배정 기간에는 학생 신청 없이도 바로 선발할 수 있습니다."
+                : "대상학년 학생만 검색되며, 신청 마감 후 직접 선발할 수 있습니다."}
             </div>
           </div>
 
-          <div>
-            <input
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              style={inputBase}
-              placeholder="학번 또는 이름으로 학생 검색"
-            />
-          </div>
-
-          <div style={{ maxHeight: 420, overflow: "auto", border: `1px solid ${t.border}`, borderRadius: 10 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
               <thead>
                 <tr>
-                  {["학번", "이름", "아이디", "작업"].map((head) => (
-                    <th key={head} style={{ textAlign: "left", padding: "8px 10px", fontSize: 12, color: t.textSub, borderBottom: `1px solid ${t.border}` }}>{head}</th>
+                  {["학번", "이름", "선발방식", "작업"].map((head) => (
+                    <th
+                      key={head}
+                      style={{ textAlign: "left", padding: "8px 6px", fontSize: 12, color: t.textSub, borderBottom: `1px solid ${t.border}` }}
+                    >
+                      {head}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((s) => (
-                  <tr key={s.uid}>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px", fontSize: 13 }}>{s.studentNo || "-"}</td>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px", fontSize: 13 }}>{s.name || "-"}</td>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px", fontSize: 13 }}>{s.loginId || "-"}</td>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px" }}>
-                      <button
-                        onClick={() => onSelect(s)}
-                        disabled={selectDisabled}
-                        style={{
-                          ...buttonBase,
-                          padding: "5px 8px",
-                          background: selectDisabled ? "#cfd8e3" : "#fff3e0",
-                          color: selectDisabled ? "#6b7280" : t.warn,
-                          fontWeight: 700,
-                        }}
-                      >
-                        선발
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {filtered.length === 0 ? (
+                {memberRows.map((member) => {
+                  const canRevoke = revokeEnabled
+                    && !!member.applicationId
+                    && member.source !== "leader_auto";
+                  return (
+                    <tr key={member.id}>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{member.studentNo || "-"}</td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{member.name || "-"}</td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, color: t.textSub }}>
+                        {selectionSourceLabel(member.source) || "직접 선발"}
+                      </td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}>
+                        {canRevoke ? (
+                          <button
+                            onClick={() => onRevoke(member)}
+                            disabled={loading}
+                            style={{
+                              ...buttonBase,
+                              padding: "5px 8px",
+                              background: !loading ? "#fff4e5" : "#cfd8e3",
+                              color: !loading ? t.warn : "#6b7280",
+                              fontWeight: 700,
+                            }}
+                          >
+                            선발 취소
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: 12, color: t.textSub }}>-</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {memberRows.length === 0 ? (
                   <tr>
                     <td colSpan={4} style={{ padding: 14, textAlign: "center", color: t.textSub, fontSize: 13 }}>
-                      검색 결과가 없습니다.
+                      아직 선발된 학생이 없습니다.
                     </td>
                   </tr>
                 ) : null}
@@ -3577,7 +3562,7 @@ export default function PrototypeApp() {
     open: false,
     club: null,
     members: [],
-    keyword: "",
+    selectedStudentUid: "",
     loading: false,
   });
 
@@ -4339,7 +4324,7 @@ export default function PrototypeApp() {
       open: true,
       club,
       members: [],
-      keyword: "",
+      selectedStudentUid: "",
       loading: true,
     });
 
@@ -4350,12 +4335,12 @@ export default function PrototypeApp() {
         open: true,
         club,
         members,
-        keyword: "",
+        selectedStudentUid: "",
         loading: false,
       });
     } catch (error) {
       withMessageError(error, "동아리 구성원을 불러오지 못했습니다.");
-      setInterviewDialog({ open: false, club: null, members: [], keyword: "", loading: false });
+      setInterviewDialog({ open: false, club: null, members: [], selectedStudentUid: "", loading: false });
     }
   }
 
@@ -4394,8 +4379,10 @@ export default function PrototypeApp() {
       setMessage({ type: "ok", text: `${student.name} 학생을 선발했습니다.` });
       await reloadInterviewDialog(interviewDialog.club);
       await refreshMyApplications();
+      return true;
     } catch (error) {
       withMessageError(error, "직접 선발에 실패했습니다.");
+      return false;
     }
   }
 
@@ -4455,7 +4442,7 @@ export default function PrototypeApp() {
         setApplicantDialog({ open: false, club: null, rows: [], loading: false });
       }
       if (interviewDialog.open) {
-        setInterviewDialog({ open: false, club: null, members: [], keyword: "", loading: false });
+        setInterviewDialog({ open: false, club: null, members: [], selectedStudentUid: "", loading: false });
       }
     } catch (error) {
       withMessageError(error, "모집 데이터 초기화에 실패했습니다.");
@@ -5229,9 +5216,9 @@ export default function PrototypeApp() {
         selectionReady={submissionState.selectionReady}
         preAssignmentState={preAssignmentState}
         cycleClosed={cycle?.status === "closed"}
-        keyword={interviewDialog.keyword}
-        setKeyword={(value) => setInterviewDialog((prev) => ({ ...prev, keyword: value }))}
-        onClose={() => setInterviewDialog({ open: false, club: null, members: [], keyword: "", loading: false })}
+        selectedStudentUid={interviewDialog.selectedStudentUid}
+        setSelectedStudentUid={(value) => setInterviewDialog((prev) => ({ ...prev, selectedStudentUid: value }))}
+        onClose={() => setInterviewDialog({ open: false, club: null, members: [], selectedStudentUid: "", loading: false })}
         onSelect={handleDirectSelect}
         onRevoke={handleRevokeInterviewMember}
       />
