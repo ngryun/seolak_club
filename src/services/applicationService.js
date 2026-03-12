@@ -1508,9 +1508,10 @@ export async function revokeApprovedApplication(payload) {
   }
 
   const allowClosedCycle = payload?.allowClosedCycle === true
+  const allowPreAssignment = payload?.allowPreAssignment === true
   const cycle = allowClosedCycle
     ? await getCurrentRecruitmentCycle()
-    : await ensureSelectionPhaseReady()
+    : await ensureSelectionPhaseReady({ allowPreAssignment })
   const skipPermissionCheck = payload?.skipPermissionCheck === true
   if (!allowClosedCycle) {
     assertOpenCycle(cycle)

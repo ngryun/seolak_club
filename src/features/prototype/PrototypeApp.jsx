@@ -1773,6 +1773,7 @@ function InterviewSelectDialog({
   setKeyword,
   onClose,
   onSelect,
+  onRevoke,
 }) {
   if (!open) return null;
 
@@ -1802,6 +1803,7 @@ function InterviewSelectDialog({
   const preAssignmentReady = preAssignmentState?.canAssign === true;
   const canSelect = selectionReady || preAssignmentReady;
   const selectDisabled = loading || !canSelect || cycleClosed;
+  const revokeEnabled = canSelect && !cycleClosed;
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
@@ -1841,21 +1843,51 @@ function InterviewSelectDialog({
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
               현재 선발 인원: {club?.memberCount || 0}/{club?.maxMembers || 0}
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {members.map((member) => (
-                <span
-                  key={member.id}
-                  style={{
-                    border: `1px solid ${t.border}`,
-                    borderRadius: 999,
-                    padding: "4px 8px",
-                    fontSize: 12,
-                    background: "#fff",
-                  }}
-                >
-                  {member.studentNo} / {member.name}
-                </span>
-              ))}
+            <div style={{ display: "grid", gap: 8 }}>
+              {members.map((member) => {
+                const canRevoke = revokeEnabled
+                  && !!member.applicationId
+                  && member.source !== "leader_auto";
+                return (
+                  <div
+                    key={member.id}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 8,
+                      border: `1px solid ${t.border}`,
+                      borderRadius: 10,
+                      padding: "8px 10px",
+                      background: "#fff",
+                    }}
+                  >
+                    <div style={{ display: "grid", gap: 2 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>
+                        {member.studentNo || "-"} / {member.name || "-"}
+                      </div>
+                      <div style={{ fontSize: 11, color: t.textSub }}>
+                        {selectionSourceLabel(member.source) || "선발"}
+                      </div>
+                    </div>
+                    {canRevoke ? (
+                      <button
+                        onClick={() => onRevoke(member)}
+                        disabled={loading}
+                        style={{
+                          ...buttonBase,
+                          padding: "5px 8px",
+                          background: !loading ? "#fff4e5" : "#cfd8e3",
+                          color: !loading ? t.warn : "#6b7280",
+                          fontWeight: 700,
+                        }}
+                      >
+                        선발 취소
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
               {members.length === 0 ? <span style={{ fontSize: 12, color: t.textSub }}>아직 선발된 학생이 없습니다.</span> : null}
             </div>
           </div>
@@ -4367,6 +4399,30 @@ export default function PrototypeApp() {
     }
   }
 
+  async function handleRevokeInterviewMember(member) {
+    if (!member?.applicationId) {
+      setMessage({ type: "error", text: "취소할 선발 정보를 찾지 못했습니다." });
+      return;
+    }
+
+    if (!window.confirm(`${member.name || "해당 학생"} 학생의 직접 선발을 취소할까요?`)) {
+      return;
+    }
+
+    try {
+      await revokeApprovedApplication({
+        applicationId: member.applicationId,
+        actor: user,
+        allowPreAssignment: true,
+      });
+      setMessage({ type: "ok", text: `${member.name || "해당 학생"} 학생의 직접 선발을 취소했습니다.` });
+      await reloadInterviewDialog(interviewDialog.club);
+      await refreshMyApplications();
+    } catch (error) {
+      withMessageError(error, "직접 선발 취소에 실패했습니다.");
+    }
+  }
+
   async function handleAdvanceRound() {
     try {
       const next = await advanceRecruitmentRound({ actor: user });
@@ -5177,6 +5233,7 @@ export default function PrototypeApp() {
         setKeyword={(value) => setInterviewDialog((prev) => ({ ...prev, keyword: value }))}
         onClose={() => setInterviewDialog({ open: false, club: null, members: [], keyword: "", loading: false })}
         onSelect={handleDirectSelect}
+        onRevoke={handleRevokeInterviewMember}
       />
 
       <RequestCardApplicationsDialog
