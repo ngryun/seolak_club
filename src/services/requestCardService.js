@@ -23,6 +23,13 @@ export const REQUEST_CARD_RESULT = {
   NOT_SELECTED: 'not_selected',
 }
 
+export const REQUEST_CARD_ADMIN_STATUS = {
+  NORMAL: 'normal',
+  CANCELLED: 'cancelled',
+  SELECTION_CANCELLED: 'selection_cancelled',
+}
+
+const REQUEST_CARD_ADMIN_STATUS_VALUES = new Set(Object.values(REQUEST_CARD_ADMIN_STATUS))
 let localRequestCards = []
 let localRequestCardApplications = []
 
@@ -93,6 +100,22 @@ function normalizeTargetRole(value) {
   return role
 }
 
+function readRequestCardAdminStatus(value) {
+  const status = String(value || '').trim() || REQUEST_CARD_ADMIN_STATUS.NORMAL
+  return REQUEST_CARD_ADMIN_STATUS_VALUES.has(status)
+    ? status
+    : REQUEST_CARD_ADMIN_STATUS.NORMAL
+}
+
+function normalizeRequestCardAdminStatus(value) {
+  const status = readRequestCardAdminStatus(value)
+  const raw = String(value || '').trim()
+  if (raw && status !== raw) {
+    throw new Error('신청 카드 상태가 올바르지 않습니다.')
+  }
+  return status
+}
+
 function normalizeRequestCard(id, data) {
   return {
     id,
@@ -106,6 +129,7 @@ function normalizeRequestCard(id, data) {
     selectedCount: Math.max(0, toPositiveInteger(data?.selectedCount, 0)),
     drawExecutedAt: toIsoString(data?.drawExecutedAt),
     drawByUid: String(data?.drawByUid || '').trim(),
+    adminStatus: readRequestCardAdminStatus(data?.adminStatus),
     createdByUid: String(data?.createdByUid || '').trim(),
     createdAt: toIsoString(data?.createdAt) || data?.createdAt || null,
     updatedAt: toIsoString(data?.updatedAt) || data?.updatedAt || null,
@@ -210,7 +234,34 @@ export function getRequestCardState(card, nowValue = new Date()) {
   const startAt = toDateValue(card?.startAt)
   const endAt = toDateValue(card?.endAt)
   const drawExecutedAt = toDateValue(card?.drawExecutedAt)
+  const adminStatus = readRequestCardAdminStatus(card?.adminStatus)
   const configured = !!startAt && !!endAt && startAt.getTime() < endAt.getTime()
+
+  if (adminStatus === REQUEST_CARD_ADMIN_STATUS.CANCELLED) {
+    return {
+      configured,
+      phase: 'cancelled',
+      startAt,
+      endAt,
+      drawExecutedAt,
+      canApply: false,
+      canDraw: false,
+      adminStatus,
+    }
+  }
+
+  if (adminStatus === REQUEST_CARD_ADMIN_STATUS.SELECTION_CANCELLED) {
+    return {
+      configured,
+      phase: 'selection_cancelled',
+      startAt,
+      endAt,
+      drawExecutedAt,
+      canApply: false,
+      canDraw: false,
+      adminStatus,
+    }
+  }
 
   if (!configured) {
     return {
@@ -221,6 +272,7 @@ export function getRequestCardState(card, nowValue = new Date()) {
       drawExecutedAt,
       canApply: false,
       canDraw: false,
+      adminStatus,
     }
   }
 
@@ -233,6 +285,7 @@ export function getRequestCardState(card, nowValue = new Date()) {
       drawExecutedAt,
       canApply: false,
       canDraw: false,
+      adminStatus,
     }
   }
 
@@ -245,6 +298,7 @@ export function getRequestCardState(card, nowValue = new Date()) {
       drawExecutedAt: null,
       canApply: false,
       canDraw: false,
+      adminStatus,
     }
   }
 
@@ -257,6 +311,7 @@ export function getRequestCardState(card, nowValue = new Date()) {
       drawExecutedAt: null,
       canApply: true,
       canDraw: false,
+      adminStatus,
     }
   }
 
@@ -268,6 +323,7 @@ export function getRequestCardState(card, nowValue = new Date()) {
     drawExecutedAt: null,
     canApply: false,
     canDraw: true,
+    adminStatus,
   }
 }
 
@@ -309,6 +365,7 @@ export async function createRequestCard(payload, options = {}) {
       selectedCount: 0,
       drawExecutedAt: null,
       drawByUid: '',
+      adminStatus: REQUEST_CARD_ADMIN_STATUS.NORMAL,
       createdByUid: actor.uid,
       createdAt: now,
       updatedAt: now,
@@ -324,6 +381,7 @@ export async function createRequestCard(payload, options = {}) {
     selectedCount: 0,
     drawExecutedAt: null,
     drawByUid: '',
+    adminStatus: REQUEST_CARD_ADMIN_STATUS.NORMAL,
     createdByUid: actor.uid,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -370,6 +428,44 @@ export async function updateRequestCard(cardId, payload, options = {}) {
 
   await updateDoc(doc(db, REQUEST_CARDS, targetId), {
     ...data,
+    updatedAt: serverTimestamp(),
+  })
+  return getRequestCardById(targetId)
+}
+
+export async function setRequestCardAdminStatus(cardId, nextStatus, options = {}) {
+  ensureAdmin(options?.actor)
+  const targetId = String(cardId || '').trim()
+  if (!targetId) {
+    throw new Error('상태를 변경할 신청 카드가 없습니다.')
+  }
+
+  const existing = await getRequestCardById(targetId)
+  if (!existing) {
+    throw new Error('신청 카드를 찾을 수 없습니다.')
+  }
+
+  const adminStatus = normalizeRequestCardAdminStatus(nextStatus)
+
+  if (existing.drawExecutedAt && adminStatus === REQUEST_CARD_ADMIN_STATUS.CANCELLED) {
+    throw new Error('결과가 확정된 카드는 폐강 대신 선정취소 상태를 사용해주세요.')
+  }
+
+  if (!isFirebaseEnabled()) {
+    const now = nowIso()
+    localRequestCards = localRequestCards.map((row) => {
+      if (row.id !== targetId) return row
+      return {
+        ...row,
+        adminStatus,
+        updatedAt: now,
+      }
+    })
+    return getRequestCardById(targetId)
+  }
+
+  await updateDoc(doc(db, REQUEST_CARDS, targetId), {
+    adminStatus,
     updatedAt: serverTimestamp(),
   })
   return getRequestCardById(targetId)

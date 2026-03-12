@@ -39,6 +39,7 @@ import {
   listRequestCardApplicationsByCard,
   listRequestCards,
   updateRequestCard,
+  setRequestCardAdminStatus,
 } from "../../services/requestCardService";
 import {
   backfillScheduleDisplayFields,
@@ -334,10 +335,22 @@ function requestCardPhaseMeta(state) {
   if (state?.phase === "drawn") {
     return { label: "결과 확정", bg: "#f3f4f6", border: "#d6dae3", color: t.textSub };
   }
+  if (state?.phase === "cancelled") {
+    return { label: "폐강", bg: "#eceff1", border: "#d6dae3", color: t.textSub };
+  }
+  if (state?.phase === "selection_cancelled") {
+    return { label: "선정취소", bg: "#fff4e5", border: "#f3dfb9", color: t.warn };
+  }
   return { label: "미설정", bg: "#f3f4f6", border: "#d6dae3", color: t.textSub };
 }
 
-function requestCardResultMeta(status) {
+function requestCardResultMeta(status, state) {
+  if (state?.phase === "cancelled") {
+    return { label: "폐강", bg: "#eceff1", color: t.textSub };
+  }
+  if (state?.phase === "selection_cancelled" && status !== "not_selected") {
+    return { label: "선정취소", bg: "#fff4e5", color: t.warn };
+  }
   if (status === "selected") {
     return { label: "선정", bg: "#e8f5e9", color: t.ok };
   }
@@ -354,6 +367,22 @@ function getRequestCardStatusText(card, state, application) {
   const startAt = state?.startAt || card?.startAt || null;
   const endAt = state?.endAt || card?.endAt || null;
   const drawExecutedAt = state?.drawExecutedAt || card?.drawExecutedAt || null;
+
+  if (state?.phase === "cancelled") {
+    return {
+      label: "폐강",
+      description: "운영 사정으로 이번 신청은 취소되었습니다.",
+      note: application ? "기존 신청 내역은 선정 대상에서 제외됩니다." : "자세한 내용은 관리자 안내를 확인해 주세요.",
+    };
+  }
+
+  if (state?.phase === "selection_cancelled" && application?.status !== "not_selected") {
+    return {
+      label: "선정취소",
+      description: "운영 사정으로 선정 절차 또는 선정 결과가 취소되었습니다.",
+      note: drawExecutedAt ? `결과 안내: ${formatTime(drawExecutedAt)}` : "자세한 내용은 관리자 안내를 확인해 주세요.",
+    };
+  }
 
   if (!state?.configured) {
     return {
@@ -399,6 +428,13 @@ function getRequestCardStatusText(card, state, application) {
         note: drawExecutedAt ? `결과 안내: ${formatTime(drawExecutedAt)}` : null,
       };
     }
+  }
+  if (state.phase === "selection_cancelled") {
+    return {
+      label: "선정취소",
+      description: "운영 사정으로 선정 절차 또는 선정 결과가 취소되었습니다.",
+      note: drawExecutedAt ? `결과 안내: ${formatTime(drawExecutedAt)}` : "자세한 내용은 관리자 안내를 확인해 주세요.",
+    };
   }
   if (state.phase === "before") {
     return {
@@ -2564,6 +2600,8 @@ function RequestCardApplicationsDialog({
 }) {
   if (!open) return null;
 
+  const cardState = card ? getRequestCardState(card) : null;
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
       <div style={{ maxWidth: 960, margin: "20px auto", ...cardStyle }}>
@@ -2593,7 +2631,7 @@ function RequestCardApplicationsDialog({
             </thead>
             <tbody>
               {rows.map((row) => {
-                const resultMeta = requestCardResultMeta(row.status);
+                const resultMeta = requestCardResultMeta(row.status, cardState);
                 return (
                   <tr key={row.id}>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.applicantName || "-"}</td>
@@ -2644,6 +2682,7 @@ function RequestCardAdminPanel({
   onDelete,
   onDraw,
   onOpenApplications,
+  onChangeStatus,
 }) {
   return (
     <section style={cardStyle}>
@@ -2651,7 +2690,7 @@ function RequestCardAdminPanel({
         <div>
           <h2 style={{ fontSize: 17 }}>공통 신청 카드 관리</h2>
           <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
-            학생 또는 교사를 대상으로 별도 신청 카드와 랜덤 추첨을 운영합니다.
+            학생 또는 교사를 대상으로 별도 신청 카드, 랜덤 추첨, 예외 상태를 관리합니다.
           </div>
         </div>
         <button
@@ -2764,7 +2803,12 @@ function RequestCardAdminPanel({
             {cards.map((card) => {
               const state = getRequestCardState(card);
               const phaseMeta = requestCardPhaseMeta(state);
-              const drawDisabled = loading || state.phase !== "closed";
+              const drawDisabled = loading || !state.canDraw;
+              const resultLocked = Boolean(card.drawExecutedAt);
+              const canResetStatus = state.adminStatus && state.adminStatus !== "normal";
+              const selectedCountText = state.phase === "selection_cancelled"
+                ? `${card.selectedCount || 0}명(취소)`
+                : `${card.selectedCount || 0}명`;
               return (
                 <tr key={card.id}>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13, fontWeight: 700 }}>{card.title}</td>
@@ -2779,7 +2823,7 @@ function RequestCardAdminPanel({
                   </td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{card.capacity}명</td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{card.applicantCount || 0}명</td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{card.selectedCount || 0}명</td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{selectedCountText}</td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       <button
@@ -2797,15 +2841,38 @@ function RequestCardAdminPanel({
                         랜덤 추첨
                       </button>
                       <button
+                        onClick={() => onChangeStatus(card, "cancelled")}
+                        disabled={loading || resultLocked || state.phase === "cancelled"}
+                        style={{ ...buttonBase, padding: "5px 8px", background: (resultLocked || state.phase === "cancelled") ? "#cfd8e3" : "#f3f4f6", color: (resultLocked || state.phase === "cancelled") ? "#6b7280" : t.textSub, fontWeight: 700 }}
+                      >
+                        폐강
+                      </button>
+                      <button
+                        onClick={() => onChangeStatus(card, "selection_cancelled")}
+                        disabled={loading || state.phase === "selection_cancelled"}
+                        style={{ ...buttonBase, padding: "5px 8px", background: state.phase === "selection_cancelled" ? "#cfd8e3" : "#fff4e5", color: state.phase === "selection_cancelled" ? "#6b7280" : t.warn, fontWeight: 700 }}
+                      >
+                        선정취소
+                      </button>
+                      {canResetStatus ? (
+                        <button
+                          onClick={() => onChangeStatus(card, "normal")}
+                          disabled={loading}
+                          style={{ ...buttonBase, padding: "5px 8px", background: "#eef7ee", color: t.ok, fontWeight: 700 }}
+                        >
+                          상태 해제
+                        </button>
+                      ) : null}
+                      <button
                         onClick={() => onStartEdit(card)}
-                        disabled={loading || state.phase === "drawn"}
+                        disabled={loading || resultLocked}
                         style={{ ...buttonBase, padding: "5px 8px", background: "#edf4ff", color: t.accent, fontWeight: 700 }}
                       >
                         수정
                       </button>
                       <button
                         onClick={() => onDelete(card)}
-                        disabled={loading || state.phase === "drawn"}
+                        disabled={loading || resultLocked}
                         style={{ ...buttonBase, padding: "5px 8px", background: "#ffebee", color: t.danger, fontWeight: 700 }}
                       >
                         삭제
@@ -2844,7 +2911,7 @@ function RequestCardUserSection({
   );
 
   const visibleCards = useMemo(() => {
-    const phaseRank = { open: 0, before: 1, closed: 2, drawn: 3, unconfigured: 4 };
+    const phaseRank = { open: 0, before: 1, closed: 2, drawn: 3, selection_cancelled: 4, cancelled: 5, unconfigured: 6 };
     return (cards || [])
       .filter((card) => canUseRequestCard(card, user))
       .sort((a, b) => {
@@ -2884,7 +2951,7 @@ function RequestCardUserSection({
               const state = getRequestCardState(card);
               const phaseMeta = requestCardPhaseMeta(state);
               const myApplication = appMap.get(card.id) || null;
-              const resultMeta = requestCardResultMeta(myApplication?.status);
+              const resultMeta = requestCardResultMeta(myApplication?.status, state);
               const statusText = getRequestCardStatusText(card, state, myApplication);
               const canApply = !myApplication && state.phase === "open";
               const canCancel = myApplication?.status === "applied" && state.phase === "open";
@@ -3971,6 +4038,38 @@ export default function PrototypeApp() {
     }
   }
 
+  async function handleChangeRequestCardStatus(card, nextStatus) {
+    const confirmMessage = nextStatus === "cancelled"
+      ? `신청 카드 '${card.title}'를 폐강 상태로 변경할까요?`
+      : nextStatus === "selection_cancelled"
+        ? `신청 카드 '${card.title}'를 선정취소 상태로 변경할까요?`
+        : `신청 카드 '${card.title}'의 예외 상태를 해제할까요?`;
+    if (!window.confirm(confirmMessage)) return;
+
+    setRequestCardLoading(true);
+    try {
+      await setRequestCardAdminStatus(card.id, nextStatus, { actor: user });
+      setMessage({
+        type: "ok",
+        text: nextStatus === "cancelled"
+          ? "신청 카드를 폐강 상태로 변경했습니다."
+          : nextStatus === "selection_cancelled"
+            ? "신청 카드를 선정취소 상태로 변경했습니다."
+            : "신청 카드 예외 상태를 해제했습니다.",
+      });
+      const rows = await refreshRequestCards();
+      await refreshMyRequestCardApplications();
+      if (requestCardDialog.open && requestCardDialog.card?.id === card.id) {
+        const latestCard = rows.find((row) => row.id === card.id) || card;
+        await reloadRequestCardDialog(latestCard);
+      }
+    } catch (error) {
+      withMessageError(error, "신청 카드 상태 변경에 실패했습니다.");
+    } finally {
+      setRequestCardLoading(false);
+    }
+  }
+
   async function handleDrawRequestCard(card) {
     const confirmMessage = [
       `'${card.title}' 카드를 랜덤 추첨할까요?`,
@@ -4849,6 +4948,7 @@ export default function PrototypeApp() {
           onDelete={handleDeleteRequestCard}
           onDraw={handleDrawRequestCard}
           onOpenApplications={openRequestCardDialog}
+          onChangeStatus={handleChangeRequestCardStatus}
         />
       ) : null}
 
