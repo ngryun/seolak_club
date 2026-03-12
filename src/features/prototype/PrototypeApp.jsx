@@ -329,20 +329,20 @@ function requestCardPhaseMeta(state) {
     return { label: "시작 전", bg: "#fff8e1", border: "#f3dfb9", color: t.warn };
   }
   if (state?.phase === "closed") {
-    return { label: "추첨 대기", bg: "#edf4ff", border: "#c8dcff", color: t.accent };
+    return { label: "결과 대기", bg: "#edf4ff", border: "#c8dcff", color: t.accent };
   }
   if (state?.phase === "drawn") {
-    return { label: "추첨 완료", bg: "#f3f4f6", border: "#d6dae3", color: t.textSub };
+    return { label: "결과 확정", bg: "#f3f4f6", border: "#d6dae3", color: t.textSub };
   }
   return { label: "미설정", bg: "#f3f4f6", border: "#d6dae3", color: t.textSub };
 }
 
 function requestCardResultMeta(status) {
   if (status === "selected") {
-    return { label: "당첨", bg: "#e8f5e9", color: t.ok };
+    return { label: "선정", bg: "#e8f5e9", color: t.ok };
   }
   if (status === "not_selected") {
-    return { label: "미당첨", bg: "#ffebee", color: t.danger };
+    return { label: "미선정", bg: "#ffebee", color: t.danger };
   }
   if (status === "applied") {
     return { label: "신청 완료", bg: "#edf4ff", color: t.accent };
@@ -350,23 +350,89 @@ function requestCardResultMeta(status) {
   return { label: "-", bg: "#f3f4f6", color: t.textSub };
 }
 
-function requestCardPhaseDescription(card, state) {
+function getRequestCardStatusText(card, state, application) {
+  const startAt = state?.startAt || card?.startAt || null;
+  const endAt = state?.endAt || card?.endAt || null;
+  const drawExecutedAt = state?.drawExecutedAt || card?.drawExecutedAt || null;
+
   if (!state?.configured) {
-    return "신청 기간이 아직 설정되지 않았습니다.";
+    return {
+      label: "미설정",
+      description: "신청 기간이 아직 설정되지 않았습니다.",
+      note: null,
+    };
+  }
+
+  if (application?.status === "selected") {
+    return {
+      label: "선정",
+      description: "최종 선정되었습니다. 일정과 장소를 확인해 주세요.",
+      note: drawExecutedAt ? `결과 안내: ${formatTime(drawExecutedAt)}` : null,
+    };
+  }
+  if (application?.status === "not_selected") {
+    return {
+      label: "미선정",
+      description: "이번 신청에서는 선정되지 않았습니다.",
+      note: drawExecutedAt ? `결과 안내: ${formatTime(drawExecutedAt)}` : null,
+    };
+  }
+  if (application?.status === "applied") {
+    if (state.phase === "open") {
+      return {
+        label: "신청 완료",
+        description: "신청이 완료되었습니다.",
+        note: endAt ? `신청 마감: ${formatTime(endAt)}` : null,
+      };
+    }
+    if (state.phase === "closed") {
+      return {
+        label: "결과 대기",
+        description: "신청 기간이 종료되었습니다. 최종 선정 결과를 기다리는 중입니다.",
+        note: "정원 초과 시 무작위 추첨으로 선정될 수 있습니다.",
+      };
+    }
+    if (state.phase === "drawn") {
+      return {
+        label: "결과 확인",
+        description: "선정 결과 안내가 완료되었습니다. 결과를 확인해 주세요.",
+        note: drawExecutedAt ? `결과 안내: ${formatTime(drawExecutedAt)}` : null,
+      };
+    }
   }
   if (state.phase === "before") {
-    return `신청 시작: ${formatTime(card.startAt)}`;
+    return {
+      label: "시작 전",
+      description: "신청 시작 전입니다.",
+      note: startAt ? `신청 시작: ${formatTime(startAt)}` : null,
+    };
   }
   if (state.phase === "open") {
-    return `신청 마감: ${formatTime(card.endAt)}`;
+    return {
+      label: "신청 가능",
+      description: "현재 신청할 수 있습니다.",
+      note: endAt ? `신청 마감: ${formatTime(endAt)}` : null,
+    };
   }
   if (state.phase === "closed") {
-    return "신청 기간이 종료되어 관리자의 랜덤 추첨을 기다리는 중입니다.";
+    return {
+      label: "결과 대기",
+      description: "신청 기간이 종료되었습니다. 최종 선정 결과를 기다리는 중입니다.",
+      note: "정원 초과 시 무작위 추첨으로 선정될 수 있습니다.",
+    };
   }
   if (state.phase === "drawn") {
-    return `추첨 완료: ${formatTime(card.drawExecutedAt)}`;
+    return {
+      label: "결과 확정",
+      description: "선정 결과 안내가 완료되었습니다.",
+      note: drawExecutedAt ? `결과 안내: ${formatTime(drawExecutedAt)}` : null,
+    };
   }
-  return "";
+  return {
+    label: "미설정",
+    description: "현재 상태를 확인할 수 없습니다.",
+    note: null,
+  };
 }
 
 function canUseRequestCard(card, user) {
@@ -2684,7 +2750,7 @@ function RequestCardAdminPanel({
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
           <thead>
             <tr>
-              {["제목", "대상", "상태", "신청기간", "모집", "신청", "당첨", "작업"].map((head) => (
+              {["제목", "대상", "상태", "신청기간", "모집", "신청", "선정", "작업"].map((head) => (
                 <th
                   key={head}
                   style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
@@ -2798,7 +2864,7 @@ function RequestCardUserSection({
           <div>
             <h2 style={{ fontSize: 17 }}>기타 신청 현황</h2>
             <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
-              동아리 외에 관리자가 연 신청 항목을 여기서 신청하고 추첨 결과를 확인할 수 있습니다.
+              동아리 외에 관리자가 연 신청 항목을 여기서 신청하고 선정 결과를 확인할 수 있습니다.
             </div>
           </div>
           <button
@@ -2819,6 +2885,7 @@ function RequestCardUserSection({
               const phaseMeta = requestCardPhaseMeta(state);
               const myApplication = appMap.get(card.id) || null;
               const resultMeta = requestCardResultMeta(myApplication?.status);
+              const statusText = getRequestCardStatusText(card, state, myApplication);
               const canApply = !myApplication && state.phase === "open";
               const canCancel = myApplication?.status === "applied" && state.phase === "open";
               return (
@@ -2837,8 +2904,13 @@ function RequestCardUserSection({
                         ) : null}
                       </div>
                       <div style={{ fontSize: 12, color: t.textSub }}>
-                        {requestCardPhaseDescription(card, state)}
+                        {statusText.description}
                       </div>
+                      {statusText.note ? (
+                        <div style={{ fontSize: 11, color: t.textSub, marginTop: 4 }}>
+                          {statusText.note}
+                        </div>
+                      ) : null}
                     </div>
                     <div style={{ fontSize: 12, color: t.textSub, textAlign: "right" }}>
                       모집 {card.capacity}명 · 신청 {card.applicantCount || 0}명
@@ -2849,44 +2921,28 @@ function RequestCardUserSection({
                     {card.description}
                   </div>
 
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                    {canApply ? (
-                      <button
-                        onClick={() => onApply(card.id)}
-                        disabled={loading}
-                        style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700 }}
-                      >
-                        신청
-                      </button>
-                    ) : null}
-                    {canCancel ? (
-                      <button
-                        onClick={() => onCancel(card.id)}
-                        disabled={loading}
-                        style={{ ...buttonBase, background: loading ? "#cfd8e3" : "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
-                      >
-                        신청 취소
-                      </button>
-                    ) : null}
-                    {!canApply && !canCancel ? (
-                      <span style={{ fontSize: 12, color: t.textSub }}>
-                        {myApplication?.status === "selected"
-                          ? "추첨 결과에 당첨되었습니다."
-                          : myApplication?.status === "not_selected"
-                            ? "이번 추첨에서는 선발되지 않았습니다."
-                            : myApplication?.status === "applied"
-                              ? state.phase === "closed"
-                                ? "신청이 완료되었고 관리자의 랜덤 추첨을 기다리는 중입니다."
-                                : "신청이 완료되었습니다."
-                              : state.phase === "before"
-                                ? "신청 시작 전입니다."
-                                : state.phase === "closed"
-                                  ? "신청 기간이 종료되어 추첨을 기다리는 중입니다."
-                                  : state.phase === "drawn"
-                                    ? "추첨이 완료되었습니다."
-                                    : "현재는 신청할 수 없습니다."}
-                      </span>
-                    ) : null}
+                  {(canApply || canCancel) ? (
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      {canApply ? (
+                        <button
+                          onClick={() => onApply(card.id)}
+                          disabled={loading}
+                          style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700 }}
+                        >
+                          신청
+                        </button>
+                      ) : null}
+                      {canCancel ? (
+                        <button
+                          onClick={() => onCancel(card.id)}
+                          disabled={loading}
+                          style={{ ...buttonBase, background: loading ? "#cfd8e3" : "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
+                        >
+                          신청 취소
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
                   </div>
                 </div>
               );
