@@ -54,15 +54,63 @@ function normalizeRandomRounds(value) {
   ).sort((a, b) => a - b)
 }
 
+function normalizeUidList(value) {
+  const raw = Array.isArray(value) ? value : [value]
+  return Array.from(
+    new Set(
+      raw
+        .map((item) => String(item || '').trim())
+        .filter((item) => !!item),
+    ),
+  )
+}
+
+function normalizeFixedStringList(value, size = 0) {
+  const raw = Array.isArray(value) ? value : value ? [value] : []
+  const normalized = raw.map((item) => String(item || '').trim())
+  if (size <= 0) return normalized
+  if (normalized.length >= size) return normalized.slice(0, size)
+  return [
+    ...normalized,
+    ...Array.from({ length: size - normalized.length }, () => ''),
+  ]
+}
+
+export function getClubTeacherUids(club) {
+  const teacherUids = normalizeUidList(club?.teacherUids)
+  if (teacherUids.length > 0) return teacherUids
+
+  const teacherUid = String(club?.teacherUid || '').trim()
+  return teacherUid ? [teacherUid] : []
+}
+
+export function isClubTeacher(club, userUid) {
+  const targetUid = String(userUid || '').trim()
+  if (!targetUid) return false
+  return getClubTeacherUids(club).includes(targetUid)
+}
+
 function normalizeClub(id, data) {
   const legacy = !data?.clubName && !!data?.school
   const targetGrades = normalizeTargetGrades(data?.targetGrades)
+  const teacherUids = getClubTeacherUids(data)
+  const teacherNames = normalizeFixedStringList(
+    Array.isArray(data?.teacherNames) ? data?.teacherNames : (data?.teacherName ? [data.teacherName] : []),
+    teacherUids.length,
+  )
+  const teacherLoginIds = normalizeFixedStringList(
+    Array.isArray(data?.teacherLoginIds) ? data?.teacherLoginIds : (data?.teacherLoginId ? [data.teacherLoginId] : []),
+    teacherUids.length,
+  )
 
   return {
     id,
-    teacherUid: String(data?.teacherUid || '').trim(),
-    teacherName: String(data?.teacherName || '').trim(),
-    teacherLoginId: String(data?.teacherLoginId || '').trim(),
+    teacherUid: teacherUids[0] || '',
+    teacherUids,
+    teacherName: String(teacherNames[0] || data?.teacherName || '').trim(),
+    teacherNames,
+    teacherLoginId: String(teacherLoginIds[0] || data?.teacherLoginId || '').trim(),
+    teacherLoginIds,
     leaderUid: String(data?.leaderUid || '').trim(),
     leaderName: String(data?.leaderName || '').trim(),
     leaderStudentNo: String(data?.leaderStudentNo || '').trim(),
@@ -81,39 +129,61 @@ function normalizeClub(id, data) {
   }
 }
 
-function buildDisplayFieldsFromProfiles(teacher, leader) {
+function buildDisplayFieldsFromProfiles(teachers, leader) {
+  const teacherRows = Array.isArray(teachers) ? teachers : []
+  const teacherNames = teacherRows.map((teacher) => String(teacher?.name || '').trim())
+  const teacherLoginIds = teacherRows.map((teacher) => String(teacher?.loginId || '').trim())
+
   return {
-    teacherName: String(teacher?.name || '').trim(),
-    teacherLoginId: String(teacher?.loginId || '').trim(),
+    teacherName: String(teacherNames[0] || '').trim(),
+    teacherNames,
+    teacherLoginId: String(teacherLoginIds[0] || '').trim(),
+    teacherLoginIds,
     leaderName: String(leader?.name || '').trim(),
     leaderStudentNo: String(leader?.studentNo || '').trim(),
   }
 }
 
-async function resolveClubDisplayFields({ teacherUid = '', leaderUid = '' } = {}) {
-  const [teacher, leader] = await Promise.all([
-    teacherUid ? getUserProfile(teacherUid) : Promise.resolve(null),
+async function resolveClubDisplayFields({ teacherUids = [], leaderUid = '' } = {}) {
+  const normalizedTeacherUids = normalizeUidList(teacherUids)
+  const [teachers, leader] = await Promise.all([
+    Promise.all(normalizedTeacherUids.map((teacherUid) => getUserProfile(teacherUid))),
     leaderUid ? getUserProfile(leaderUid) : Promise.resolve(null),
   ])
 
-  return buildDisplayFieldsFromProfiles(teacher, leader)
+  return buildDisplayFieldsFromProfiles(teachers, leader)
 }
 
 function needsClubDisplayBackfill(club) {
-  const teacherUid = String(club?.teacherUid || '').trim()
+  const teacherUids = getClubTeacherUids(club)
   const leaderUid = String(club?.leaderUid || '').trim()
+  const teacherNames = normalizeFixedStringList(club?.teacherNames, teacherUids.length)
+  const teacherLoginIds = normalizeFixedStringList(club?.teacherLoginIds, teacherUids.length)
   const teacherName = String(club?.teacherName || '').trim()
   const teacherLoginId = String(club?.teacherLoginId || '').trim()
   const leaderName = String(club?.leaderName || '').trim()
   const leaderStudentNo = String(club?.leaderStudentNo || '').trim()
 
-  return (teacherUid && (!teacherName || !teacherLoginId))
+  return (teacherUids.length > 0 && (
+    !teacherName
+    || !teacherLoginId
+    || teacherNames.some((item) => !item)
+    || teacherLoginIds.some((item) => !item)
+  ))
     || (leaderUid && (!leaderName || !leaderStudentNo))
 }
 
 function hasDisplayFieldChanges(club, displayFields) {
+  const teacherUids = getClubTeacherUids(club)
+  const currentTeacherNames = normalizeFixedStringList(club?.teacherNames, teacherUids.length)
+  const nextTeacherNames = normalizeFixedStringList(displayFields?.teacherNames, teacherUids.length)
+  const currentTeacherLoginIds = normalizeFixedStringList(club?.teacherLoginIds, teacherUids.length)
+  const nextTeacherLoginIds = normalizeFixedStringList(displayFields?.teacherLoginIds, teacherUids.length)
+
   return String(club?.teacherName || '').trim() !== String(displayFields.teacherName || '').trim()
     || String(club?.teacherLoginId || '').trim() !== String(displayFields.teacherLoginId || '').trim()
+    || currentTeacherNames.some((value, index) => value !== nextTeacherNames[index])
+    || currentTeacherLoginIds.some((value, index) => value !== nextTeacherLoginIds[index])
     || String(club?.leaderName || '').trim() !== String(displayFields.leaderName || '').trim()
     || String(club?.leaderStudentNo || '').trim() !== String(displayFields.leaderStudentNo || '').trim()
 }
@@ -170,7 +240,7 @@ function assertClubPayload(payload, { requireTeacherUid = false } = {}) {
   const targetGrades = normalizeTargetGrades(payload?.targetGrades)
   const description = String(payload?.description || '').trim()
   const room = String(payload?.room || '').trim() || '미정'
-  const teacherUid = String(payload?.teacherUid || '').trim()
+  const teacherUids = normalizeUidList(payload?.teacherUids ?? payload?.teacherUid)
   const leaderUid = String(payload?.leaderUid || '').trim()
   const maxMembers = Math.max(0, Math.trunc(toNumber(payload?.maxMembers, 0)))
   const isInterviewSelection = Boolean(payload?.isInterviewSelection)
@@ -185,7 +255,7 @@ function assertClubPayload(payload, { requireTeacherUid = false } = {}) {
   if (maxMembers < 1) {
     throw new Error('동아리 최대인원은 1명 이상이어야 합니다.')
   }
-  if (requireTeacherUid && !teacherUid) {
+  if (requireTeacherUid && teacherUids.length === 0) {
     throw new Error('담당교사 계정 연결이 필요합니다.')
   }
 
@@ -196,7 +266,8 @@ function assertClubPayload(payload, { requireTeacherUid = false } = {}) {
     room,
     maxMembers,
     isInterviewSelection,
-    teacherUid,
+    teacherUid: teacherUids[0] || '',
+    teacherUids,
     leaderUid,
     randomDrawnRounds,
   }
@@ -207,7 +278,7 @@ export function canEditClub(club, actor) {
   const role = String(actor?.role || '').trim()
   if (!uid) return false
   if (role === 'admin') return true
-  return uid === String(club?.teacherUid || '').trim() || uid === String(club?.leaderUid || '').trim()
+  return isClubTeacher(club, uid) || uid === String(club?.leaderUid || '').trim()
 }
 
 export function canManageSelection(club, actor) {
@@ -215,7 +286,7 @@ export function canManageSelection(club, actor) {
   const role = String(actor?.role || '').trim()
   if (!uid) return false
   if (role === 'admin') return true
-  return uid === String(club?.teacherUid || '').trim()
+  return isClubTeacher(club, uid)
 }
 
 export async function listSchedules(options = {}) {
@@ -358,25 +429,27 @@ export async function createSchedule(payload, options = {}) {
     throw new Error('동아리 개설은 관리자 또는 교사만 가능합니다.')
   }
 
-  const teacherUid = actor.role === 'teacher'
-    ? actor.uid
-    : String(payload?.teacherUid || '').trim()
+  const teacherUids = actor.role === 'teacher'
+    ? [actor.uid]
+    : normalizeUidList(payload?.teacherUids ?? payload?.teacherUid)
 
   const data = assertClubPayload(
     {
       ...payload,
-      teacherUid,
+      teacherUids,
+      teacherUid: teacherUids[0] || '',
       randomDrawnRounds: [],
     },
     { requireTeacherUid: true },
   )
   const displayFields = await resolveClubDisplayFields({
-    teacherUid: data.teacherUid,
+    teacherUids: data.teacherUids,
     leaderUid: data.leaderUid,
   })
 
   const row = {
     ...data,
+    teacherUid: data.teacherUids[0] || '',
     ...displayFields,
     memberCount: 0,
     createdByUid: actor.uid,
@@ -416,21 +489,22 @@ export async function updateSchedule(scheduleId, payload, options = {}) {
     throw new Error('이 동아리의 수정 권한이 없습니다.')
   }
 
-  const nextTeacherUid = actor.role === 'admin'
-    ? String(payload?.teacherUid ?? existing.teacherUid).trim()
-    : existing.teacherUid
+  const nextTeacherUids = actor.role === 'admin'
+    ? normalizeUidList(payload?.teacherUids ?? payload?.teacherUid ?? existing.teacherUids ?? existing.teacherUid)
+    : getClubTeacherUids(existing)
 
   const nextPayload = assertClubPayload(
     {
       ...existing,
       ...payload,
-      teacherUid: nextTeacherUid,
+      teacherUids: nextTeacherUids,
+      teacherUid: nextTeacherUids[0] || '',
       randomDrawnRounds: payload?.randomDrawnRounds ?? existing.randomDrawnRounds,
     },
     { requireTeacherUid: true },
   )
   const displayFields = await resolveClubDisplayFields({
-    teacherUid: nextPayload.teacherUid,
+    teacherUids: nextPayload.teacherUids,
     leaderUid: nextPayload.leaderUid,
   })
 
@@ -445,6 +519,7 @@ export async function updateSchedule(scheduleId, payload, options = {}) {
       return {
         ...item,
         ...nextPayload,
+        teacherUid: nextPayload.teacherUids[0] || '',
         ...displayFields,
         memberCount: currentMemberCount,
         updatedAt: new Date().toISOString(),
@@ -457,6 +532,7 @@ export async function updateSchedule(scheduleId, payload, options = {}) {
   const ref = doc(db, COLLECTION_NAME, scheduleId)
   await updateDoc(ref, {
     ...nextPayload,
+    teacherUid: nextPayload.teacherUids[0] || '',
     ...displayFields,
     updatedAt: serverTimestamp(),
   })
@@ -477,12 +553,17 @@ export async function backfillScheduleDisplayFields(options = {}) {
   if (!isFirebaseEnabled()) {
     let updatedCount = 0
     for (const club of targets) {
+      const teacherUids = getClubTeacherUids(club)
       const displayFields = await resolveClubDisplayFields({
-        teacherUid: club.teacherUid,
+        teacherUids,
         leaderUid: club.leaderUid,
       })
       if (!hasDisplayFieldChanges(club, displayFields)) continue
-      applyLocalClubPatch(club.id, displayFields)
+      applyLocalClubPatch(club.id, {
+        teacherUid: teacherUids[0] || '',
+        teacherUids,
+        ...displayFields,
+      })
       updatedCount += 1
     }
     return { updatedCount }
@@ -491,19 +572,22 @@ export async function backfillScheduleDisplayFields(options = {}) {
   let updatedCount = 0
   const patches = []
   for (const club of targets) {
+    const teacherUids = getClubTeacherUids(club)
     const displayFields = await resolveClubDisplayFields({
-      teacherUid: club.teacherUid,
+      teacherUids,
       leaderUid: club.leaderUid,
     })
     if (!hasDisplayFieldChanges(club, displayFields)) continue
-    patches.push({ clubId: club.id, displayFields })
+    patches.push({ clubId: club.id, teacherUids, displayFields })
   }
 
   for (let index = 0; index < patches.length; index += 400) {
     const batch = writeBatch(db)
     const chunk = patches.slice(index, index + 400)
-    chunk.forEach(({ clubId, displayFields }) => {
+    chunk.forEach(({ clubId, teacherUids, displayFields }) => {
       batch.update(doc(db, COLLECTION_NAME, clubId), {
+        teacherUid: teacherUids[0] || '',
+        teacherUids,
         ...displayFields,
         updatedAt: serverTimestamp(),
       })
@@ -521,70 +605,78 @@ export async function syncClubDisplayFieldsForUser(userUid) {
     return { updatedCount: 0 }
   }
 
-  const profile = await getUserProfile(targetUid)
-  if (!profile) {
-    return { updatedCount: 0 }
-  }
-
-  const teacherDisplayFields = {
-    teacherName: String(profile.name || '').trim(),
-    teacherLoginId: String(profile.loginId || '').trim(),
-  }
-  const leaderDisplayFields = {
-    leaderName: String(profile.name || '').trim(),
-    leaderStudentNo: String(profile.studentNo || '').trim(),
-  }
-
   if (!isFirebaseEnabled()) {
+    const targets = scheduleStore
+      .map((item) => normalizeClub(item.id, item))
+      .filter((club) => isClubTeacher(club, targetUid) || String(club?.leaderUid || '').trim() === targetUid)
+
     let updatedCount = 0
-    scheduleStore.forEach((item) => {
-      const patch = {}
-      if (String(item?.teacherUid || '').trim() === targetUid) {
-        Object.assign(patch, teacherDisplayFields)
-      }
-      if (String(item?.leaderUid || '').trim() === targetUid) {
-        Object.assign(patch, leaderDisplayFields)
-      }
-      if (Object.keys(patch).length === 0) return
-      applyLocalClubPatch(item.id, patch)
+    for (const club of targets) {
+      const teacherUids = getClubTeacherUids(club)
+      const displayFields = await resolveClubDisplayFields({
+        teacherUids,
+        leaderUid: club.leaderUid,
+      })
+      if (!hasDisplayFieldChanges(club, displayFields)) continue
+      applyLocalClubPatch(club.id, {
+        teacherUid: teacherUids[0] || '',
+        teacherUids,
+        ...displayFields,
+      })
       updatedCount += 1
-    })
+    }
     return { updatedCount }
   }
 
-  const refsMap = new Map()
+  const clubsMap = new Map()
   const teacherSnap = await getDocs(
+    query(collection(db, COLLECTION_NAME), where('teacherUids', 'array-contains', targetUid)),
+  )
+  teacherSnap.docs.forEach((row) => clubsMap.set(row.id, normalizeClub(row.id, row.data())))
+
+  const legacyTeacherSnap = await getDocs(
     query(collection(db, COLLECTION_NAME), where('teacherUid', '==', targetUid)),
   )
-  teacherSnap.docs.forEach((row) => refsMap.set(row.id, { ref: row.ref, patch: { ...teacherDisplayFields } }))
+  legacyTeacherSnap.docs.forEach((row) => {
+    if (!clubsMap.has(row.id)) {
+      clubsMap.set(row.id, normalizeClub(row.id, row.data()))
+    }
+  })
 
   const leaderSnap = await getDocs(
     query(collection(db, COLLECTION_NAME), where('leaderUid', '==', targetUid)),
   )
   leaderSnap.docs.forEach((row) => {
-    const existing = refsMap.get(row.id) || { ref: row.ref, patch: {} }
-    refsMap.set(row.id, {
-      ref: row.ref,
-      patch: {
-        ...existing.patch,
-        ...leaderDisplayFields,
-      },
-    })
+    if (!clubsMap.has(row.id)) {
+      clubsMap.set(row.id, normalizeClub(row.id, row.data()))
+    }
   })
 
-  const refs = Array.from(refsMap.values())
-  for (let index = 0; index < refs.length; index += 400) {
+  const patches = []
+  for (const club of clubsMap.values()) {
+    const teacherUids = getClubTeacherUids(club)
+    const displayFields = await resolveClubDisplayFields({
+      teacherUids,
+      leaderUid: club.leaderUid,
+    })
+    if (!hasDisplayFieldChanges(club, displayFields)) continue
+    patches.push({ clubId: club.id, teacherUids, displayFields })
+  }
+
+  for (let index = 0; index < patches.length; index += 400) {
     const batch = writeBatch(db)
-    refs.slice(index, index + 400).forEach(({ ref, patch }) => {
-      batch.update(ref, {
-        ...patch,
+    patches.slice(index, index + 400).forEach(({ clubId, teacherUids, displayFields }) => {
+      batch.update(doc(db, COLLECTION_NAME, clubId), {
+        teacherUid: teacherUids[0] || '',
+        teacherUids,
+        ...displayFields,
         updatedAt: serverTimestamp(),
       })
     })
     await batch.commit()
   }
 
-  return { updatedCount: refs.length }
+  return { updatedCount: patches.length }
 }
 
 export async function deleteSchedule(scheduleId, options = {}) {

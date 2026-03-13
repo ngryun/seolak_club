@@ -859,7 +859,14 @@ export async function deleteUserByAdmin(uid) {
   const schedulesSnap = await getDocs(collection(db, SCHEDULES))
   const schedules = schedulesSnap.docs.map((row) => ({ id: row.id, ...row.data() }))
 
-  const ownerClubs = schedules.filter((row) => String(row.teacherUid || '').trim() === targetUid)
+  const ownerClubs = schedules.filter((row) => {
+    const teacherUids = Array.isArray(row.teacherUids)
+      ? row.teacherUids.map((item) => String(item || '').trim()).filter((item) => !!item)
+      : []
+    return teacherUids.length > 0
+      ? teacherUids.includes(targetUid)
+      : String(row.teacherUid || '').trim() === targetUid
+  })
   if (ownerClubs.length > 0) {
     const preview = ownerClubs.slice(0, 3).map((row) => row.clubName || row.id).join(', ')
     throw new Error(`담당교사로 연결된 동아리가 있습니다. 먼저 담당교사를 변경해주세요. (${preview})`)

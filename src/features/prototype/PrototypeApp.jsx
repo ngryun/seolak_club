@@ -49,6 +49,8 @@ import {
   createSchedule,
   deleteClubRoom,
   deleteSchedule,
+  getClubTeacherUids,
+  isClubTeacher,
   listClubRooms,
   listSchedules,
   syncClubDisplayFieldsForUser,
@@ -647,14 +649,40 @@ function formatStudentLabel(student) {
   return `${key} / ${name}`;
 }
 
+function hasMissingClubTeacherDisplay(club) {
+  const teacherUids = getClubTeacherUids(club);
+  if (teacherUids.length === 0) return false;
+
+  const teacherNames = Array.isArray(club?.teacherNames) ? club.teacherNames : [];
+  const teacherLoginIds = Array.isArray(club?.teacherLoginIds) ? club.teacherLoginIds : [];
+  if (!String(club?.teacherName || "").trim() || !String(club?.teacherLoginId || "").trim()) {
+    return true;
+  }
+  if (teacherNames.length !== teacherUids.length || teacherLoginIds.length !== teacherUids.length) {
+    return true;
+  }
+  return teacherUids.some((_, index) => !String(teacherNames[index] || "").trim() || !String(teacherLoginIds[index] || "").trim());
+}
+
 function formatClubTeacherLabel(club, userMap) {
-  const teacher = userMap?.get?.(club?.teacherUid) || null;
-  const teacherName = String(club?.teacherName || "").trim();
-  const teacherLoginId = String(club?.teacherLoginId || "").trim();
-  if (teacherName && teacherLoginId) return `${teacherName}(${teacherLoginId})`;
-  if (teacherName) return teacherName;
-  if (teacher) return `${teacher.name}(${teacher.loginId})`;
-  return club?.teacherUid || "-";
+  const teacherUids = getClubTeacherUids(club);
+  const teacherNames = Array.isArray(club?.teacherNames) ? club.teacherNames : [];
+  const teacherLoginIds = Array.isArray(club?.teacherLoginIds) ? club.teacherLoginIds : [];
+
+  const labels = teacherUids.map((teacherUid, index) => {
+    const teacher = userMap?.get?.(teacherUid) || null;
+    const teacherName = String(teacherNames[index] || (index === 0 ? club?.teacherName : "") || "").trim();
+    const teacherLoginId = String(teacherLoginIds[index] || (index === 0 ? club?.teacherLoginId : "") || "").trim();
+    if (teacherName && teacherLoginId) return `${teacherName}(${teacherLoginId})`;
+    if (teacher) return `${teacher.name}(${teacher.loginId})`;
+    if (teacherName) return teacherName;
+    return teacherUid;
+  }).filter(Boolean);
+
+  if (labels.length > 0) return labels.join(", ");
+  const fallbackName = String(club?.teacherName || "").trim();
+  if (fallbackName) return fallbackName;
+  return "-";
 }
 
 function formatClubLeaderLabel(club, userMap) {
@@ -1013,10 +1041,16 @@ function ClubForm({
   const teachers = users.filter((u) => u.role === "teacher" || u.role === "admin");
   const students = users.filter((u) => u.role === "student");
   const isAdmin = actor?.role === "admin";
-  const selectedTeacher = teachers.find((u) => u.uid === form.teacherUid);
-  const teacherDisplay = selectedTeacher
-    ? `${selectedTeacher.name} (${selectedTeacher.loginId})`
-    : (form.teacherUid || "미지정");
+  const selectedTeacherUids = useMemo(
+    () => getClubTeacherUids(form),
+    [form?.teacherUids, form?.teacherUid],
+  );
+  const teacherDisplay = useMemo(() => {
+    const labelMap = new Map(
+      teachers.map((u) => [u.uid, `${u.name} (${u.loginId})`]),
+    );
+    return selectedTeacherUids.map((uid) => labelMap.get(uid) || uid).join(", ") || "미지정";
+  }, [selectedTeacherUids, teachers]);
   const normalizedRoomOptions = useMemo(() => {
     const map = new Map();
     (roomOptions || []).forEach((row) => {
@@ -1037,6 +1071,16 @@ function ClubForm({
       return a.name.localeCompare(b.name, "ko");
     });
   }, [roomOptions, form?.room]);
+
+  function toggleTeacher(uid) {
+    setForm((prev) => {
+      const current = getClubTeacherUids(prev);
+      const next = current.includes(uid)
+        ? current.filter((item) => item !== uid)
+        : [...current, uid];
+      return { ...prev, teacherUids: next };
+    });
+  }
 
   return (
     <section style={cardStyle}>
@@ -1059,19 +1103,34 @@ function ClubForm({
         </Field>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <Field label="담당교사 연결">
+          <Field label="담당교사 연결" hint="여러 명을 선택할 수 있습니다.">
             {isAdmin ? (
-              <Select
-                value={form.teacherUid}
-                onChange={(e) => setForm((prev) => ({ ...prev, teacherUid: e.target.value }))}
-              >
-                <option value="">담당교사 선택</option>
-                {teachers.map((u) => (
-                  <option key={u.uid} value={u.uid}>
-                    {u.name} ({u.loginId})
-                  </option>
-                ))}
-              </Select>
+              <>
+                <div style={{ ...inputBase, padding: 8, minHeight: 108, maxHeight: 180, overflowY: "auto" }}>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {teachers.map((u) => {
+                      const checked = selectedTeacherUids.includes(u.uid);
+                      return (
+                        <label
+                          key={u.uid}
+                          style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleTeacher(u.uid)}
+                          />
+                          <span>{u.name} ({u.loginId})</span>
+                        </label>
+                      );
+                    })}
+                    {teachers.length === 0 ? (
+                      <div style={{ fontSize: 12, color: t.textSub }}>선택 가능한 교사 계정이 없습니다.</div>
+                    ) : null}
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, color: t.textSub }}>선택된 담당교사: {teacherDisplay}</div>
+              </>
             ) : (
               <input
                 style={{ ...inputBase, background: t.muted }}
@@ -3474,7 +3533,7 @@ function ProfilePanel({ user, onSave, onChangePassword, loading, passwordLoading
 function newClubForm(user, defaultRoom = "미정") {
   return {
     clubName: "",
-    teacherUid: user?.role === "teacher" ? user.uid : "",
+    teacherUids: user?.role === "teacher" ? [user.uid] : [],
     leaderUid: "",
     targetGrades: [1],
     description: "",
@@ -3727,7 +3786,7 @@ export default function PrototypeApp() {
       const cycleInfo = await refreshCycle();
       const needsBackfill = clubRows.some((club) => {
         if (club.legacy) return false;
-        const missingTeacher = club.teacherUid && (!club.teacherName || !club.teacherLoginId);
+        const missingTeacher = hasMissingClubTeacherDisplay(club);
         const missingLeader = club.leaderUid && (!club.leaderName || !club.leaderStudentNo);
         return missingTeacher || missingLeader;
       });
@@ -3757,7 +3816,7 @@ export default function PrototypeApp() {
           ...studentTasks,
         ]);
         await refreshRoundStats(
-          clubRows.filter((club) => String(club.teacherUid || "") === String(user.uid || "")),
+          clubRows.filter((club) => isClubTeacher(club, user.uid || "")),
           cycleInfo,
         );
         setStudentStatusRows([]);
@@ -3883,7 +3942,7 @@ export default function PrototypeApp() {
     try {
       const payload = {
         clubName: String(clubForm.clubName || "").trim(),
-        teacherUid: String(clubForm.teacherUid || "").trim(),
+        teacherUids: getClubTeacherUids(clubForm),
         leaderUid: String(clubForm.leaderUid || "").trim(),
         targetGrades: Array.isArray(clubForm.targetGrades) ? clubForm.targetGrades : [],
         description: String(clubForm.description || "").trim(),
@@ -3927,7 +3986,7 @@ export default function PrototypeApp() {
     setEditingClubId(club.id);
     setClubForm({
       clubName: club.clubName || "",
-      teacherUid: club.teacherUid || "",
+      teacherUids: getClubTeacherUids(club),
       leaderUid: club.leaderUid || "",
       targetGrades: Array.isArray(club.targetGrades) && club.targetGrades.length > 0 ? [...club.targetGrades] : [1],
       description: club.description || "",
@@ -4707,7 +4766,7 @@ export default function PrototypeApp() {
   const submissionState = useMemo(() => getSubmissionWindowState(cycle), [cycle]);
   const visibleClubs = clubs.filter((club) => !club.legacy);
   const leaderEditableClubs = visibleClubs.filter((club) => canEditClub(club, user));
-  const teacherOwnedClubs = visibleClubs.filter((club) => String(club.teacherUid || "") === String(user?.uid || ""));
+  const teacherOwnedClubs = visibleClubs.filter((club) => isClubTeacher(club, user?.uid));
   const selectedStudentStatusRow = useMemo(
     () => studentStatusRows.find((row) => row.studentUid === studentStatusDialog.studentUid) || null,
     [studentStatusDialog.studentUid, studentStatusRows],

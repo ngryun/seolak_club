@@ -16,6 +16,7 @@ import { db, isFirebaseEnabled } from '../lib/firebase'
 import {
   canManageSelection,
   deleteSchedule,
+  getClubTeacherUids,
   getScheduleById,
   listSchedules,
   updateSchedule,
@@ -227,7 +228,7 @@ function buildApplicationDocId(cycleId, studentUid, preferenceRank) {
 }
 
 function buildSystemActor(club) {
-  const uid = String(club?.teacherUid || club?.createdByUid || 'system-sync').trim() || 'system-sync'
+  const uid = String(getClubTeacherUids(club)[0] || club?.teacherUid || club?.createdByUid || 'system-sync').trim() || 'system-sync'
   return {
     uid,
     role: 'admin',
