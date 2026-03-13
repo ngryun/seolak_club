@@ -679,7 +679,7 @@ function formatClubTeacherLabel(club, userMap) {
     return teacherUid;
   }).filter(Boolean);
 
-  if (labels.length > 0) return labels.join(", ");
+  if (labels.length > 0) return labels.join("\n");
   const fallbackName = String(club?.teacherName || "").trim();
   if (fallbackName) return fallbackName;
   return "-";
@@ -1439,7 +1439,7 @@ function ClubTable({
                     </button>
                     {club.legacy ? <span style={{ marginLeft: 6, fontSize: 11, color: t.danger }}>[구형데이터]</span> : null}
                   </td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13, whiteSpace: "pre-line", lineHeight: 1.5 }}>
                     {formatClubTeacherLabel(club, userMap)}
                   </td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
@@ -1558,7 +1558,8 @@ function ClubDetailDialog({
 
         <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
           <div style={{ fontSize: 13 }}>
-            <strong>담당교사:</strong> {formatClubTeacherLabel(club, userMap)}
+            <strong>담당교사:</strong>
+            <div style={{ whiteSpace: "pre-line", lineHeight: 1.5, marginTop: 4 }}>{formatClubTeacherLabel(club, userMap)}</div>
           </div>
           <div style={{ fontSize: 13 }}>
             <strong>동아리장:</strong> {formatClubLeaderLabel(club, userMap)}
