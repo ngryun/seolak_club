@@ -69,6 +69,7 @@ import {
   updateMyPassword,
   updateUserByAdmin,
 } from "../../services/userService";
+import { exportFullBackup } from "../../services/backupService";
 
 const t = {
   bg: "#f6f7fb",
@@ -896,6 +897,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
       { key: "extraRequests", label: "기타신청현황" },
       { key: "requestCards", label: "공통 신청카드 관리" },
       { type: "divider" },
+      { key: "backup", label: "데이터 백업" },
       { key: "profile", label: "내 정보" },
     ],
     teacher: [
@@ -3544,6 +3546,59 @@ function newClubForm(user, defaultRoom = "미정") {
   };
 }
 
+function BackupPanel({ onBackup, loading }) {
+  const [result, setResult] = useState(null);
+
+  const handleBackup = async () => {
+    setResult(null);
+    try {
+      const stats = await onBackup();
+      setResult(stats);
+    } catch {
+      // error handled by parent
+    }
+  };
+
+  return (
+    <section style={{ ...cardStyle, display: "grid", gap: 16 }}>
+      <h3 style={{ margin: 0, fontSize: 16 }}>데이터 백업</h3>
+      <p style={{ margin: 0, color: t.textSub, fontSize: 14, lineHeight: 1.6 }}>
+        현재 시스템의 모든 데이터를 엑셀(xlsx) 파일로 다운로드합니다.<br />
+        동아리 목록, 학생 신청 내역, 확정 부원, 회원 목록이 각각 시트로 저장됩니다.
+      </p>
+      <button
+        onClick={handleBackup}
+        disabled={loading}
+        style={{
+          padding: "10px 24px",
+          background: loading ? t.muted : t.accent,
+          color: loading ? t.textSub : "#fff",
+          border: "none",
+          borderRadius: 8,
+          fontSize: 14,
+          fontWeight: 600,
+          cursor: loading ? "not-allowed" : "pointer",
+          justifySelf: "start",
+        }}
+      >
+        {loading ? "백업 파일 생성 중..." : "전체 데이터 백업 다운로드"}
+      </button>
+      {result ? (
+        <div style={{
+          padding: 12,
+          background: "#e8f5e9",
+          borderRadius: 8,
+          fontSize: 13,
+          color: t.ok,
+          lineHeight: 1.6,
+        }}>
+          백업 완료 — 동아리 {result.clubCount}개, 신청 {result.applicationCount}건, 확정부원 {result.memberCount}명, 회원 {result.userCount}명
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function newRequestCardForm() {
   return {
     title: "",
@@ -5209,6 +5264,25 @@ export default function PrototypeApp() {
           }}
           onApply={handleApplyRequestCard}
           onCancel={handleCancelRequestCard}
+        />
+      ) : null}
+
+      {tab === "backup" && user.role === "admin" ? (
+        <BackupPanel
+          loading={loading}
+          onBackup={async () => {
+            setLoading(true);
+            try {
+              const stats = await exportFullBackup();
+              setMessage({ type: "ok", text: "데이터 백업 파일이 다운로드되었습니다." });
+              return stats;
+            } catch (error) {
+              withMessageError(error, "데이터 백업에 실패했습니다.");
+              throw error;
+            } finally {
+              setLoading(false);
+            }
+          }}
         />
       ) : null}
 
