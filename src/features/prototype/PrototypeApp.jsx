@@ -3063,6 +3063,7 @@ function RequestCardUserSection({
         const statusText = getRequestCardStatusText(card, state, myApplication);
         const canApply = !myApplication && state.phase === "open";
         const canCancel = myApplication?.status === "applied" && state.phase === "open";
+        const useCompactAppliedStatus = myApplication?.status === "applied" && state.phase === "open";
         const startAt = state?.startAt || card?.startAt || null;
         const endAt = state?.endAt || card?.endAt || null;
         const capacity = Math.max(0, Number(card?.capacity || 0));
@@ -3189,27 +3190,29 @@ function RequestCardUserSection({
               ))}
             </div>
 
-            <div
-              style={{
-                borderRadius: 14,
-                border: `1px solid ${phaseMeta.border}`,
-                background: phaseMeta.bg,
-                padding: "12px 14px",
-                marginBottom: 12,
-              }}
-            >
-              <div style={{ fontSize: 11, fontWeight: 700, color: phaseMeta.color, marginBottom: 4 }}>
-                {statusText.label}
-              </div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: t.text, lineHeight: 1.5 }}>
-                {statusText.description}
-              </div>
-              {statusNote ? (
-                <div style={{ fontSize: 12, color: t.textSub, marginTop: 4, lineHeight: 1.5 }}>
-                  {statusNote}
+            {!useCompactAppliedStatus ? (
+              <div
+                style={{
+                  borderRadius: 14,
+                  border: `1px solid ${phaseMeta.border}`,
+                  background: phaseMeta.bg,
+                  padding: "12px 14px",
+                  marginBottom: 12,
+                }}
+              >
+                <div style={{ fontSize: 11, fontWeight: 700, color: phaseMeta.color, marginBottom: 4 }}>
+                  {statusText.label}
                 </div>
-              ) : null}
-            </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: t.text, lineHeight: 1.5 }}>
+                  {statusText.description}
+                </div>
+                {statusNote ? (
+                  <div style={{ fontSize: 12, color: t.textSub, marginTop: 4, lineHeight: 1.5 }}>
+                    {statusNote}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {card.description ? (
               <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6, marginBottom: 10 }}>
@@ -3236,6 +3239,11 @@ function RequestCardUserSection({
                   >
                     신청 취소
                   </button>
+                ) : null}
+                {useCompactAppliedStatus ? (
+                  <div style={{ fontSize: 13, fontWeight: 700, color: t.accent }}>
+                    {statusText.description}
+                  </div>
                 ) : null}
               </div>
             ) : null}
