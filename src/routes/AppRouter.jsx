@@ -12,7 +12,7 @@ export function AppRouter() {
 
   useEffect(() => {
     if (path === '/prototype') {
-      window.history.replaceState({}, '', '/')
+      window.history.replaceState({}, '', `/${window.location.search}${window.location.hash}`)
       setPath('/')
     }
   }, [path])

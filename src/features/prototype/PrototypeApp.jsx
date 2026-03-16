@@ -421,7 +421,9 @@ function getRequestCardStatusText(card, state, application) {
       return {
         label: "결과 대기",
         description: "신청 기간이 종료되었습니다. 최종 선정 결과를 기다리는 중입니다.",
-        note: "정원 초과 시 무작위 추첨으로 선정될 수 있습니다.",
+        note: endAt
+          ? `신청은 ${formatTime(endAt)}에 마감되었습니다. 정원 초과 시 무작위 추첨으로 선정될 수 있습니다.`
+          : "정원 초과 시 무작위 추첨으로 선정될 수 있습니다.",
       };
     }
     if (state.phase === "drawn") {
@@ -457,7 +459,9 @@ function getRequestCardStatusText(card, state, application) {
     return {
       label: "결과 대기",
       description: "신청 기간이 종료되었습니다. 최종 선정 결과를 기다리는 중입니다.",
-      note: "정원 초과 시 무작위 추첨으로 선정될 수 있습니다.",
+      note: endAt
+        ? `신청은 ${formatTime(endAt)}에 마감되었습니다. 정원 초과 시 무작위 추첨으로 선정될 수 있습니다.`
+        : "정원 초과 시 무작위 추첨으로 선정될 수 있습니다.",
     };
   }
   if (state.phase === "drawn") {
@@ -477,6 +481,74 @@ function getRequestCardStatusText(card, state, application) {
 function canUseRequestCard(card, user) {
   const normalizedRole = user?.role === "admin" ? "teacher" : user?.role;
   return card?.targetRole === normalizedRole;
+}
+
+function getRequestCardPeriodText(card, state) {
+  const startAt = state?.startAt || card?.startAt || null;
+  const endAt = state?.endAt || card?.endAt || null;
+  if (!startAt || !endAt) return "관리자 설정 대기";
+  return `${formatTime(startAt)} ~ ${formatTime(endAt)}`;
+}
+
+function getRequestCardScheduleMeta(card, state) {
+  const startAt = state?.startAt || card?.startAt || null;
+  const endAt = state?.endAt || card?.endAt || null;
+  const drawExecutedAt = state?.drawExecutedAt || card?.drawExecutedAt || null;
+
+  if (state?.phase === "before") {
+    return {
+      label: "신청 시작",
+      value: startAt ? formatTime(startAt) : "-",
+      bg: "#fff8e1",
+      color: t.warn,
+    };
+  }
+  if (state?.phase === "open") {
+    return {
+      label: "신청 마감",
+      value: endAt ? formatTime(endAt) : "-",
+      bg: "#eef7ee",
+      color: t.ok,
+    };
+  }
+  if (state?.phase === "closed") {
+    return {
+      label: "마감 시각",
+      value: endAt ? formatTime(endAt) : "-",
+      bg: "#edf4ff",
+      color: t.accent,
+    };
+  }
+  if (state?.phase === "drawn") {
+    return {
+      label: "결과 안내",
+      value: drawExecutedAt ? formatTime(drawExecutedAt) : "-",
+      bg: "#f3f4f6",
+      color: t.textSub,
+    };
+  }
+  if (state?.phase === "selection_cancelled") {
+    return {
+      label: drawExecutedAt ? "처리 시각" : "운영 상태",
+      value: drawExecutedAt ? formatTime(drawExecutedAt) : "선정취소",
+      bg: "#fff4e5",
+      color: t.warn,
+    };
+  }
+  if (state?.phase === "cancelled") {
+    return {
+      label: "운영 상태",
+      value: "폐강",
+      bg: "#eceff1",
+      color: t.textSub,
+    };
+  }
+  return {
+    label: "신청 기간",
+    value: getRequestCardPeriodText(card, state),
+    bg: "#f3f4f6",
+    color: t.textSub,
+  };
 }
 
 function requestCardUserGroupKey(state) {
@@ -3054,6 +3126,8 @@ function RequestCardUserSection({
         const myApplication = appMap.get(card.id) || null;
         const resultMeta = requestCardResultMeta(myApplication?.status, state);
         const statusText = getRequestCardStatusText(card, state, myApplication);
+        const scheduleMeta = getRequestCardScheduleMeta(card, state);
+        const periodText = getRequestCardPeriodText(card, state);
         const canApply = !myApplication && state.phase === "open";
         const canCancel = myApplication?.status === "applied" && state.phase === "open";
         return (
@@ -3082,6 +3156,17 @@ function RequestCardUserSection({
               </div>
               <div style={{ fontSize: 12, color: t.textSub, textAlign: "right" }}>
                 모집 {card.capacity}명 · 신청 {card.applicantCount || 0}명
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8, marginBottom: 10 }}>
+              <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", background: "#fff" }}>
+                <div style={{ fontSize: 11, color: t.textSub, marginBottom: 4 }}>신청 기간</div>
+                <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.5 }}>{periodText}</div>
+              </div>
+              <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", background: scheduleMeta.bg }}>
+                <div style={{ fontSize: 11, color: scheduleMeta.color, marginBottom: 4 }}>{scheduleMeta.label}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: scheduleMeta.color, lineHeight: 1.5 }}>{scheduleMeta.value}</div>
               </div>
             </div>
 
@@ -3712,6 +3797,47 @@ function newRequestCardForm() {
   };
 }
 
+const TAB_QUERY_KEY = "tab";
+
+function getDefaultTabForRole(role) {
+  if (role === "admin") return "clubs";
+  if (role === "teacher") return "myClubs";
+  return "apply";
+}
+
+function isTabAllowedForRole(tab, role, options = {}) {
+  const normalizedTab = String(tab || "").trim();
+  const normalizedRole = String(role || "").trim();
+  const isStudentLeader = options.isStudentLeader === true;
+
+  const allowedTabsByRole = {
+    admin: new Set(["clubs", "studentStatus", "round", "users", "extraRequests", "requestCards", "backup", "profile"]),
+    teacher: new Set(["myClubs", "clubOverview", "studentStatus", "extraRequests", "profile"]),
+    student: new Set(["apply", "my", "clubOverview", "clubs", "extraRequests", "profile"]),
+  };
+
+  if (!normalizedTab) return false;
+  if (!allowedTabsByRole[normalizedRole]?.has(normalizedTab)) return false;
+  if (normalizedRole === "student" && normalizedTab === "clubs" && !isStudentLeader) return false;
+  return true;
+}
+
+function readRequestedTabFromUrl() {
+  if (typeof window === "undefined") return "";
+  return String(new URLSearchParams(window.location.search).get(TAB_QUERY_KEY) || "").trim();
+}
+
+function syncTabToUrl(tab) {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (tab) {
+    url.searchParams.set(TAB_QUERY_KEY, tab);
+  } else {
+    url.searchParams.delete(TAB_QUERY_KEY);
+  }
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
 export default function PrototypeApp() {
   const {
     user,
@@ -3790,11 +3916,10 @@ export default function PrototypeApp() {
 
   useEffect(() => {
     if (!isAuthenticated || !user) return;
-    const nextTab = user.role === "admin"
-      ? "clubs"
-      : user.role === "teacher"
-        ? "myClubs"
-        : "apply";
+    const requestedTab = readRequestedTabFromUrl();
+    const nextTab = isTabAllowedForRole(requestedTab, user.role)
+      ? requestedTab
+      : getDefaultTabForRole(user.role);
     setTab(nextTab);
     setClubFormDialogOpen(false);
     setClubForm(newClubForm(user));
@@ -4952,6 +5077,12 @@ export default function PrototypeApp() {
       setTab("apply");
     }
   }, [isStudentLeader, tab, user?.role]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+    if (!isTabAllowedForRole(tab, user.role, { isStudentLeader })) return;
+    syncTabToUrl(tab);
+  }, [isAuthenticated, isStudentLeader, tab, user?.role]);
 
   useEffect(() => {
     if (!isAuthenticated || !user) return;
