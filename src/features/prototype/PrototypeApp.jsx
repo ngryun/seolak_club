@@ -479,6 +479,14 @@ function canUseRequestCard(card, user) {
   return card?.targetRole === normalizedRole;
 }
 
+function requestCardUserGroupKey(state) {
+  if (state?.phase === "closed") return "pending";
+  if (state?.phase === "drawn" || state?.phase === "selection_cancelled" || state?.phase === "cancelled") {
+    return "archived";
+  }
+  return "current";
+}
+
 function MessageBar({ message, onClose }) {
   if (!message?.text) return null;
   const colors = {
@@ -2984,24 +2992,130 @@ function RequestCardUserSection({
   onApply,
   onCancel,
 }) {
+  const [showArchivedCards, setShowArchivedCards] = useState(false);
   const appMap = useMemo(
     () => new Map((myApplications || []).map((row) => [row.cardId, row])),
     [myApplications],
   );
 
-  const visibleCards = useMemo(() => {
-    const phaseRank = { open: 0, before: 1, closed: 2, drawn: 3, selection_cancelled: 4, cancelled: 5, unconfigured: 6 };
-    return (cards || [])
+  const groupedCards = (() => {
+    const groupRank = { current: 0, pending: 1, archived: 2 };
+    const phaseRank = { open: 0, before: 1, unconfigured: 2, closed: 0, drawn: 0, selection_cancelled: 1, cancelled: 2 };
+    const initialGroups = { current: [], pending: [], archived: [] };
+
+    const sortedRows = (cards || [])
       .filter((card) => canUseRequestCard(card, user))
+      .map((card) => {
+        const state = getRequestCardState(card);
+        return {
+          card,
+          state,
+          groupKey: requestCardUserGroupKey(state),
+        };
+      })
       .sort((a, b) => {
-        const leftState = getRequestCardState(a);
-        const rightState = getRequestCardState(b);
-        const leftRank = phaseRank[leftState.phase] ?? 9;
-        const rightRank = phaseRank[rightState.phase] ?? 9;
+        const leftGroupRank = groupRank[a.groupKey] ?? 9;
+        const rightGroupRank = groupRank[b.groupKey] ?? 9;
+        if (leftGroupRank !== rightGroupRank) return leftGroupRank - rightGroupRank;
+
+        const leftRank = phaseRank[a.state.phase] ?? 9;
+        const rightRank = phaseRank[b.state.phase] ?? 9;
         if (leftRank !== rightRank) return leftRank - rightRank;
-        return String(a.title || a.id).localeCompare(String(b.title || b.id), "ko");
+        return 0;
       });
-  }, [cards, user?.role]);
+
+    return sortedRows.reduce((acc, row) => {
+      acc[row.groupKey].push(row);
+      return acc;
+    }, initialGroups);
+  })();
+
+  const currentRows = groupedCards.current;
+  const pendingRows = groupedCards.pending;
+  const archivedRows = groupedCards.archived;
+  const visibleCardsCount = currentRows.length + pendingRows.length + archivedRows.length;
+  const countBadgeStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 26,
+    borderRadius: 999,
+    padding: "2px 8px",
+    fontSize: 12,
+    fontWeight: 700,
+    background: "#eef2f8",
+    color: t.textSub,
+  };
+
+  const renderCardRows = (rows) => (
+    <div style={{ display: "grid", gap: 12 }}>
+      {rows.map(({ card, state }) => {
+        const phaseMeta = requestCardPhaseMeta(state);
+        const myApplication = appMap.get(card.id) || null;
+        const resultMeta = requestCardResultMeta(myApplication?.status, state);
+        const statusText = getRequestCardStatusText(card, state, myApplication);
+        const canApply = !myApplication && state.phase === "open";
+        const canCancel = myApplication?.status === "applied" && state.phase === "open";
+        return (
+          <div key={card.id} style={{ ...cardStyle, background: "#fafbfd" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                  <div style={{ fontSize: 16, fontWeight: 800 }}>{card.title}</div>
+                  <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, color: phaseMeta.color }}>
+                    {phaseMeta.label}
+                  </span>
+                  {myApplication ? (
+                    <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: resultMeta.bg, color: resultMeta.color }}>
+                      {resultMeta.label}
+                    </span>
+                  ) : null}
+                </div>
+                <div style={{ fontSize: 12, color: t.textSub }}>
+                  {statusText.description}
+                </div>
+                {statusText.note ? (
+                  <div style={{ fontSize: 11, color: t.textSub, marginTop: 4 }}>
+                    {statusText.note}
+                  </div>
+                ) : null}
+              </div>
+              <div style={{ fontSize: 12, color: t.textSub, textAlign: "right" }}>
+                모집 {card.capacity}명 · 신청 {card.applicantCount || 0}명
+              </div>
+            </div>
+
+            <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6, marginBottom: 10 }}>
+              {card.description}
+            </div>
+
+            {(canApply || canCancel) ? (
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                {canApply ? (
+                  <button
+                    onClick={() => onApply(card.id)}
+                    disabled={loading}
+                    style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700 }}
+                  >
+                    신청
+                  </button>
+                ) : null}
+                {canCancel ? (
+                  <button
+                    onClick={() => onCancel(card.id)}
+                    disabled={loading}
+                    style={{ ...buttonBase, background: loading ? "#cfd8e3" : "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
+                  >
+                    신청 취소
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
     <section style={cardStyle}>
@@ -3022,76 +3136,64 @@ function RequestCardUserSection({
           </button>
         </div>
 
-        {visibleCards.length === 0 ? (
+        {visibleCardsCount === 0 ? (
           <div style={{ fontSize: 13, color: t.textSub }}>현재 신청 가능한 추가 카드가 없습니다.</div>
         ) : (
           <div style={{ display: "grid", gap: 12 }}>
-            {visibleCards.map((card) => {
-              const state = getRequestCardState(card);
-              const phaseMeta = requestCardPhaseMeta(state);
-              const myApplication = appMap.get(card.id) || null;
-              const resultMeta = requestCardResultMeta(myApplication?.status, state);
-              const statusText = getRequestCardStatusText(card, state, myApplication);
-              const canApply = !myApplication && state.phase === "open";
-              const canCancel = myApplication?.status === "applied" && state.phase === "open";
-              return (
-                <div key={card.id} style={{ ...cardStyle, background: "#fafbfd" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8, flexWrap: "wrap" }}>
-                    <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-                        <div style={{ fontSize: 16, fontWeight: 800 }}>{card.title}</div>
-                        <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, color: phaseMeta.color }}>
-                          {phaseMeta.label}
-                        </span>
-                        {myApplication ? (
-                          <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: resultMeta.bg, color: resultMeta.color }}>
-                            {resultMeta.label}
-                          </span>
-                        ) : null}
-                      </div>
-                      <div style={{ fontSize: 12, color: t.textSub }}>
-                        {statusText.description}
-                      </div>
-                      {statusText.note ? (
-                        <div style={{ fontSize: 11, color: t.textSub, marginTop: 4 }}>
-                          {statusText.note}
-                        </div>
-                      ) : null}
-                    </div>
-                    <div style={{ fontSize: 12, color: t.textSub, textAlign: "right" }}>
-                      모집 {card.capacity}명 · 신청 {card.applicantCount || 0}명
-                    </div>
-                  </div>
-
-                  <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6, marginBottom: 10 }}>
-                    {card.description}
-                  </div>
-
-                  {(canApply || canCancel) ? (
-                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      {canApply ? (
-                        <button
-                          onClick={() => onApply(card.id)}
-                          disabled={loading}
-                          style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700 }}
-                        >
-                          신청
-                        </button>
-                      ) : null}
-                      {canCancel ? (
-                        <button
-                          onClick={() => onCancel(card.id)}
-                          disabled={loading}
-                          style={{ ...buttonBase, background: loading ? "#cfd8e3" : "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
-                        >
-                          신청 취소
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
+            {currentRows.length > 0 ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 800 }}>지금 신청/확인할 카드</h3>
+                  <span style={countBadgeStyle}>{currentRows.length}</span>
                 </div>
-              );
-            })}
+                <div style={{ fontSize: 12, color: t.textSub }}>
+                  신청 가능 또는 시작 전 상태의 카드만 먼저 보여줍니다.
+                </div>
+                {renderCardRows(currentRows)}
+              </div>
+            ) : null}
+
+            {pendingRows.length > 0 ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 800 }}>결과 대기</h3>
+                  <span style={countBadgeStyle}>{pendingRows.length}</span>
+                </div>
+                <div style={{ fontSize: 12, color: t.textSub }}>
+                  신청은 마감되었고 선정 결과 발표를 기다리는 카드입니다.
+                </div>
+                {renderCardRows(pendingRows)}
+              </div>
+            ) : null}
+
+            {currentRows.length === 0 && pendingRows.length === 0 ? (
+              <div style={{ fontSize: 13, color: t.textSub }}>
+                지금 진행 중이거나 결과를 기다리는 카드는 없습니다.
+              </div>
+            ) : null}
+
+            {archivedRows.length > 0 ? (
+              <div style={{ display: "grid", gap: 10, paddingTop: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <h3 style={{ fontSize: 15, fontWeight: 800 }}>지난 카드</h3>
+                    <span style={countBadgeStyle}>{archivedRows.length}</span>
+                  </div>
+                  <button
+                    onClick={() => setShowArchivedCards((prev) => !prev)}
+                    type="button"
+                    aria-expanded={showArchivedCards}
+                    style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
+                  >
+                    {showArchivedCards ? "지난 카드 접기" : "지난 카드 보기"}
+                  </button>
+                </div>
+                <div style={{ fontSize: 12, color: t.textSub }}>
+                  결과가 확정되었거나 운영 사정으로 종료된 카드는 기본적으로 접어 둡니다.
+                </div>
+                {showArchivedCards ? renderCardRows(archivedRows) : null}
+              </div>
+            ) : null}
           </div>
         )}
       </div>
