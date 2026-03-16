@@ -514,8 +514,8 @@ async function normalizeStudentPreferences(studentNo, preferences) {
     throw new Error('학번 첫 자리로 학년을 추정할 수 없습니다. 학번을 확인해주세요.')
   }
 
-  if (rows.length < 1 || rows.length > 3) {
-    throw new Error('동아리 지망은 1~3개까지 제출할 수 있습니다.')
+  if (rows.length !== 3) {
+    throw new Error('1지망, 2지망, 3지망을 모두 입력해주세요. (교사 사전 배정 학생 제외 전원 필수)')
   }
 
   const uniqueClubIds = new Set()
