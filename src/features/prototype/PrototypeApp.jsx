@@ -2233,6 +2233,7 @@ function StudentApplicationStatusPanel({
         row.preferences[0]?.clubName,
         row.preferences[1]?.clubName,
         row.preferences[2]?.clubName,
+        row.finalClubName,
       ];
       return values.some((value) => String(value || "").toLowerCase().includes(keyword));
     });
@@ -2265,10 +2266,10 @@ function StudentApplicationStatusPanel({
       </div>
 
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1000 }}>
           <thead>
             <tr>
-              {["학번", "이름", "1지망동아리", "2지망동아리", "3지망동아리"].map((head) => (
+              {["학번", "이름", "1지망", "2지망", "3지망", "배정 동아리"].map((head) => (
                 <th
                   key={head}
                   style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
@@ -2283,20 +2284,43 @@ function StudentApplicationStatusPanel({
               <tr
                 key={row.studentUid}
                 onClick={() => onOpenDetail(row.studentUid)}
-                style={{ cursor: "pointer" }}
+                style={{ cursor: "pointer", background: row.finalClubName ? "#f9fdf9" : undefined }}
               >
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13 }}>{row.studentNo || "-"}</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13, fontWeight: 700 }}>{row.studentName || "-"}</td>
-                {[0, 1, 2].map((index) => (
-                  <td key={index} style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13 }}>
-                    {row.preferences[index]?.clubName || "-"}
-                  </td>
-                ))}
+                {[0, 1, 2].map((index) => {
+                  const pref = row.preferences[index];
+                  const clubName = pref?.clubName || "";
+                  const status = pref?.status || "";
+                  return (
+                    <td key={index} style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13 }}>
+                      {clubName ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                          <span>{clubName}</span>
+                          {status ? <StudentMyStatusChip status={status} rejectReason={pref?.rejectReason} /> : null}
+                        </div>
+                      ) : "-"}
+                    </td>
+                  );
+                })}
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13 }}>
+                  {row.finalClubName ? (
+                    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 700, color: t.ok }}>{row.finalClubName}</span>
+                      {(() => {
+                        const approved = row.preferences.find((p) => p.status === "approved");
+                        return approved?.selectionSource ? <AssignSourceChip source={approved.selectionSource} /> : null;
+                      })()}
+                    </div>
+                  ) : (
+                    <span style={{ color: t.textSub }}>-</span>
+                  )}
+                </td>
               </tr>
             ))}
             {filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={5} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
+                <td colSpan={6} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
                   표시할 학생 신청 데이터가 없습니다.
                 </td>
               </tr>
