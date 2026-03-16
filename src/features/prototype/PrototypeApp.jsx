@@ -2688,7 +2688,7 @@ function RequestCardApplicationsDialog({
           <div>
             <div style={{ fontSize: 18, fontWeight: 800 }}>{card?.title || "신청 카드"} 신청 현황</div>
             <div style={{ fontSize: 12, color: t.textSub }}>
-              {requestCardTargetLabel(card?.targetRole)} · 모집 {card?.capacity || 0}명 · 신청 {card?.applicantCount || 0}명
+              {requestCardTargetLabel(card?.targetRole)} · 모집인원 {card?.capacity || 0}명 · 현재 신청인원 {card?.applicantCount || 0}명
             </div>
           </div>
           <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>닫기</button>
@@ -2833,7 +2833,7 @@ function RequestCardAdminPanel({
                 style={inputBase}
               />
             </Field>
-            <Field label="신청 종료 일시">
+            <Field label="신청 마감 일시">
               <input
                 type="datetime-local"
                 value={form.endAt}
@@ -2865,10 +2865,10 @@ function RequestCardAdminPanel({
       </div>
 
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1120 }}>
           <thead>
             <tr>
-              {["제목", "대상", "상태", "신청기간", "모집", "신청", "선정", "작업"].map((head) => (
+              {["제목", "대상", "상태", "신청 시작", "신청 마감", "모집인원", "현재 신청", "선정인원", "작업"].map((head) => (
                 <th
                   key={head}
                   style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
@@ -2893,12 +2893,15 @@ function RequestCardAdminPanel({
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13, fontWeight: 700 }}>{card.title}</td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{requestCardTargetLabel(card.targetRole)}</td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}>
-                    <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, color: phaseMeta.color }}>
+                    <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, border: `1px solid ${phaseMeta.border}`, color: phaseMeta.color }}>
                       {phaseMeta.label}
                     </span>
                   </td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, color: t.textSub }}>
-                    {formatTime(card.startAt)} ~ {formatTime(card.endAt)}
+                    {formatTime(card.startAt)}
+                  </td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, color: t.textSub }}>
+                    {formatTime(card.endAt)}
                   </td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{card.capacity}명</td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{card.applicantCount || 0}명</td>
@@ -2963,7 +2966,7 @@ function RequestCardAdminPanel({
             })}
             {cards.length === 0 ? (
               <tr>
-                <td colSpan={8} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
+                <td colSpan={9} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
                   아직 생성된 신청 카드가 없습니다.
                 </td>
               </tr>
@@ -3001,7 +3004,7 @@ function RequestCardUserSection({
         if (leftRank !== rightRank) return leftRank - rightRank;
         return String(a.title || a.id).localeCompare(String(b.title || b.id), "ko");
       });
-  }, [cards, user?.role]);
+  }, [cards, user]);
 
   return (
     <section style={cardStyle}>
@@ -3034,13 +3037,78 @@ function RequestCardUserSection({
               const statusText = getRequestCardStatusText(card, state, myApplication);
               const canApply = !myApplication && state.phase === "open";
               const canCancel = myApplication?.status === "applied" && state.phase === "open";
+              const startAt = state?.startAt || card?.startAt || null;
+              const endAt = state?.endAt || card?.endAt || null;
+              const capacity = Math.max(0, Number(card?.capacity || 0));
+              const applicantCount = Math.max(0, Number(card?.applicantCount || 0));
+              const fillRatioRaw = capacity > 0 ? applicantCount / capacity : 0;
+              const fillBarWidth = capacity > 0 ? `${Math.min(fillRatioRaw * 100, 100)}%` : "0%";
+              const fillPercent = capacity > 0 ? Math.round(fillRatioRaw * 100) : 0;
+              const isOverCapacity = capacity > 0 && applicantCount > capacity;
+              const applicantTone = isOverCapacity
+                ? { bg: "#fff1f1", border: "#f3c7c7", color: t.danger }
+                : fillRatioRaw >= 1
+                  ? { bg: "#fff8e1", border: "#f3dfb9", color: t.warn }
+                  : { bg: "#edf4ff", border: "#c8dcff", color: t.accent };
+              const applicantDetail = capacity <= 0
+                ? "모집 인원을 확인해 주세요."
+                : isOverCapacity
+                  ? `정원보다 ${applicantCount - capacity}명 많습니다.`
+                  : applicantCount === 0
+                    ? "아직 신청자가 없습니다."
+                    : `충원율 ${fillPercent}%`;
+              const statusNote = statusText.note && !/^신청 (시작|마감):/.test(statusText.note)
+                ? statusText.note
+                : null;
+              const summaryItems = [
+                {
+                  key: "startAt",
+                  label: "신청 시작",
+                  value: formatTime(startAt),
+                  detail: startAt ? "접수가 열리는 시각입니다." : "아직 신청 일정이 없습니다.",
+                  bg: "#f8fafc",
+                  border: t.border,
+                  color: t.text,
+                  accent: t.textSub,
+                },
+                {
+                  key: "endAt",
+                  label: "신청 마감",
+                  value: formatTime(endAt),
+                  detail: endAt ? "이 시각 이후에는 신청이 잠깁니다." : "아직 마감 시각이 없습니다.",
+                  bg: "#fff8e1",
+                  border: "#f3dfb9",
+                  color: t.warn,
+                  accent: t.warn,
+                },
+                {
+                  key: "capacity",
+                  label: "모집인원",
+                  value: `${capacity}명`,
+                  detail: "선정 예정 인원입니다.",
+                  bg: "#eef7ee",
+                  border: "#cbe6cd",
+                  color: t.ok,
+                  accent: t.ok,
+                },
+                {
+                  key: "applicantCount",
+                  label: "현재 신청인원",
+                  value: `${applicantCount}명`,
+                  detail: applicantDetail,
+                  bg: applicantTone.bg,
+                  border: applicantTone.border,
+                  color: applicantTone.color,
+                  accent: applicantTone.color,
+                },
+              ];
               return (
-                <div key={card.id} style={{ ...cardStyle, background: "#fafbfd" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8, flexWrap: "wrap" }}>
+                <div key={card.id} style={{ ...cardStyle, background: "linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)", border: "1px solid #d9e4f5" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
                     <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
                         <div style={{ fontSize: 16, fontWeight: 800 }}>{card.title}</div>
-                        <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, color: phaseMeta.color }}>
+                        <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, border: `1px solid ${phaseMeta.border}`, color: phaseMeta.color }}>
                           {phaseMeta.label}
                         </span>
                         {myApplication ? (
@@ -3050,22 +3118,81 @@ function RequestCardUserSection({
                         ) : null}
                       </div>
                       <div style={{ fontSize: 12, color: t.textSub }}>
-                        {statusText.description}
+                        동아리 외 추가 신청 항목의 일정과 신청 현황을 한눈에 볼 수 있습니다.
                       </div>
-                      {statusText.note ? (
-                        <div style={{ fontSize: 11, color: t.textSub, marginTop: 4 }}>
-                          {statusText.note}
-                        </div>
-                      ) : null}
                     </div>
-                    <div style={{ fontSize: 12, color: t.textSub, textAlign: "right" }}>
-                      모집 {card.capacity}명 · 신청 {card.applicantCount || 0}명
+                    <div style={{ display: "grid", gap: 4, minWidth: 132 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: t.textSub, textAlign: "right" }}>현재 신청 현황</div>
+                      <div style={{ fontSize: 24, fontWeight: 800, color: applicantTone.color, textAlign: "right", lineHeight: 1 }}>
+                        {applicantCount}
+                        <span style={{ fontSize: 13, marginLeft: 4 }}>명</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: t.textSub, textAlign: "right" }}>
+                        모집 {capacity}명 기준
+                      </div>
                     </div>
                   </div>
 
-                  <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6, marginBottom: 10 }}>
-                    {card.description}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(165px, 1fr))", gap: 10, marginBottom: 12 }}>
+                    {summaryItems.map((item) => (
+                      <div
+                        key={item.key}
+                        style={{
+                          borderRadius: 14,
+                          border: `1px solid ${item.border}`,
+                          background: item.bg,
+                          padding: "12px 13px",
+                          minHeight: 94,
+                          display: "grid",
+                          alignContent: "start",
+                          gap: 6,
+                        }}
+                      >
+                        <div style={{ fontSize: 11, fontWeight: 700, color: t.textSub, letterSpacing: "0.02em" }}>{item.label}</div>
+                        <div style={{ fontSize: item.key === "startAt" || item.key === "endAt" ? 14 : 24, fontWeight: 800, color: item.color, lineHeight: 1.35 }}>
+                          {item.value}
+                        </div>
+                        <div style={{ fontSize: 12, color: item.key === "applicantCount" ? item.accent : t.textSub, lineHeight: 1.5 }}>
+                          {item.detail}
+                        </div>
+                        {item.key === "applicantCount" && capacity > 0 ? (
+                          <div style={{ marginTop: 2 }}>
+                            <div style={{ height: 6, borderRadius: 999, background: "#e7edf6", overflow: "hidden" }}>
+                              <div style={{ width: fillBarWidth, height: "100%", borderRadius: 999, background: item.accent }} />
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
                   </div>
+
+                  <div
+                    style={{
+                      borderRadius: 14,
+                      border: `1px solid ${phaseMeta.border}`,
+                      background: phaseMeta.bg,
+                      padding: "12px 14px",
+                      marginBottom: 12,
+                    }}
+                  >
+                    <div style={{ fontSize: 11, fontWeight: 700, color: phaseMeta.color, marginBottom: 4 }}>
+                      {statusText.label}
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: t.text, lineHeight: 1.5 }}>
+                      {statusText.description}
+                    </div>
+                    {statusNote ? (
+                      <div style={{ fontSize: 12, color: t.textSub, marginTop: 4, lineHeight: 1.5 }}>
+                        {statusNote}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {card.description ? (
+                    <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6, marginBottom: 10 }}>
+                      {card.description}
+                    </div>
+                  ) : null}
 
                   {(canApply || canCancel) ? (
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -4205,7 +4332,7 @@ export default function PrototypeApp() {
   async function handleDrawRequestCard(card) {
     const confirmMessage = [
       `'${card.title}' 카드를 랜덤 추첨할까요?`,
-      `모집 ${card.capacity}명 / 현재 신청 ${card.applicantCount || 0}명`,
+      `모집인원 ${card.capacity}명 / 현재 신청인원 ${card.applicantCount || 0}명`,
     ].join("\n");
     if (!window.confirm(confirmMessage)) return;
 
