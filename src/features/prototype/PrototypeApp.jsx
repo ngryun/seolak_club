@@ -3063,7 +3063,7 @@ function RequestCardUserSection({
         const statusText = getRequestCardStatusText(card, state, myApplication);
         const canApply = !myApplication && state.phase === "open";
         const canCancel = myApplication?.status === "applied" && state.phase === "open";
-        const useCompactAppliedStatus = myApplication?.status === "applied" && state.phase === "open";
+        const useCompactActionStatus = state.phase === "open" && (canApply || canCancel);
         const startAt = state?.startAt || card?.startAt || null;
         const endAt = state?.endAt || card?.endAt || null;
         const capacity = Math.max(0, Number(card?.capacity || 0));
@@ -3190,7 +3190,7 @@ function RequestCardUserSection({
               ))}
             </div>
 
-            {!useCompactAppliedStatus ? (
+            {!useCompactActionStatus ? (
               <div
                 style={{
                   borderRadius: 14,
@@ -3240,7 +3240,7 @@ function RequestCardUserSection({
                     신청 취소
                   </button>
                 ) : null}
-                {useCompactAppliedStatus ? (
+                {useCompactActionStatus ? (
                   <div style={{ fontSize: 13, fontWeight: 700, color: t.accent }}>
                     {statusText.description}
                   </div>
