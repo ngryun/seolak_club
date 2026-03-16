@@ -2646,24 +2646,74 @@ function StudentApplyPanel({
   );
 }
 
+function StudentMyStatusChip({ status, rejectReason }) {
+  if (status === "approved") return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 700, background: "#e8f5e9", color: t.ok }}>선정</span>;
+  if (status === "rejected") {
+    const reason = rejectReason === "random_unselected" ? "추첨 미선정"
+      : rejectReason === "higher_choice_assigned" ? "다른 지망 배정"
+      : rejectReason === "final_round_closed" ? "최종 미배정"
+      : rejectReason === "approval_revoked" ? "승인 취소"
+      : "미선정";
+    return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 700, background: "#ffebee", color: t.danger }}>{reason}</span>;
+  }
+  if (status === "pending") return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 700, background: "#fff8e1", color: t.warn }}>심사중</span>;
+  if (status === "waiting_round") return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 700, background: "#f3f4f6", color: t.textSub }}>대기</span>;
+  if (status === "cancelled") return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 700, background: "#eceff1", color: "#4b5563" }}>취소</span>;
+  return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 700, background: "#f3f4f6", color: t.textSub }}>-</span>;
+}
+
+function AssignSourceChip({ source }) {
+  const label = source === "random" ? "추첨 선발"
+    : source === "approval" ? "승인"
+    : source === "manual_assign" ? "수동 배정"
+    : source === "interview_manual" ? "면접 선발"
+    : source === "leader_auto" ? "동아리장 자동"
+    : source || "";
+  if (!label) return null;
+  return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 600, background: "#e3f2fd", color: "#1565c0", marginLeft: 6 }}>{label}</span>;
+}
+
 function StudentMyPanel({ apps }) {
   const sharedCareerGoal = apps[0]?.careerGoal || "-";
+  const approvedApp = apps.find((row) => row.status === "approved");
+
   return (
     <section style={cardStyle}>
       <h2 style={{ fontSize: 17, marginBottom: 12 }}>내 신청 현황</h2>
 
       {apps.length > 0 ? (
-        <div style={{ fontSize: 13, marginBottom: 12, padding: "8px 10px", background: "#f5f7fa", borderRadius: 6 }}>
-          <span style={{ color: t.textSub }}>진로희망: </span>
-          <span style={{ fontWeight: 600 }}>{sharedCareerGoal}</span>
+        <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+          <div style={{ fontSize: 13, padding: "8px 10px", background: "#f5f7fa", borderRadius: 6 }}>
+            <span style={{ color: t.textSub }}>진로희망: </span>
+            <span style={{ fontWeight: 600 }}>{sharedCareerGoal}</span>
+          </div>
+
+          <div style={{
+            padding: "10px 14px",
+            borderRadius: 8,
+            background: approvedApp ? "#e8f5e9" : "#fff8e1",
+            border: `1px solid ${approvedApp ? "#a5d6a7" : "#ffe082"}`,
+          }}>
+            <div style={{ fontSize: 12, color: t.textSub, marginBottom: 4 }}>배정 동아리</div>
+            {approvedApp ? (
+              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: t.ok }}>
+                  {approvedApp.club?.clubName || approvedApp.clubId}
+                </span>
+                <AssignSourceChip source={approvedApp.selectionSource} />
+              </div>
+            ) : (
+              <span style={{ fontSize: 14, fontWeight: 600, color: t.warn }}>아직 배정되지 않았습니다.</span>
+            )}
+          </div>
         </div>
       ) : null}
 
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
           <thead>
             <tr>
-              {["지망", "동아리", "상태", "결정/사유", "신청사유", "활동계획", "수정일"].map((head) => (
+              {["지망", "동아리", "결과", "신청사유", "활동계획"].map((head) => (
                 <th key={head} style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}>
                   {head}
                 </th>
@@ -2672,19 +2722,21 @@ function StudentMyPanel({ apps }) {
           </thead>
           <tbody>
             {apps.map((row) => (
-              <tr key={row.id}>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.preferenceRank}지망</td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.club?.clubName || row.clubId}</td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}><StatusBadge status={row.status} /></td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: t.textSub }}>{decisionLabel(row)}</td>
+              <tr key={row.id} style={{ background: row.status === "approved" ? "#f1f8f2" : undefined }}>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13, fontWeight: 600 }}>{row.preferenceRank}지망</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>
+                  {row.club?.clubName || row.clubId}
+                </td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                  <StudentMyStatusChip status={row.status} rejectReason={row.rejectReason} />
+                </td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.applyReason || "-"}</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.wantedActivity || "-"}</td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: t.textSub }}>{formatTime(row.updatedAt || row.createdAt)}</td>
               </tr>
             ))}
             {apps.length === 0 ? (
               <tr>
-                <td colSpan={7} style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
+                <td colSpan={5} style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
                   신청 내역이 없습니다.
                 </td>
               </tr>
