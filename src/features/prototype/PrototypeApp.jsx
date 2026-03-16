@@ -3143,9 +3143,6 @@ function RequestCardUserSection({
                     </span>
                   ) : null}
                 </div>
-                <div style={{ fontSize: 12, color: t.textSub }}>
-                  동아리 외 추가 신청 항목의 일정과 신청 현황을 한눈에 볼 수 있습니다.
-                </div>
               </div>
               <div style={{ display: "grid", gap: 4, minWidth: 132 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: t.textSub, textAlign: "right" }}>현재 신청 현황</div>
