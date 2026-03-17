@@ -2726,11 +2726,15 @@ function StudentApplyPanel({
             <Field label="진로희망">
               <input
                 value={careerGoal}
+                maxLength={100}
                 disabled={!canEdit}
                 onChange={(e) => setCareerGoal(e.target.value)}
                 style={inputBase}
                 placeholder="예: 방송기획자, 디자이너"
               />
+              <div style={{ fontSize: 11, color: careerGoal.length >= 100 ? t.danger : t.textSub, textAlign: "right", marginTop: 2 }}>
+                {careerGoal.length}/100
+              </div>
             </Field>
             <div style={{ fontSize: 11, color: t.textSub, marginTop: 4 }}>
               본인의 진로 희망을 한 번만 입력하면 모든 지망에 공통 적용됩니다.
@@ -2763,6 +2767,7 @@ function StudentApplyPanel({
                 <Field label="신청사유">
                   <textarea
                     value={rows[idx].applyReason}
+                    maxLength={100}
                     disabled={!canEdit}
                     onChange={(e) => {
                       const next = [...rows];
@@ -2771,11 +2776,15 @@ function StudentApplyPanel({
                     }}
                     style={{ ...inputBase, minHeight: 70, resize: "vertical" }}
                   />
+                  <div style={{ fontSize: 11, color: (rows[idx].applyReason || "").length >= 100 ? t.danger : t.textSub, textAlign: "right", marginTop: 2 }}>
+                    {(rows[idx].applyReason || "").length}/100
+                  </div>
                 </Field>
 
                 <Field label="원하는 활동">
                   <textarea
                     value={rows[idx].wantedActivity}
+                    maxLength={100}
                     disabled={!canEdit}
                     onChange={(e) => {
                       const next = [...rows];
@@ -2784,6 +2793,9 @@ function StudentApplyPanel({
                     }}
                     style={{ ...inputBase, minHeight: 70, resize: "vertical" }}
                   />
+                  <div style={{ fontSize: 11, color: (rows[idx].wantedActivity || "").length >= 100 ? t.danger : t.textSub, textAlign: "right", marginTop: 2 }}>
+                    {(rows[idx].wantedActivity || "").length}/100
+                  </div>
                 </Field>
               </div>
             </div>
@@ -5217,6 +5229,9 @@ export default function PrototypeApp({ studentOnly = false }) {
       if (!careerGoal) {
         throw new Error("진로희망을 입력해주세요.");
       }
+      if (careerGoal.length > 100) {
+        throw new Error("진로희망은 100자 이내로 입력해주세요.");
+      }
 
       const normalized = [];
 
@@ -5228,6 +5243,12 @@ export default function PrototypeApp({ studentOnly = false }) {
 
         if (!clubId || !applyReason || !wantedActivity) {
           throw new Error(`${idx + 1}지망의 동아리 선택, 신청사유, 원하는 활동을 모두 입력해주세요.`);
+        }
+        if (applyReason.length > 100) {
+          throw new Error(`${idx + 1}지망 신청사유는 100자 이내로 입력해주세요.`);
+        }
+        if (wantedActivity.length > 100) {
+          throw new Error(`${idx + 1}지망 원하는 활동은 100자 이내로 입력해주세요.`);
         }
 
         normalized.push({ clubId, careerGoal, applyReason, wantedActivity });
