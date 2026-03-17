@@ -3589,7 +3589,9 @@ function RequestCardUserSection({
             <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
               {isTeacherOrAdmin && subTab === "student"
                 ? "학생 대상 신청 카드를 조회합니다. 신청현황 보기로 누가 신청했는지 확인할 수 있습니다."
-                : "동아리 외에 관리자가 연 신청 항목을 여기서 신청하고 선정 결과를 확인할 수 있습니다."}
+                : isTeacherOrAdmin
+                  ? "각종 신청 항목을 여기서 신청하고 선정 결과를 확인할 수 있으며, 학생들은 이 탭을 볼 수 없습니다."
+                  : "각종 신청 항목을 여기서 신청하고 선정 결과를 확인할 수 있습니다."}
             </div>
           </div>
           <button
