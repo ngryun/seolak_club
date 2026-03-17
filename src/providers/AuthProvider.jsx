@@ -49,6 +49,7 @@ function buildSession(profile, fallback = {}) {
     phone: profile?.phone || fallback.phone || '',
     subject: profile?.subject || fallback.subject || '',
     studentNo: profile?.studentNo || fallback.studentNo || '',
+    passwordChangedAt: profile?.passwordChangedAt || fallback.passwordChangedAt || null,
   }
 }
 
