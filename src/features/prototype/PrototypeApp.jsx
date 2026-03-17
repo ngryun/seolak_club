@@ -537,7 +537,10 @@ function MessageBar({ message, onClose }) {
 }
 
 function LoginPanel({ onLogin, loading, error }) {
-  const [tab, setTab] = useState("teacher");
+  const [tab, setTab] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("tab") === "student" ? "student" : "teacher";
+  });
   const [loginId, setLoginId] = useState("");
   const [studentName, setStudentName] = useState("");
   const [password, setPassword] = useState("");
