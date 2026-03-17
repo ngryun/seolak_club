@@ -2334,10 +2334,18 @@ function StudentApplicationStatusPanel({
       </div>
 
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860, tableLayout: "fixed" }}>
+          <colgroup>
+            <col style={{ width: 100 }} />
+            <col style={{ width: 80 }} />
+            <col style={{ width: "22%" }} />
+            <col style={{ width: "22%" }} />
+            <col style={{ width: "22%" }} />
+            <col style={{ width: "22%" }} />
+          </colgroup>
           <thead>
             <tr>
-              {["학번", "이름", "1지망동아리", "2지망동아리", "3지망동아리"].map((head) => (
+              {["학번", "이름", "1지망동아리", "2지망동아리", "3지망동아리", "배정 동아리"].map((head) => (
                 <th
                   key={head}
                   style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
@@ -2357,15 +2365,18 @@ function StudentApplicationStatusPanel({
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13 }}>{row.studentNo || "-"}</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13, fontWeight: 700 }}>{row.studentName || "-"}</td>
                 {[0, 1, 2].map((index) => (
-                  <td key={index} style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13 }}>
+                  <td key={index} style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {row.preferences[index]?.clubName || "-"}
                   </td>
                 ))}
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13, fontWeight: 700, color: row.finalClubName ? t.accent : t.textSub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {row.finalClubName || "-"}
+                </td>
               </tr>
             ))}
             {filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={5} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
+                <td colSpan={6} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
                   표시할 학생 신청 데이터가 없습니다.
                 </td>
               </tr>
