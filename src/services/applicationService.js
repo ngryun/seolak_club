@@ -265,7 +265,9 @@ export function getSubmissionWindowState(cycle, nowValue = new Date()) {
     }
   }
 
-  if (finalizedAt) {
+  // finalizedAt이 현재 신청 기간의 시작일 이후에 발생한 경우에만 closed로 처리
+  // (이전 기간에서 남아있는 finalizedAt은 새 기간을 막지 않음)
+  if (finalizedAt && finalizedAt.getTime() >= startAt.getTime()) {
     return {
       configured: true,
       phase: 'closed',
@@ -813,12 +815,15 @@ export async function updateRecruitmentSubmissionWindow(payload) {
   const existingApps = (await getAllApplications()).filter((row) => row.cycleId === cycle.id)
   const existingDrafts = await listDraftsByCycle(cycle.id)
   const hasSelectionData = existingApps.some((row) => row.selectionSource !== LEADER_AUTO_SOURCE || row.status !== STATUS.APPROVED)
-    || (!!cycle.submissionFinalizedAt)
   if ((!startAt || !endAt) && (existingDrafts.length > 0 || hasSelectionData)) {
     throw new Error('이미 제출 또는 선발 데이터가 있어 신청 기간을 비울 수 없습니다.')
   }
 
-  const nextFinalizedAt = hasSelectionData ? (cycle.submissionFinalizedAt || nowIso()) : null
+  // 새 신청 기간의 시작일 이전의 finalizedAt은 이전 기간의 것이므로 유지하지 않음
+  const oldFinalizedAt = toDateValue(cycle?.submissionFinalizedAt)
+  const newStartAt = toDateValue(startAt)
+  const keepFinalized = oldFinalizedAt && newStartAt && oldFinalizedAt.getTime() >= newStartAt.getTime()
+  const nextFinalizedAt = keepFinalized ? cycle.submissionFinalizedAt : null
 
   if (!isFirebaseEnabled()) {
     localCycle = {
@@ -840,7 +845,7 @@ export async function updateRecruitmentSubmissionWindow(payload) {
       preAssignmentEndAt: cycle.preAssignmentEndAt || null,
       submissionStartAt: startAt,
       submissionEndAt: endAt,
-      submissionFinalizedAt: hasSelectionData ? (cycle.submissionFinalizedAt || serverTimestamp()) : null,
+      submissionFinalizedAt: keepFinalized ? cycle.submissionFinalizedAt : null,
       updatedAt: serverTimestamp(),
     },
     { merge: true },

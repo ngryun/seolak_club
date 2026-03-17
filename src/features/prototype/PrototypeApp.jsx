@@ -1047,13 +1047,13 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
         {isMobile ? (
           <div style={{ display: "grid", gap: 12 }}>
             <nav style={{ ...cardStyle, padding: 8 }}>
-              <div style={{ display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                 {nav.map((item, index) => {
                   if (item.type === "divider") {
                     return (
                       <div
                         key={`divider-${index}`}
-                        style={{ width: 1, minWidth: 1, alignSelf: "stretch", background: t.border, margin: "4px 2px" }}
+                        style={{ width: "100%", height: 1, background: t.border, margin: "2px 0" }}
                       />
                     );
                   }
@@ -1069,9 +1069,9 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
                         color: active ? "#fff" : t.text,
                         border: `1px solid ${active ? t.accent : t.border}`,
                         fontWeight: 700,
-                        minHeight: 44,
-                        padding: "10px 14px",
-                        fontSize: 13,
+                        minHeight: 36,
+                        padding: "6px 10px",
+                        fontSize: 12,
                       }}
                     >
                       {item.label}
