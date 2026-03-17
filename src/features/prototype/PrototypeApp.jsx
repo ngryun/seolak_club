@@ -2329,17 +2329,17 @@ function StudentApplicationStatusPanel({
   }, [rows, clubs]);
 
   const dashboardCards = [
-    { label: "전체 학생", value: stats.total, color: t.text, icon: "👥" },
-    { label: "신청 완료", value: stats.applied, color: t.accent, icon: "📋" },
-    { label: "미신청", value: stats.notApplied, color: stats.notApplied > 0 ? "#e67e22" : t.textSub, icon: "⏳" },
-    { label: "배정 완료", value: stats.assigned, color: t.ok || "#27ae60", icon: "✅" },
-    { label: "미배정", value: stats.unassigned, color: stats.unassigned > 0 ? t.danger || "#e74c3c" : t.textSub, icon: "❌" },
-    { label: "잔여석", value: `${stats.remaining}/${stats.totalCapacity}`, color: stats.remaining > 0 ? t.accent : t.textSub, icon: "💺" },
+    { label: "전체 학생", value: stats.total, accent: t.accent, bg: "#edf4ff", border: "#c8dcff" },
+    { label: "신청 완료", value: stats.applied, accent: t.accent, bg: "#edf4ff", border: "#c8dcff" },
+    { label: "미신청", value: stats.notApplied, accent: stats.notApplied > 0 ? t.warn : t.textSub, bg: stats.notApplied > 0 ? "#fff8e1" : "#f3f4f6", border: stats.notApplied > 0 ? "#f3dfb9" : "#d6dae3" },
+    { label: "배정 완료", value: stats.assigned, accent: t.ok, bg: "#eef7ee", border: "#cbe6cd" },
+    { label: "미배정", value: stats.unassigned, accent: stats.unassigned > 0 ? t.danger : t.textSub, bg: stats.unassigned > 0 ? "#fff1f1" : "#f3f4f6", border: stats.unassigned > 0 ? "#f3c7c7" : "#d6dae3" },
+    { label: "잔여석", value: stats.remaining, sub: `/ ${stats.totalCapacity}`, accent: t.accent, bg: "#edf4ff", border: "#c8dcff" },
   ];
 
   return (
     <section style={cardStyle}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
         <div>
           <h2 style={{ fontSize: 17 }}>학생 동아리 신청 현황</h2>
           <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
@@ -2364,48 +2364,64 @@ function StudentApplicationStatusPanel({
       </div>
 
       {/* 대시보드 */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 16 }}>
-        {dashboardCards.map((card) => (
-          <div
-            key={card.label}
-            style={{
-              background: t.bg || "#f8f9fa",
-              borderRadius: 10,
-              padding: "12px 14px",
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-              border: `1px solid ${t.border}`,
-            }}
-          >
-            <div style={{ fontSize: 11, color: t.textSub, fontWeight: 600 }}>
-              {card.icon} {card.label}
+      <div style={{ overflowX: "auto", marginBottom: 16 }}>
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(6, minmax(100px, 1fr))",
+          minWidth: 600,
+          border: `1px solid ${t.border}`,
+          borderRadius: t.radius,
+          overflow: "hidden",
+        }}>
+          {dashboardCards.map((card, i) => (
+            <div
+              key={card.label}
+              style={{
+                padding: "14px 10px",
+                borderRight: i < dashboardCards.length - 1 ? `1px solid ${t.border}` : "none",
+                background: card.bg,
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontSize: 11, color: t.textSub, fontWeight: 600, marginBottom: 6, letterSpacing: "0.02em" }}>
+                {card.label}
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: card.accent, letterSpacing: "-0.5px" }}>
+                {card.value}
+                {card.sub ? <span style={{ fontSize: 12, fontWeight: 500, color: t.textSub }}>{card.sub}</span> : null}
+              </div>
             </div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: card.color, letterSpacing: "-0.5px" }}>
-              {card.value}
-            </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
       {/* 배정률 프로그레스 바 */}
       {stats.total > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-            <span style={{ fontSize: 12, color: t.textSub, fontWeight: 600 }}>배정률</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: t.accent }}>{stats.assignRate}%</span>
-          </div>
-          <div style={{ height: 8, background: t.border || "#e9ecef", borderRadius: 4, overflow: "hidden" }}>
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 16,
+          padding: "10px 14px",
+          background: stats.assignRate === 100 ? "#eef7ee" : "#f8f9fc",
+          borderRadius: 8,
+          border: `1px solid ${stats.assignRate === 100 ? "#cbe6cd" : t.border}`,
+        }}>
+          <span style={{ fontSize: 12, color: t.textSub, fontWeight: 600, whiteSpace: "nowrap" }}>배정률</span>
+          <div style={{ flex: 1, height: 6, background: "#e4e8f0", borderRadius: 3, overflow: "hidden" }}>
             <div
               style={{
                 width: `${stats.assignRate}%`,
                 height: "100%",
-                background: stats.assignRate === 100 ? (t.ok || "#27ae60") : t.accent,
-                borderRadius: 4,
+                background: stats.assignRate === 100 ? t.ok : t.accent,
+                borderRadius: 3,
                 transition: "width 0.4s ease",
               }}
             />
           </div>
+          <span style={{ fontSize: 13, fontWeight: 700, color: stats.assignRate === 100 ? t.ok : t.accent, whiteSpace: "nowrap" }}>
+            {stats.assigned}<span style={{ fontWeight: 400, color: t.textSub }}>/{stats.total}</span> ({stats.assignRate}%)
+          </span>
         </div>
       )}
 
