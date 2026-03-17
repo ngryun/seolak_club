@@ -566,6 +566,8 @@ function LoginPanel({ onLogin, loading, error }) {
                   color: active ? "#fff" : t.text,
                   border: `1px solid ${active ? t.accent : t.border}`,
                   fontWeight: 700,
+                  minHeight: 44,
+                  fontSize: 14,
                 }}
               >
                 {mode === "teacher" ? "교사/관리자" : "학생"}
@@ -625,7 +627,9 @@ function LoginPanel({ onLogin, loading, error }) {
               background: loading ? "#c7d2e8" : t.accent,
               color: "#fff",
               fontWeight: 700,
-              padding: "10px 12px",
+              padding: "12px 16px",
+              minHeight: 44,
+              fontSize: 15,
             }}
           >
             {loading ? "로그인 중..." : "로그인"}
@@ -700,7 +704,9 @@ function StudentLoginPanel({ onLogin, loading, error }) {
               background: loading ? "#c7d2e8" : t.accent,
               color: "#fff",
               fontWeight: 700,
-              padding: "10px 12px",
+              padding: "12px 16px",
+              minHeight: 44,
+              fontSize: 15,
             }}
           >
             {loading ? "로그인 중..." : "로그인"}
@@ -1023,16 +1029,16 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
   return (
     <div style={page}>
       <div style={{ maxWidth: 1400, margin: "0 auto", padding: 16, display: "grid", gap: 12 }}>
-        <header style={{ ...cardStyle, padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <div>
-            <div style={{ fontSize: 22, fontWeight: 800 }}>강원 설악고등학교 신청 통합 시스템</div>
-            <div style={{ fontSize: 12, color: t.textSub }}>
+        <header style={{ ...cardStyle, padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: isMobile ? 17 : 22, fontWeight: 800, wordBreak: "keep-all", lineHeight: 1.3 }}>설악고 신청 통합 시스템</div>
+            <div style={{ fontSize: 12, color: t.textSub, marginTop: 2 }}>
               {roleLabel(user?.role)} · {user?.name || "-"} ({user?.loginId || "-"})
             </div>
           </div>
           <button
             onClick={onSignOut}
-            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
+            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700, whiteSpace: "nowrap", padding: "10px 14px" }}
           >
             로그아웃
           </button>
@@ -1041,7 +1047,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
         {isMobile ? (
           <div style={{ display: "grid", gap: 12 }}>
             <nav style={{ ...cardStyle, padding: 8 }}>
-              <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>
+              <div style={{ display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
                 {nav.map((item, index) => {
                   if (item.type === "divider") {
                     return (
@@ -1063,6 +1069,9 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
                         color: active ? "#fff" : t.text,
                         border: `1px solid ${active ? t.accent : t.border}`,
                         fontWeight: 700,
+                        minHeight: 44,
+                        padding: "10px 14px",
+                        fontSize: 13,
                       }}
                     >
                       {item.label}
@@ -1457,6 +1466,16 @@ function ClubTable({
   showRoundStatus = true,
   showActions = true,
 }) {
+  const [isMobileTable, setIsMobileTable] = useState(
+    () => (typeof window !== "undefined" ? window.innerWidth < 700 : false),
+  );
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onResize = () => setIsMobileTable(window.innerWidth < 700);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   const headers = ["동아리명", "담당교사", "동아리장", "대상학년", "동아리실"];
   if (showCapacity) headers.push("정원");
   headers.push("면접");
@@ -1480,126 +1499,250 @@ function ClubTable({
         동아리명을 클릭하면 동아리 상세 내용을 확인할 수 있습니다.
       </div>
 
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1060 }}>
-          <thead>
-            <tr>
-              {headers.map((head) => (
-                <th
-                  key={head}
-                  style={{
-                    textAlign: "left",
-                    borderBottom: `1px solid ${t.border}`,
-                    padding: "10px 8px",
-                    fontSize: 12,
-                    color: t.textSub,
-                  }}
-                >
-                  {head}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {clubs.map((club) => {
-              const editable = canEditClub(club, actor);
-              const manageable = canManageSelection(club, actor);
-              const stats = roundStats[club.id] || { pendingCurrent: 0, approved: 0, total: 0 };
-
-              return (
-                <tr key={club.id}>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13, fontWeight: 700 }}>
-                    <button
-                      onClick={() => onOpenDetail(club)}
-                      style={{
-                        background: "transparent",
-                        border: "none",
-                        padding: 0,
-                        margin: 0,
-                        fontSize: 13,
-                        fontWeight: 700,
-                        color: t.accent,
-                        cursor: "pointer",
-                        textDecoration: "underline",
-                        textUnderlineOffset: 2,
-                      }}
-                    >
-                      {club.clubName}
-                    </button>
-                    {club.legacy ? <span style={{ marginLeft: 6, fontSize: 11, color: t.danger }}>[구형데이터]</span> : null}
-                  </td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13, whiteSpace: "pre-line", lineHeight: 1.5 }}>
-                    {formatClubTeacherLabel(club, userMap)}
-                  </td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
-                    {formatClubLeaderLabel(club, userMap)}
-                  </td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
-                    {(club.targetGrades || []).map((g) => `${g}`).join(", ")}
-                  </td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>{club.room}</td>
-                  {showCapacity ? (
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
-                      {club.memberCount}/{club.maxMembers}
-                    </td>
+      {isMobileTable ? (
+        /* ── 모바일 카드 레이아웃 ── */
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {clubs.map((club) => {
+            const editable = canEditClub(club, actor);
+            const manageable = canManageSelection(club, actor);
+            const stats = roundStats[club.id] || { pendingCurrent: 0, approved: 0, total: 0 };
+            const mobileLabel = { fontSize: 11, color: t.textSub, minWidth: 56 };
+            const mobileVal = { fontSize: 13, flex: 1, wordBreak: "break-word" };
+            const mobileRow = { display: "flex", alignItems: "baseline", gap: 8, padding: "3px 0" };
+            return (
+              <div
+                key={club.id}
+                style={{
+                  border: `1px solid ${t.border}`,
+                  borderRadius: t.radius,
+                  padding: 12,
+                  background: t.surface,
+                }}
+              >
+                {/* 동아리명 */}
+                <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => onOpenDetail(club)}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      padding: 0,
+                      margin: 0,
+                      fontSize: 15,
+                      fontWeight: 700,
+                      color: t.accent,
+                      cursor: "pointer",
+                      textDecoration: "underline",
+                      textUnderlineOffset: 2,
+                      minHeight: 44,
+                      display: "flex",
+                      alignItems: "center",
+                    }}
+                  >
+                    {club.clubName}
+                  </button>
+                  {club.legacy ? <span style={{ fontSize: 11, color: t.danger }}>[구형데이터]</span> : null}
+                  {club.isInterviewSelection ? (
+                    <span style={{ fontSize: 11, color: t.warn, background: "#fff3e0", borderRadius: 6, padding: "2px 6px" }}>면접</span>
                   ) : null}
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
-                    {club.isInterviewSelection ? "O" : "X"}
-                  </td>
-                  {showRoundStatus ? (
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 12, color: t.textSub }}>
+                </div>
+                {/* 상세 정보 */}
+                <div style={mobileRow}>
+                  <span style={mobileLabel}>담당교사</span>
+                  <span style={{ ...mobileVal, whiteSpace: "pre-line", lineHeight: 1.5 }}>{formatClubTeacherLabel(club, userMap)}</span>
+                </div>
+                <div style={mobileRow}>
+                  <span style={mobileLabel}>동아리장</span>
+                  <span style={mobileVal}>{formatClubLeaderLabel(club, userMap)}</span>
+                </div>
+                <div style={mobileRow}>
+                  <span style={mobileLabel}>대상학년</span>
+                  <span style={mobileVal}>{(club.targetGrades || []).join(", ")}학년</span>
+                </div>
+                <div style={mobileRow}>
+                  <span style={mobileLabel}>동아리실</span>
+                  <span style={mobileVal}>{club.room || "-"}</span>
+                </div>
+                {showCapacity ? (
+                  <div style={mobileRow}>
+                    <span style={mobileLabel}>정원</span>
+                    <span style={mobileVal}>{club.memberCount}/{club.maxMembers}</span>
+                  </div>
+                ) : null}
+                {showRoundStatus ? (
+                  <div style={mobileRow}>
+                    <span style={mobileLabel}>라운드</span>
+                    <span style={{ ...mobileVal, fontSize: 12, color: t.textSub }}>
                       {cycle?.status === "closed"
                         ? "종료"
                         : `${cycle?.currentRound || 1}R 대기 ${stats.pendingCurrent}명 / 승인 ${stats.approved}명`}
+                    </span>
+                  </div>
+                ) : null}
+                {/* 액션 버튼 */}
+                {showActions ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${t.border}` }}>
+                    {editable ? (
+                      <button
+                        onClick={() => onEdit(club)}
+                        style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, padding: "8px 12px", minHeight: 44 }}
+                      >
+                        수정
+                      </button>
+                    ) : null}
+                    {manageable && !club.isInterviewSelection ? (
+                      <button
+                        onClick={() => onOpenApplicants(club)}
+                        style={{ ...buttonBase, background: "#edf4ff", color: t.accent, padding: "8px 12px", fontWeight: 700, minHeight: 44 }}
+                      >
+                        신청관리
+                      </button>
+                    ) : null}
+                    {manageable && club.isInterviewSelection ? (
+                      <button
+                        onClick={() => onOpenInterviewSelect(club)}
+                        style={{ ...buttonBase, background: "#fff3e0", color: t.warn, padding: "8px 12px", fontWeight: 700, minHeight: 44 }}
+                      >
+                        직접선발
+                      </button>
+                    ) : null}
+                    {(actor?.role === "admin" || actor?.loginId === "admin") ? (
+                      <button
+                        onClick={() => onDelete(club)}
+                        style={{ ...buttonBase, background: "#ffebee", color: t.danger, padding: "8px 12px", fontWeight: 700, minHeight: 44 }}
+                      >
+                        삭제
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        /* ── 데스크톱 테이블 레이아웃 ── */
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
+            <thead>
+              <tr>
+                {headers.map((head) => (
+                  <th
+                    key={head}
+                    style={{
+                      textAlign: "left",
+                      borderBottom: `1px solid ${t.border}`,
+                      padding: "10px 8px",
+                      fontSize: 12,
+                      color: t.textSub,
+                    }}
+                  >
+                    {head}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {clubs.map((club) => {
+                const editable = canEditClub(club, actor);
+                const manageable = canManageSelection(club, actor);
+                const stats = roundStats[club.id] || { pendingCurrent: 0, approved: 0, total: 0 };
+
+                return (
+                  <tr key={club.id}>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13, fontWeight: 700 }}>
+                      <button
+                        onClick={() => onOpenDetail(club)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          padding: 0,
+                          margin: 0,
+                          fontSize: 13,
+                          fontWeight: 700,
+                          color: t.accent,
+                          cursor: "pointer",
+                          textDecoration: "underline",
+                          textUnderlineOffset: 2,
+                        }}
+                      >
+                        {club.clubName}
+                      </button>
+                      {club.legacy ? <span style={{ marginLeft: 6, fontSize: 11, color: t.danger }}>[구형데이터]</span> : null}
                     </td>
-                  ) : null}
-                  {showActions ? (
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px" }}>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {editable ? (
-                          <button
-                            onClick={() => onEdit(club)}
-                            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, padding: "6px 9px" }}
-                          >
-                            수정
-                          </button>
-                        ) : null}
-
-                        {manageable && !club.isInterviewSelection ? (
-                          <button
-                            onClick={() => onOpenApplicants(club)}
-                            style={{ ...buttonBase, background: "#edf4ff", color: t.accent, padding: "6px 9px", fontWeight: 700 }}
-                          >
-                            신청관리
-                          </button>
-                        ) : null}
-
-                        {manageable && club.isInterviewSelection ? (
-                          <button
-                            onClick={() => onOpenInterviewSelect(club)}
-                            style={{ ...buttonBase, background: "#fff3e0", color: t.warn, padding: "6px 9px", fontWeight: 700 }}
-                          >
-                            직접선발
-                          </button>
-                        ) : null}
-
-                        {(actor?.role === "admin" || actor?.loginId === "admin") ? (
-                          <button
-                            onClick={() => onDelete(club)}
-                            style={{ ...buttonBase, background: "#ffebee", color: t.danger, padding: "6px 9px", fontWeight: 700 }}
-                          >
-                            삭제
-                          </button>
-                        ) : null}
-                      </div>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13, whiteSpace: "pre-line", lineHeight: 1.5 }}>
+                      {formatClubTeacherLabel(club, userMap)}
                     </td>
-                  ) : null}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
+                      {formatClubLeaderLabel(club, userMap)}
+                    </td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
+                      {(club.targetGrades || []).map((g) => `${g}`).join(", ")}
+                    </td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>{club.room}</td>
+                    {showCapacity ? (
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
+                        {club.memberCount}/{club.maxMembers}
+                      </td>
+                    ) : null}
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13 }}>
+                      {club.isInterviewSelection ? "O" : "X"}
+                    </td>
+                    {showRoundStatus ? (
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 12, color: t.textSub }}>
+                        {cycle?.status === "closed"
+                          ? "종료"
+                          : `${cycle?.currentRound || 1}R 대기 ${stats.pendingCurrent}명 / 승인 ${stats.approved}명`}
+                      </td>
+                    ) : null}
+                    {showActions ? (
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px" }}>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {editable ? (
+                            <button
+                              onClick={() => onEdit(club)}
+                              style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, padding: "6px 9px" }}
+                            >
+                              수정
+                            </button>
+                          ) : null}
+
+                          {manageable && !club.isInterviewSelection ? (
+                            <button
+                              onClick={() => onOpenApplicants(club)}
+                              style={{ ...buttonBase, background: "#edf4ff", color: t.accent, padding: "6px 9px", fontWeight: 700 }}
+                            >
+                              신청관리
+                            </button>
+                          ) : null}
+
+                          {manageable && club.isInterviewSelection ? (
+                            <button
+                              onClick={() => onOpenInterviewSelect(club)}
+                              style={{ ...buttonBase, background: "#fff3e0", color: t.warn, padding: "6px 9px", fontWeight: 700 }}
+                            >
+                              직접선발
+                            </button>
+                          ) : null}
+
+                          {(actor?.role === "admin" || actor?.loginId === "admin") ? (
+                            <button
+                              onClick={() => onDelete(club)}
+                              style={{ ...buttonBase, background: "#ffebee", color: t.danger, padding: "6px 9px", fontWeight: 700 }}
+                            >
+                              삭제
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    ) : null}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }
@@ -1613,11 +1756,11 @@ function ClubFormDialog({
   if (!open) return null;
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
-      <div style={{ maxWidth: 900, margin: "20px auto" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 12, overflowY: "auto" }}>
+      <div style={{ maxWidth: 900, margin: "10px auto" }}>
         <div style={{ ...cardStyle, marginBottom: 10, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-          <div style={{ fontSize: 15, fontWeight: 800 }}>{title}</div>
-          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}>
+          <div style={{ fontSize: 15, fontWeight: 800, minWidth: 0, wordBreak: "keep-all" }}>{title}</div>
+          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, minHeight: 44, padding: "10px 14px", whiteSpace: "nowrap" }}>
             닫기
           </button>
         </div>
@@ -1636,11 +1779,11 @@ function ClubDetailDialog({
   if (!open || !club) return null;
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
-      <div style={{ maxWidth: 900, margin: "20px auto", ...cardStyle }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 12, overflowY: "auto" }}>
+      <div style={{ maxWidth: 900, margin: "10px auto", ...cardStyle }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
-          <div style={{ fontSize: 18, fontWeight: 800 }}>{club.clubName}</div>
-          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>
+          <div style={{ fontSize: 18, fontWeight: 800, minWidth: 0, wordBreak: "keep-all" }}>{club.clubName}</div>
+          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, minHeight: 44, padding: "10px 14px", whiteSpace: "nowrap" }}>
             닫기
           </button>
         </div>
@@ -1727,8 +1870,8 @@ function ApplicantsDialog({
   const randomDisabled = loading || pendingCurrent === 0 || randomLocked || cycle?.status === "closed" || !selectionReady;
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
-      <div style={{ maxWidth: 1180, margin: "20px auto", ...cardStyle }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 12, overflowY: "auto" }}>
+      <div style={{ maxWidth: 1180, margin: "10px auto", ...cardStyle }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 800 }}>{club?.clubName} 신청 관리</div>
@@ -1950,8 +2093,8 @@ function InterviewSelectDialog({
   const revokeEnabled = canSelect && !cycleClosed;
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
-      <div style={{ maxWidth: 1180, margin: "20px auto", ...cardStyle }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 12, overflowY: "auto" }}>
+      <div style={{ maxWidth: 1180, margin: "10px auto", ...cardStyle }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 800 }}>{club?.clubName} 직접 선발</div>
@@ -2568,8 +2711,8 @@ function StudentApplicationDetailDialog({
     || !String(forceReason || "").trim();
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
-      <div style={{ maxWidth: 1080, margin: "20px auto", ...cardStyle }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 12, overflowY: "auto" }}>
+      <div style={{ maxWidth: 1080, margin: "10px auto", ...cardStyle }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 800 }}>{row.studentNo} / {row.studentName}</div>
@@ -2852,6 +2995,9 @@ function StudentApplyPanel({
                   background: submitting || available.length === 0 ? "#cfd8e3" : t.accent,
                   color: "#fff",
                   fontWeight: 700,
+                  minHeight: 44,
+                  padding: "10px 18px",
+                  fontSize: 14,
                 }}
               >
                 {submitting ? (hasDraft ? "저장 중..." : "제출 중...") : hasDraft ? "수정 저장" : "제출"}
@@ -2866,6 +3012,9 @@ function StudentApplyPanel({
                     border: `1px solid ${t.border}`,
                     color: t.textSub,
                     fontWeight: 700,
+                    minHeight: 44,
+                    padding: "10px 18px",
+                    fontSize: 14,
                   }}
                 >
                   제출 취소
@@ -2954,41 +3103,43 @@ function StudentMyPanel({ apps }) {
         </div>
       ) : null}
 
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
-          <thead>
-            <tr>
-              {["지망", "동아리", "결과", "신청사유", "활동계획"].map((head) => (
-                <th key={head} style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}>
-                  {head}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {apps.map((row) => (
-              <tr key={row.id} style={{ background: row.status === "approved" ? "#f1f8f2" : undefined }}>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13, fontWeight: 600 }}>{row.preferenceRank}지망</td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>
-                  {row.club?.clubName || row.clubId}
-                </td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
-                  <StudentMyStatusChip status={row.status} rejectReason={row.rejectReason} />
-                </td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.applyReason || "-"}</td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.wantedActivity || "-"}</td>
-              </tr>
-            ))}
-            {apps.length === 0 ? (
-              <tr>
-                <td colSpan={5} style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
-                  신청 내역이 없습니다.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
+      {apps.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
+          신청 내역이 없습니다.
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {apps.map((row) => (
+            <div
+              key={row.id}
+              style={{
+                padding: "12px 14px",
+                borderRadius: 10,
+                border: `1px solid ${row.status === "approved" ? "#a5d6a7" : t.border}`,
+                background: row.status === "approved" ? "#f1f8f2" : "#fafbfd",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 14, fontWeight: 700 }}>{row.preferenceRank}지망</span>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>{row.club?.clubName || row.clubId}</span>
+                </div>
+                <StudentMyStatusChip status={row.status} rejectReason={row.rejectReason} />
+              </div>
+              <div style={{ display: "grid", gap: 6 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: t.textSub, fontWeight: 600, marginBottom: 2 }}>신청사유</div>
+                  <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{row.applyReason || "-"}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: t.textSub, fontWeight: 600, marginBottom: 2 }}>활동계획</div>
+                  <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{row.wantedActivity || "-"}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -3005,8 +3156,8 @@ function RequestCardApplicationsDialog({
   const cardState = card ? getRequestCardState(card) : null;
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}>
-      <div style={{ maxWidth: 960, margin: "20px auto", ...cardStyle }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 12, overflowY: "auto" }}>
+      <div style={{ maxWidth: 960, margin: "10px auto", ...cardStyle }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 800 }}>{card?.title || "신청 카드"} 신청 현황</div>
@@ -3554,7 +3705,7 @@ function RequestCardUserSection({
                 <button
                   onClick={() => onApply(card.id)}
                   disabled={loading}
-                  style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700 }}
+                  style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700, minHeight: 44, padding: "10px 16px" }}
                 >
                   신청
                 </button>
@@ -3563,7 +3714,7 @@ function RequestCardUserSection({
                 <button
                   onClick={() => onCancel(card.id)}
                   disabled={loading}
-                  style={{ ...buttonBase, background: loading ? "#cfd8e3" : "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
+                  style={{ ...buttonBase, background: loading ? "#cfd8e3" : "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700, minHeight: 44, padding: "10px 16px" }}
                 >
                   신청 취소
                 </button>
@@ -3572,7 +3723,7 @@ function RequestCardUserSection({
                 <button
                   onClick={() => onViewApplicants(card)}
                   disabled={loading}
-                  style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.accent, fontWeight: 700 }}
+                  style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.accent, fontWeight: 700, minHeight: 44, padding: "10px 16px" }}
                 >
                   신청현황 보기
                 </button>
@@ -3617,7 +3768,7 @@ function RequestCardUserSection({
         </div>
 
         {subTabs.length > 1 ? (
-          <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
             {subTabs.map((st) => {
               const active = subTab === st.key;
               const count = (cards || []).filter((c) => c.targetRole === st.key).length;
@@ -3631,7 +3782,8 @@ function RequestCardUserSection({
                     color: active ? "#fff" : t.text,
                     border: `1px solid ${active ? t.accent : t.border}`,
                     fontWeight: 700,
-                    padding: "8px 16px",
+                    padding: "10px 16px",
+                    minHeight: 44,
                   }}
                 >
                   {st.label} <span style={{ marginLeft: 4, opacity: 0.75 }}>({count})</span>
