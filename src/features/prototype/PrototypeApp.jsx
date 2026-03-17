@@ -2297,39 +2297,69 @@ function StudentApplicationStatusPanel({
   onOpenDetail,
 }) {
   const [query, setQuery] = useState("");
+  const [classFilter, setClassFilter] = useState("");
+
+  const classOptions = useMemo(() => {
+    const set = new Set();
+    rows.forEach((row) => {
+      const no = String(row.studentNo || "");
+      if (no.length >= 3) {
+        const grade = no[0];
+        const cls = no.substring(1, 3).replace(/^0/, "");
+        set.add(`${grade}-${cls}`);
+      }
+    });
+    return [...set].sort((a, b) => {
+      const [ag, ac] = a.split("-").map(Number);
+      const [bg, bc] = b.split("-").map(Number);
+      return ag !== bg ? ag - bg : ac - bc;
+    });
+  }, [rows]);
 
   const filteredRows = useMemo(() => {
+    let result = rows;
+
+    if (classFilter) {
+      const [grade, cls] = classFilter.split("-");
+      const prefix = `${grade}${cls.padStart(2, "0")}`;
+      result = result.filter((row) => String(row.studentNo || "").startsWith(prefix));
+    }
+
     const keyword = String(query || "").trim().toLowerCase();
-    if (!keyword) return rows;
-    return rows.filter((row) => {
-      const values = [
-        row.studentNo,
-        row.studentName,
-        row.preferences[0]?.clubName,
-        row.preferences[1]?.clubName,
-        row.preferences[2]?.clubName,
-        row.finalClubName,
-      ];
-      return values.some((value) => String(value || "").toLowerCase().includes(keyword));
-    });
-  }, [rows, query]);
+    if (keyword) {
+      result = result.filter((row) => {
+        const values = [
+          row.studentNo,
+          row.studentName,
+          row.preferences[0]?.clubName,
+          row.preferences[1]?.clubName,
+          row.preferences[2]?.clubName,
+          row.finalClubName,
+        ];
+        return values.some((value) => String(value || "").toLowerCase().includes(keyword));
+      });
+    }
+
+    return result;
+  }, [rows, query, classFilter]);
 
   const stats = useMemo(() => {
-    const total = rows.length;
-    const applied = rows.filter((r) => r.preferences.some((p) => p.clubId)).length;
+    const base = classFilter ? filteredRows : rows;
+    const total = base.length;
+    const applied = base.filter((r) => r.preferences.some((p) => p.clubId)).length;
     const notApplied = total - applied;
-    const assigned = rows.filter((r) => r.finalClubName).length;
+    const assigned = base.filter((r) => r.finalClubName).length;
     const unassigned = applied - assigned;
     const clubList = Array.isArray(clubs) ? clubs : [];
     const totalCapacity = clubList.reduce((sum, c) => sum + (Number(c.maxMembers) || 0), 0);
     const totalMembers = clubList.reduce((sum, c) => sum + (Number(c.memberCount) || 0), 0);
     const remaining = totalCapacity - totalMembers;
     const assignRate = total > 0 ? Math.round((assigned / total) * 100) : 0;
-    return { total, applied, notApplied, assigned, unassigned, totalCapacity, totalMembers, remaining, assignRate };
-  }, [rows, clubs]);
+    return { total, applied, notApplied, assigned, unassigned, totalCapacity, totalMembers, remaining, assignRate, filtered: !!classFilter };
+  }, [rows, clubs, classFilter, filteredRows]);
 
   const dashboardCards = [
-    { label: "전체 학생", value: stats.total, accent: t.accent, bg: "#edf4ff", border: "#c8dcff" },
+    { label: stats.filtered ? "해당 학급" : "전체 학생", value: stats.total, accent: t.accent, bg: "#edf4ff", border: "#c8dcff" },
     { label: "신청 완료", value: stats.applied, accent: t.accent, bg: "#edf4ff", border: "#c8dcff" },
     { label: "미신청", value: stats.notApplied, accent: stats.notApplied > 0 ? t.warn : t.textSub, bg: stats.notApplied > 0 ? "#fff8e1" : "#f3f4f6", border: stats.notApplied > 0 ? "#f3dfb9" : "#d6dae3" },
     { label: "배정 완료", value: stats.assigned, accent: t.ok, bg: "#eef7ee", border: "#cbe6cd" },
@@ -2346,12 +2376,23 @@ function StudentApplicationStatusPanel({
             학생 행을 클릭하면 지원 사유와 배정 이력을 확인할 수 있습니다.
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <select
+            value={classFilter}
+            onChange={(e) => setClassFilter(e.target.value)}
+            style={{ ...inputBase, width: "auto", minWidth: 110, paddingRight: 28 }}
+          >
+            <option value="">전체 학급</option>
+            {classOptions.map((opt) => {
+              const [grade, cls] = opt.split("-");
+              return <option key={opt} value={opt}>{grade}학년 {cls}반</option>;
+            })}
+          </select>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="학번, 이름, 동아리 검색"
-            style={{ ...inputBase, width: 240 }}
+            style={{ ...inputBase, width: 200 }}
           />
           <button
             onClick={onRefresh}
