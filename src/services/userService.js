@@ -159,6 +159,7 @@ function normalizeUser(uid, data, { includeSecret = false } = {}) {
     subject: String(data.subject || '').trim(),
     studentNo: String(data.studentNo || '').trim(),
     role: normalizeRole(data.role),
+    passwordChangedAt: data.passwordChangedAt || null,
     createdAt: data.createdAt || null,
     updatedAt: data.updatedAt || null,
   }
@@ -803,11 +804,13 @@ export async function updateMyPassword(uid, currentPassword, nextPassword) {
     }
 
     const passwordHash = await hashPassword(account.loginId, next)
+    const nowIso = new Date().toISOString()
     localUsers.set(targetUid, {
       ...existing,
       password: next,
       passwordHash,
-      updatedAt: new Date().toISOString(),
+      passwordChangedAt: nowIso,
+      updatedAt: nowIso,
     })
     return { ok: true }
   }
@@ -831,6 +834,7 @@ export async function updateMyPassword(uid, currentPassword, nextPassword) {
   const passwordHash = await hashPassword(account.loginId, next)
   await updateDoc(ref, {
     passwordHash,
+    passwordChangedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   })
   return { ok: true }

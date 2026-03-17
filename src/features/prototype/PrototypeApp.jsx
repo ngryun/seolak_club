@@ -723,7 +723,131 @@ function StudentLoginPanel({ onLogin, loading, error }) {
           color: "#b71c1c",
           lineHeight: 1.6,
         }}>
-          ⚠️ <b>경고:</b> 본인의 계정으로만 로그인하세요. 타인의 아이디로 로그인하거나 대리 신청하는 행위는 <b>개인정보보호법</b> 및 <b>정보통신망법</b>에 따라 법적 책임을 물을 수 있으며, 해당 신청은 무효 처리됩니다.
+          ⚠️ <b>경고:</b> 본인의 계정으로만 로그인하세요. 타인의 동의없이 동아리를 신청하거나 변경하는 행위는 <b>개인정보보호법</b> 및 <b>정보통신망법</b>에 따라 법적 책임을 물을 수 있으며, 해당 신청은 무효 처리됩니다.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ForcePasswordChangeModal({ user, onComplete, onChangePassword, onSignOut, loading }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+
+  async function handleSubmit() {
+    setError("");
+    if (!current || !next || !confirm) {
+      setError("모든 항목을 입력해주세요.");
+      return;
+    }
+    if (next.length < 6) {
+      setError("새 비밀번호는 6자 이상이어야 합니다.");
+      return;
+    }
+    if (next !== confirm) {
+      setError("새 비밀번호 확인이 일치하지 않습니다.");
+      return;
+    }
+    const ok = await onChangePassword(current, next, confirm);
+    if (ok) {
+      onComplete();
+    } else {
+      setError("비밀번호 변경에 실패했습니다. 현재 비밀번호를 확인해주세요.");
+    }
+  }
+
+  return (
+    <div style={{ ...page, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ width: "min(440px, 100%)", ...cardStyle, padding: 24 }}>
+        <div style={{ textAlign: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🔐</div>
+          <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 4 }}>비밀번호 변경 필요</h2>
+          <p style={{ fontSize: 13, color: t.textSub, lineHeight: 1.5 }}>
+            보안을 위해 초기 비밀번호를 변경해야 합니다.<br />
+            새 비밀번호를 설정해주세요.
+          </p>
+        </div>
+
+        <div style={{ display: "grid", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 12, color: t.textSub, marginBottom: 4 }}>현재 비밀번호 (초기 비밀번호)</div>
+            <input
+              type="password"
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+              style={inputBase}
+              placeholder="현재 비밀번호"
+            />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: t.textSub, marginBottom: 4 }}>새 비밀번호 (6자 이상)</div>
+            <input
+              type="password"
+              value={next}
+              onChange={(e) => setNext(e.target.value)}
+              style={inputBase}
+              placeholder="새 비밀번호"
+            />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: t.textSub, marginBottom: 4 }}>새 비밀번호 확인</div>
+            <input
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              style={inputBase}
+              placeholder="새 비밀번호 확인"
+              onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+            />
+          </div>
+
+          {error ? <div style={{ fontSize: 12, color: t.danger }}>{error}</div> : null}
+
+          <button
+            onClick={handleSubmit}
+            disabled={loading}
+            style={{
+              ...buttonBase,
+              background: loading ? "#c7d2e8" : t.accent,
+              color: "#fff",
+              fontWeight: 700,
+              padding: "12px 16px",
+              minHeight: 44,
+              fontSize: 15,
+            }}
+          >
+            {loading ? "변경 중..." : "비밀번호 변경"}
+          </button>
+        </div>
+
+        <div style={{
+          marginTop: 14,
+          padding: "8px 10px",
+          background: "#fff8e1",
+          border: "1px solid #f3dfb9",
+          borderRadius: 8,
+          fontSize: 11,
+          color: "#8d6e00",
+          lineHeight: 1.5,
+        }}>
+          💡 변경한 비밀번호는 꼭 기억해주세요. 분실 시 관리자에게 초기화를 요청해야 합니다.
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "center" }}>
+          <button
+            onClick={onComplete}
+            style={{ ...buttonBase, fontSize: 12, color: t.textSub, padding: "6px 12px" }}
+          >
+            나중에 변경
+          </button>
+          <button
+            onClick={onSignOut}
+            style={{ ...buttonBase, fontSize: 12, color: t.danger, padding: "6px 12px" }}
+          >
+            로그아웃
+          </button>
         </div>
       </div>
     </div>
@@ -4547,6 +4671,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   const [myPasswordLoading, setMyPasswordLoading] = useState(false);
   const [bulkResetLoading, setBulkResetLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
+  const [forcePasswordChange, setForcePasswordChange] = useState(false);
   const [message, setMessage] = useState({ type: "", text: "" });
 
   const [clubs, setClubs] = useState([]);
@@ -4829,6 +4954,12 @@ export default function PrototypeApp({ studentOnly = false }) {
     }, 3200);
     return () => window.clearTimeout(timeoutId);
   }, [message?.text, message?.type]);
+
+  useEffect(() => {
+    if (isAuthenticated && user?.role === "student" && !user?.passwordChangedAt) {
+      setForcePasswordChange(true);
+    }
+  }, [isAuthenticated, user?.role, user?.passwordChangedAt]);
 
   async function handleLogin({ loginId, password, tab: loginTab, studentName }) {
     setLoginLoading(true);
@@ -5960,6 +6091,18 @@ export default function PrototypeApp({ studentOnly = false }) {
     return studentOnly
       ? <StudentLoginPanel onLogin={handleLogin} loading={loginLoading} error={loginError} />
       : <LoginPanel onLogin={handleLogin} loading={loginLoading} error={loginError} />;
+  }
+
+  if (forcePasswordChange && user?.role === "student") {
+    return (
+      <ForcePasswordChangeModal
+        user={user}
+        onComplete={() => setForcePasswordChange(false)}
+        onChangePassword={handleChangeMyPassword}
+        onSignOut={handleSignOut}
+        loading={myPasswordLoading}
+      />
+    );
   }
 
   return (
