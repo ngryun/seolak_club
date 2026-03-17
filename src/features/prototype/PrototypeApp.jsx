@@ -640,6 +640,77 @@ function LoginPanel({ onLogin, loading, error }) {
   );
 }
 
+function StudentLoginPanel({ onLogin, loading, error }) {
+  const [loginId, setLoginId] = useState("");
+  const [studentName, setStudentName] = useState("");
+  const [password, setPassword] = useState("");
+
+  return (
+    <div style={{ ...page, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ width: "min(460px, 100%)", ...cardStyle, padding: 24 }}>
+        <h1 style={{ fontSize: 24, marginBottom: 6 }}>설악고 학생 로그인</h1>
+        <p style={{ fontSize: 13, color: t.textSub, marginBottom: 18 }}>
+          학번, 이름, 비밀번호를 입력하세요.
+        </p>
+
+        <div style={{ display: "grid", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 12, color: t.textSub, marginBottom: 4 }}>학번 (5자리 숫자)</div>
+            <input
+              value={loginId}
+              onChange={(e) => setLoginId(e.target.value)}
+              style={inputBase}
+              placeholder="예: 20912"
+            />
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, color: t.textSub, marginBottom: 4 }}>이름</div>
+            <input
+              value={studentName}
+              onChange={(e) => setStudentName(e.target.value)}
+              style={inputBase}
+              placeholder="예: 홍길동"
+            />
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, color: t.textSub, marginBottom: 4 }}>비밀번호</div>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={inputBase}
+              placeholder="비밀번호"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  onLogin({ loginId, password, tab: "student", studentName });
+                }
+              }}
+            />
+          </div>
+
+          {error ? <div style={{ fontSize: 12, color: t.danger }}>{error}</div> : null}
+
+          <button
+            onClick={() => onLogin({ loginId, password, tab: "student", studentName })}
+            disabled={loading}
+            style={{
+              ...buttonBase,
+              background: loading ? "#c7d2e8" : t.accent,
+              color: "#fff",
+              fontWeight: 700,
+              padding: "10px 12px",
+            }}
+          >
+            {loading ? "로그인 중..." : "로그인"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Field({ label, children, hint }) {
   return (
     <div style={{ display: "grid", gap: 4 }}>
@@ -4098,7 +4169,7 @@ function syncTabToUrl(tab) {
   window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
-export default function PrototypeApp() {
+export default function PrototypeApp({ studentOnly = false }) {
   const {
     user,
     isAuthenticated,
@@ -5515,7 +5586,9 @@ export default function PrototypeApp() {
   }
 
   if (!isAuthenticated || !user) {
-    return <LoginPanel onLogin={handleLogin} loading={loginLoading} error={loginError} />;
+    return studentOnly
+      ? <StudentLoginPanel onLogin={handleLogin} loading={loginLoading} error={loginError} />
+      : <LoginPanel onLogin={handleLogin} loading={loginLoading} error={loginError} />;
   }
 
   return (

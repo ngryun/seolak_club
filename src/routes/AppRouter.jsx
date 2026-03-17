@@ -17,5 +17,7 @@ export function AppRouter() {
     }
   }, [path])
 
-  return <PrototypeApp />
+  const studentOnly = path === '/student'
+
+  return <PrototypeApp studentOnly={studentOnly} />
 }
