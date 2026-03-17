@@ -992,6 +992,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
       { key: "studentStatus", label: "학생 신청 현황" },
       { type: "divider" },
       { key: "extraRequests", label: "기타신청현황" },
+      { key: "requestCards", label: "공통 신청카드 관리" },
       { type: "divider" },
       { key: "profile", label: "내 정보" },
     ],
@@ -3076,6 +3077,7 @@ function RequestCardAdminPanel({
   setForm,
   editingId,
   loading,
+  user,
   onRefresh,
   onSubmit,
   onStartEdit,
@@ -3085,6 +3087,8 @@ function RequestCardAdminPanel({
   onOpenApplications,
   onChangeStatus,
 }) {
+  const isAdmin = user?.role === "admin";
+  const canManageCard = (card) => isAdmin || card?.createdByUid === user?.uid;
   return (
     <section style={cardStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
@@ -3212,7 +3216,12 @@ function RequestCardAdminPanel({
                 : `${card.selectedCount || 0}명`;
               return (
                 <tr key={card.id}>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13, fontWeight: 700 }}>{card.title}</td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13, fontWeight: 700 }}>
+                    {card.title}
+                    {card.createdByUid === user?.uid ? (
+                      <span style={{ marginLeft: 6, fontSize: 11, color: t.accent, fontWeight: 600 }}>내 카드</span>
+                    ) : null}
+                  </td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{requestCardTargetLabel(card.targetRole)}</td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}>
                     <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, border: `1px solid ${phaseMeta.border}`, color: phaseMeta.color }}>
@@ -3237,50 +3246,54 @@ function RequestCardAdminPanel({
                       >
                         신청현황
                       </button>
-                      <button
-                        onClick={() => onDraw(card)}
-                        disabled={drawDisabled}
-                        style={{ ...buttonBase, padding: "5px 8px", background: drawDisabled ? "#cfd8e3" : "#fff3e0", color: drawDisabled ? "#6b7280" : t.warn, fontWeight: 700 }}
-                      >
-                        랜덤 추첨
-                      </button>
-                      <button
-                        onClick={() => onChangeStatus(card, "cancelled")}
-                        disabled={loading || resultLocked || state.phase === "cancelled"}
-                        style={{ ...buttonBase, padding: "5px 8px", background: (resultLocked || state.phase === "cancelled") ? "#cfd8e3" : "#f3f4f6", color: (resultLocked || state.phase === "cancelled") ? "#6b7280" : t.textSub, fontWeight: 700 }}
-                      >
-                        폐강
-                      </button>
-                      <button
-                        onClick={() => onChangeStatus(card, "selection_cancelled")}
-                        disabled={loading || state.phase === "selection_cancelled"}
-                        style={{ ...buttonBase, padding: "5px 8px", background: state.phase === "selection_cancelled" ? "#cfd8e3" : "#fff4e5", color: state.phase === "selection_cancelled" ? "#6b7280" : t.warn, fontWeight: 700 }}
-                      >
-                        선정취소
-                      </button>
-                      {canResetStatus ? (
-                        <button
-                          onClick={() => onChangeStatus(card, "normal")}
-                          disabled={loading}
-                          style={{ ...buttonBase, padding: "5px 8px", background: "#eef7ee", color: t.ok, fontWeight: 700 }}
-                        >
-                          상태 해제
-                        </button>
+                      {canManageCard(card) ? (
+                        <>
+                          <button
+                            onClick={() => onDraw(card)}
+                            disabled={drawDisabled}
+                            style={{ ...buttonBase, padding: "5px 8px", background: drawDisabled ? "#cfd8e3" : "#fff3e0", color: drawDisabled ? "#6b7280" : t.warn, fontWeight: 700 }}
+                          >
+                            랜덤 추첨
+                          </button>
+                          <button
+                            onClick={() => onChangeStatus(card, "cancelled")}
+                            disabled={loading || resultLocked || state.phase === "cancelled"}
+                            style={{ ...buttonBase, padding: "5px 8px", background: (resultLocked || state.phase === "cancelled") ? "#cfd8e3" : "#f3f4f6", color: (resultLocked || state.phase === "cancelled") ? "#6b7280" : t.textSub, fontWeight: 700 }}
+                          >
+                            폐강
+                          </button>
+                          <button
+                            onClick={() => onChangeStatus(card, "selection_cancelled")}
+                            disabled={loading || state.phase === "selection_cancelled"}
+                            style={{ ...buttonBase, padding: "5px 8px", background: state.phase === "selection_cancelled" ? "#cfd8e3" : "#fff4e5", color: state.phase === "selection_cancelled" ? "#6b7280" : t.warn, fontWeight: 700 }}
+                          >
+                            선정취소
+                          </button>
+                          {canResetStatus ? (
+                            <button
+                              onClick={() => onChangeStatus(card, "normal")}
+                              disabled={loading}
+                              style={{ ...buttonBase, padding: "5px 8px", background: "#eef7ee", color: t.ok, fontWeight: 700 }}
+                            >
+                              상태 해제
+                            </button>
+                          ) : null}
+                          <button
+                            onClick={() => onStartEdit(card)}
+                            disabled={loading}
+                            style={{ ...buttonBase, padding: "5px 8px", background: "#edf4ff", color: t.accent, fontWeight: 700 }}
+                          >
+                            수정
+                          </button>
+                          <button
+                            onClick={() => onDelete(card)}
+                            disabled={loading || resultLocked}
+                            style={{ ...buttonBase, padding: "5px 8px", background: "#ffebee", color: t.danger, fontWeight: 700 }}
+                          >
+                            삭제
+                          </button>
+                        </>
                       ) : null}
-                      <button
-                        onClick={() => onStartEdit(card)}
-                        disabled={loading}
-                        style={{ ...buttonBase, padding: "5px 8px", background: "#edf4ff", color: t.accent, fontWeight: 700 }}
-                      >
-                        수정
-                      </button>
-                      <button
-                        onClick={() => onDelete(card)}
-                        disabled={loading || resultLocked}
-                        style={{ ...buttonBase, padding: "5px 8px", background: "#ffebee", color: t.danger, fontWeight: 700 }}
-                      >
-                        삭제
-                      </button>
                     </div>
                   </td>
                 </tr>
@@ -4327,7 +4340,7 @@ function isTabAllowedForRole(tab, role, options = {}) {
 
   const allowedTabsByRole = {
     admin: new Set(["clubs", "studentStatus", "round", "users", "extraRequests", "requestCards", "backup", "profile"]),
-    teacher: new Set(["myClubs", "clubOverview", "studentStatus", "extraRequests", "profile"]),
+    teacher: new Set(["myClubs", "clubOverview", "studentStatus", "extraRequests", "requestCards", "profile"]),
     student: new Set(["apply", "my", "clubOverview", "clubs", "extraRequests", "profile"]),
   };
 
@@ -5706,7 +5719,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   useEffect(() => {
     if (!isAuthenticated || !user) return;
 
-    const needsAdminCards = tab === "requestCards" && user.role === "admin";
+    const needsAdminCards = tab === "requestCards" && (user.role === "admin" || user.role === "teacher");
     const needsUserCards = tab === "extraRequests";
     if (!needsAdminCards && !needsUserCards) return;
 
@@ -5835,13 +5848,14 @@ export default function PrototypeApp({ studentOnly = false }) {
         ) : null
       ) : null}
 
-      {tab === "requestCards" && user.role === "admin" ? (
+      {tab === "requestCards" && (user.role === "admin" || user.role === "teacher") ? (
         <RequestCardAdminPanel
           cards={requestCards}
           form={requestCardForm}
           setForm={setRequestCardForm}
           editingId={editingRequestCardId}
           loading={requestCardLoading}
+          user={user}
           onRefresh={async () => {
             try {
               await refreshRequestCards();

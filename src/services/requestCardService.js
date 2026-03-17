@@ -215,6 +215,21 @@ function ensureAdmin(actor) {
   return user
 }
 
+function ensureAdminOrTeacher(actor) {
+  const user = assertActor(actor)
+  if (user.role !== 'admin' && user.role !== 'teacher') {
+    throw new Error('교사 또는 관리자만 사용할 수 있습니다.')
+  }
+  return user
+}
+
+function ensureCardOwnerOrAdmin(actor, card) {
+  const user = ensureAdminOrTeacher(actor)
+  if (user.role === 'admin') return user
+  if (card?.createdByUid === user.uid) return user
+  throw new Error('본인이 만든 카드만 수정/삭제할 수 있습니다.')
+}
+
 function ensureEligibleApplicant(card, actor) {
   const user = assertActor(actor)
   if (user.role !== 'student' && user.role !== 'teacher' && user.role !== 'admin') {
@@ -352,7 +367,7 @@ export async function getRequestCardById(cardId) {
 }
 
 export async function createRequestCard(payload, options = {}) {
-  const actor = ensureAdmin(options?.actor)
+  const actor = ensureAdminOrTeacher(options?.actor)
   const data = assertRequestCardPayload(payload)
 
   if (!isFirebaseEnabled()) {
@@ -390,7 +405,6 @@ export async function createRequestCard(payload, options = {}) {
 }
 
 export async function updateRequestCard(cardId, payload, options = {}) {
-  ensureAdmin(options?.actor)
   const targetId = String(cardId || '').trim()
   if (!targetId) {
     throw new Error('수정할 신청 카드가 없습니다.')
@@ -400,6 +414,7 @@ export async function updateRequestCard(cardId, payload, options = {}) {
   if (!existing) {
     throw new Error('신청 카드를 찾을 수 없습니다.')
   }
+  ensureCardOwnerOrAdmin(options?.actor, existing)
 
   const data = assertRequestCardPayload({
     ...existing,
@@ -434,7 +449,6 @@ export async function updateRequestCard(cardId, payload, options = {}) {
 }
 
 export async function setRequestCardAdminStatus(cardId, nextStatus, options = {}) {
-  ensureAdmin(options?.actor)
   const targetId = String(cardId || '').trim()
   if (!targetId) {
     throw new Error('상태를 변경할 신청 카드가 없습니다.')
@@ -444,6 +458,7 @@ export async function setRequestCardAdminStatus(cardId, nextStatus, options = {}
   if (!existing) {
     throw new Error('신청 카드를 찾을 수 없습니다.')
   }
+  ensureCardOwnerOrAdmin(options?.actor, existing)
 
   const adminStatus = normalizeRequestCardAdminStatus(nextStatus)
 
@@ -472,7 +487,6 @@ export async function setRequestCardAdminStatus(cardId, nextStatus, options = {}
 }
 
 export async function deleteRequestCard(cardId, options = {}) {
-  ensureAdmin(options?.actor)
   const targetId = String(cardId || '').trim()
   if (!targetId) {
     throw new Error('삭제할 신청 카드가 없습니다.')
@@ -482,6 +496,7 @@ export async function deleteRequestCard(cardId, options = {}) {
   if (!existing) {
     throw new Error('신청 카드를 찾을 수 없습니다.')
   }
+  ensureCardOwnerOrAdmin(options?.actor, existing)
   if (existing.drawExecutedAt) {
     throw new Error('추첨이 끝난 신청 카드는 삭제할 수 없습니다.')
   }
@@ -715,7 +730,6 @@ export async function cancelRequestCardApplication(payload) {
 }
 
 export async function drawRequestCardWinners(payload) {
-  const actor = ensureAdmin(payload?.actor)
   const targetCardId = String(payload?.cardId || '').trim()
   if (!targetCardId) {
     throw new Error('추첨할 신청 카드가 없습니다.')
@@ -725,6 +739,7 @@ export async function drawRequestCardWinners(payload) {
   if (!card) {
     throw new Error('신청 카드를 찾을 수 없습니다.')
   }
+  const actor = ensureCardOwnerOrAdmin(payload?.actor, card)
   const state = getRequestCardState(card)
   if (state.phase !== 'closed') {
     throw new Error('신청 기간 종료 후에만 추첨할 수 있습니다.')
