@@ -2291,6 +2291,7 @@ function RoundPanel({
 
 function StudentApplicationStatusPanel({
   rows,
+  clubs,
   loading,
   onRefresh,
   onOpenDetail,
@@ -2312,6 +2313,29 @@ function StudentApplicationStatusPanel({
       return values.some((value) => String(value || "").toLowerCase().includes(keyword));
     });
   }, [rows, query]);
+
+  const stats = useMemo(() => {
+    const total = rows.length;
+    const applied = rows.filter((r) => r.preferences.some((p) => p.clubId)).length;
+    const notApplied = total - applied;
+    const assigned = rows.filter((r) => r.finalClubName).length;
+    const unassigned = applied - assigned;
+    const clubList = Array.isArray(clubs) ? clubs : [];
+    const totalCapacity = clubList.reduce((sum, c) => sum + (Number(c.maxMembers) || 0), 0);
+    const totalMembers = clubList.reduce((sum, c) => sum + (Number(c.memberCount) || 0), 0);
+    const remaining = totalCapacity - totalMembers;
+    const assignRate = total > 0 ? Math.round((assigned / total) * 100) : 0;
+    return { total, applied, notApplied, assigned, unassigned, totalCapacity, totalMembers, remaining, assignRate };
+  }, [rows, clubs]);
+
+  const dashboardCards = [
+    { label: "전체 학생", value: stats.total, color: t.text, icon: "👥" },
+    { label: "신청 완료", value: stats.applied, color: t.accent, icon: "📋" },
+    { label: "미신청", value: stats.notApplied, color: stats.notApplied > 0 ? "#e67e22" : t.textSub, icon: "⏳" },
+    { label: "배정 완료", value: stats.assigned, color: t.ok || "#27ae60", icon: "✅" },
+    { label: "미배정", value: stats.unassigned, color: stats.unassigned > 0 ? t.danger || "#e74c3c" : t.textSub, icon: "❌" },
+    { label: "잔여석", value: `${stats.remaining}/${stats.totalCapacity}`, color: stats.remaining > 0 ? t.accent : t.textSub, icon: "💺" },
+  ];
 
   return (
     <section style={cardStyle}>
@@ -2338,6 +2362,52 @@ function StudentApplicationStatusPanel({
           </button>
         </div>
       </div>
+
+      {/* 대시보드 */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 16 }}>
+        {dashboardCards.map((card) => (
+          <div
+            key={card.label}
+            style={{
+              background: t.bg || "#f8f9fa",
+              borderRadius: 10,
+              padding: "12px 14px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              border: `1px solid ${t.border}`,
+            }}
+          >
+            <div style={{ fontSize: 11, color: t.textSub, fontWeight: 600 }}>
+              {card.icon} {card.label}
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: card.color, letterSpacing: "-0.5px" }}>
+              {card.value}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 배정률 프로그레스 바 */}
+      {stats.total > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+            <span style={{ fontSize: 12, color: t.textSub, fontWeight: 600 }}>배정률</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: t.accent }}>{stats.assignRate}%</span>
+          </div>
+          <div style={{ height: 8, background: t.border || "#e9ecef", borderRadius: 4, overflow: "hidden" }}>
+            <div
+              style={{
+                width: `${stats.assignRate}%`,
+                height: "100%",
+                background: stats.assignRate === 100 ? (t.ok || "#27ae60") : t.accent,
+                borderRadius: 4,
+                transition: "width 0.4s ease",
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1000, tableLayout: "fixed" }}>
@@ -5741,6 +5811,7 @@ export default function PrototypeApp({ studentOnly = false }) {
       {tab === "studentStatus" && (user.role === "admin" || user.role === "teacher") ? (
         <StudentApplicationStatusPanel
           rows={studentStatusRows}
+          clubs={visibleClubs}
           loading={studentStatusLoading || loading}
           onRefresh={async () => {
             setStudentStatusLoading(true);
