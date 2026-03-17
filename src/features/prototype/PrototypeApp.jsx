@@ -712,6 +712,19 @@ function StudentLoginPanel({ onLogin, loading, error }) {
             {loading ? "로그인 중..." : "로그인"}
           </button>
         </div>
+
+        <div style={{
+          marginTop: 16,
+          padding: "10px 12px",
+          background: "#fff3f3",
+          border: "1px solid #fcc",
+          borderRadius: 8,
+          fontSize: 11,
+          color: "#b71c1c",
+          lineHeight: 1.6,
+        }}>
+          ⚠️ <b>경고:</b> 본인의 계정으로만 로그인하세요. 타인의 아이디로 로그인하거나 대리 신청하는 행위는 <b>개인정보보호법</b> 및 <b>정보통신망법</b>에 따라 법적 책임을 물을 수 있으며, 해당 신청은 무효 처리됩니다.
+        </div>
       </div>
     </div>
   );
