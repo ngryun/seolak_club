@@ -2660,7 +2660,6 @@ function StudentApplyPanel({
   const available = clubs.filter((club) => {
     if (club.legacy) return false;
     if (club.isInterviewSelection) return false;
-    if (!club.leaderUid) return false;
     if (!grade) return false;
     return (club.targetGrades || []).includes(grade);
   });
