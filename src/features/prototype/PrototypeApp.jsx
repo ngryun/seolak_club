@@ -3308,7 +3308,10 @@ function RequestCardUserSection({
   onRefresh,
   onApply,
   onCancel,
+  onViewApplicants,
 }) {
+  const isTeacherOrAdmin = user?.role === "admin" || user?.role === "teacher";
+  const [subTab, setSubTab] = useState(isTeacherOrAdmin ? "teacher" : "student");
   const [showArchivedCards, setShowArchivedCards] = useState(false);
   const appMap = useMemo(
     () => new Map((myApplications || []).map((row) => [row.cardId, row])),
@@ -3321,7 +3324,10 @@ function RequestCardUserSection({
     const initialGroups = { current: [], pending: [], archived: [] };
 
     const sortedRows = (cards || [])
-      .filter((card) => canUseRequestCard(card, user))
+      .filter((card) => {
+        if (!card?.targetRole) return false;
+        return card.targetRole === subTab;
+      })
       .map((card) => {
         const state = getRequestCardState(card);
         return {
@@ -3530,47 +3536,60 @@ function RequestCardUserSection({
               </div>
             ) : null}
 
-            {(canApply || canCancel) ? (
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                {canApply ? (
-                  <button
-                    onClick={() => onApply(card.id)}
-                    disabled={loading}
-                    style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700 }}
-                  >
-                    신청
-                  </button>
-                ) : null}
-                {canCancel ? (
-                  <button
-                    onClick={() => onCancel(card.id)}
-                    disabled={loading}
-                    style={{ ...buttonBase, background: loading ? "#cfd8e3" : "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
-                  >
-                    신청 취소
-                  </button>
-                ) : null}
-                {useCompactActionStatus ? (
-                  <div style={{ fontSize: 13, fontWeight: 700, color: t.accent }}>
-                    {statusText.description}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {canApply ? (
+                <button
+                  onClick={() => onApply(card.id)}
+                  disabled={loading}
+                  style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700 }}
+                >
+                  신청
+                </button>
+              ) : null}
+              {canCancel ? (
+                <button
+                  onClick={() => onCancel(card.id)}
+                  disabled={loading}
+                  style={{ ...buttonBase, background: loading ? "#cfd8e3" : "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
+                >
+                  신청 취소
+                </button>
+              ) : null}
+              {isTeacherOrAdmin && subTab === "student" && onViewApplicants ? (
+                <button
+                  onClick={() => onViewApplicants(card)}
+                  disabled={loading}
+                  style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.accent, fontWeight: 700 }}
+                >
+                  신청현황 보기
+                </button>
+              ) : null}
+              {useCompactActionStatus ? (
+                <div style={{ fontSize: 13, fontWeight: 700, color: t.accent }}>
+                  {statusText.description}
+                </div>
+              ) : null}
+            </div>
           </div>
         );
       })}
     </div>
   );
 
+  const subTabs = isTeacherOrAdmin
+    ? [{ key: "teacher", label: "교사 대상" }, { key: "student", label: "학생 대상" }]
+    : [{ key: "student", label: "학생 대상" }];
+
   return (
     <section style={cardStyle}>
       <div style={{ borderTop: `2px dashed ${t.border}`, paddingTop: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
           <div>
             <h2 style={{ fontSize: 17 }}>기타 신청 현황</h2>
             <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
-              동아리 외에 관리자가 연 신청 항목을 여기서 신청하고 선정 결과를 확인할 수 있습니다.
+              {isTeacherOrAdmin && subTab === "student"
+                ? "학생 대상 신청 카드를 조회합니다. 신청현황 보기로 누가 신청했는지 확인할 수 있습니다."
+                : "동아리 외에 관리자가 연 신청 항목을 여기서 신청하고 선정 결과를 확인할 수 있습니다."}
             </div>
           </div>
           <button
@@ -3581,6 +3600,31 @@ function RequestCardUserSection({
             새로고침
           </button>
         </div>
+
+        {subTabs.length > 1 ? (
+          <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+            {subTabs.map((st) => {
+              const active = subTab === st.key;
+              const count = (cards || []).filter((c) => c.targetRole === st.key).length;
+              return (
+                <button
+                  key={st.key}
+                  onClick={() => { setSubTab(st.key); setShowArchivedCards(false); }}
+                  style={{
+                    ...buttonBase,
+                    background: active ? t.accent : "#fff",
+                    color: active ? "#fff" : t.text,
+                    border: `1px solid ${active ? t.accent : t.border}`,
+                    fontWeight: 700,
+                    padding: "8px 16px",
+                  }}
+                >
+                  {st.label} <span style={{ marginLeft: 4, opacity: 0.75 }}>({count})</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
 
         {visibleCardsCount === 0 ? (
           <div style={{ fontSize: 13, color: t.textSub }}>현재 신청 가능한 추가 카드가 없습니다.</div>
@@ -5969,6 +6013,7 @@ export default function PrototypeApp({ studentOnly = false }) {
           }}
           onApply={handleApplyRequestCard}
           onCancel={handleCancelRequestCard}
+          onViewApplicants={(user.role === "admin" || user.role === "teacher") ? openRequestCardDialog : undefined}
         />
       ) : null}
 
