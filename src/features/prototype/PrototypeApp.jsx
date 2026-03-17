@@ -483,74 +483,6 @@ function canUseRequestCard(card, user) {
   return card?.targetRole === normalizedRole;
 }
 
-function getRequestCardPeriodText(card, state) {
-  const startAt = state?.startAt || card?.startAt || null;
-  const endAt = state?.endAt || card?.endAt || null;
-  if (!startAt || !endAt) return "관리자 설정 대기";
-  return `${formatTime(startAt)} ~ ${formatTime(endAt)}`;
-}
-
-function getRequestCardScheduleMeta(card, state) {
-  const startAt = state?.startAt || card?.startAt || null;
-  const endAt = state?.endAt || card?.endAt || null;
-  const drawExecutedAt = state?.drawExecutedAt || card?.drawExecutedAt || null;
-
-  if (state?.phase === "before") {
-    return {
-      label: "신청 시작",
-      value: startAt ? formatTime(startAt) : "-",
-      bg: "#fff8e1",
-      color: t.warn,
-    };
-  }
-  if (state?.phase === "open") {
-    return {
-      label: "신청 마감",
-      value: endAt ? formatTime(endAt) : "-",
-      bg: "#eef7ee",
-      color: t.ok,
-    };
-  }
-  if (state?.phase === "closed") {
-    return {
-      label: "마감 시각",
-      value: endAt ? formatTime(endAt) : "-",
-      bg: "#edf4ff",
-      color: t.accent,
-    };
-  }
-  if (state?.phase === "drawn") {
-    return {
-      label: "결과 안내",
-      value: drawExecutedAt ? formatTime(drawExecutedAt) : "-",
-      bg: "#f3f4f6",
-      color: t.textSub,
-    };
-  }
-  if (state?.phase === "selection_cancelled") {
-    return {
-      label: drawExecutedAt ? "처리 시각" : "운영 상태",
-      value: drawExecutedAt ? formatTime(drawExecutedAt) : "선정취소",
-      bg: "#fff4e5",
-      color: t.warn,
-    };
-  }
-  if (state?.phase === "cancelled") {
-    return {
-      label: "운영 상태",
-      value: "폐강",
-      bg: "#eceff1",
-      color: t.textSub,
-    };
-  }
-  return {
-    label: "신청 기간",
-    value: getRequestCardPeriodText(card, state),
-    bg: "#f3f4f6",
-    color: t.textSub,
-  };
-}
-
 function requestCardUserGroupKey(state) {
   if (state?.phase === "closed") return "pending";
   if (state?.phase === "drawn" || state?.phase === "selection_cancelled" || state?.phase === "cancelled") {
@@ -1807,7 +1739,7 @@ function ApplicantsDialog({
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
             <thead>
               <tr>
-                {["학번", "이름", "지망", "상태", "진로희망", "신청사유", "활동계획", "결정", "작업"].map((head) => (
+                {["학번", "이름", "지망", "상태", "신청사유", "활동계획", "결정", "작업"].map((head) => (
                   <th
                     key={head}
                     style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
@@ -1831,7 +1763,6 @@ function ApplicantsDialog({
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.studentName || "-"}</td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.preferenceRank}지망</td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}><StatusBadge status={row.status} /></td>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.careerGoal || "-"}</td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.applyReason || "-"}</td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.wantedActivity || "-"}</td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, color: t.textSub }}>
@@ -2302,6 +2233,7 @@ function StudentApplicationStatusPanel({
         row.preferences[0]?.clubName,
         row.preferences[1]?.clubName,
         row.preferences[2]?.clubName,
+        row.finalClubName,
       ];
       return values.some((value) => String(value || "").toLowerCase().includes(keyword));
     });
@@ -2334,7 +2266,7 @@ function StudentApplicationStatusPanel({
       </div>
 
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860, tableLayout: "fixed" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1000, tableLayout: "fixed" }}>
           <colgroup>
             <col style={{ width: 100 }} />
             <col style={{ width: 80 }} />
@@ -2345,7 +2277,7 @@ function StudentApplicationStatusPanel({
           </colgroup>
           <thead>
             <tr>
-              {["학번", "이름", "1지망동아리", "2지망동아리", "3지망동아리", "배정 동아리"].map((head) => (
+              {["학번", "이름", "1지망", "2지망", "3지망", "배정 동아리"].map((head) => (
                 <th
                   key={head}
                   style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
@@ -2360,17 +2292,37 @@ function StudentApplicationStatusPanel({
               <tr
                 key={row.studentUid}
                 onClick={() => onOpenDetail(row.studentUid)}
-                style={{ cursor: "pointer" }}
+                style={{ cursor: "pointer", background: row.finalClubName ? "#f9fdf9" : undefined }}
               >
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13 }}>{row.studentNo || "-"}</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13, fontWeight: 700 }}>{row.studentName || "-"}</td>
-                {[0, 1, 2].map((index) => (
-                  <td key={index} style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {row.preferences[index]?.clubName || "-"}
-                  </td>
-                ))}
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13, fontWeight: 700, color: row.finalClubName ? t.accent : t.textSub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {row.finalClubName || "-"}
+                {[0, 1, 2].map((index) => {
+                  const pref = row.preferences[index];
+                  const clubName = pref?.clubName || "";
+                  const status = pref?.status || "";
+                  return (
+                    <td key={index} style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {clubName ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{clubName}</span>
+                          {status ? <StudentMyStatusChip status={status} rejectReason={pref?.rejectReason} /> : null}
+                        </div>
+                      ) : "-"}
+                    </td>
+                  );
+                })}
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 6px", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {row.finalClubName ? (
+                    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 700, color: t.ok }}>{row.finalClubName}</span>
+                      {(() => {
+                        const approved = row.preferences.find((p) => p.status === "approved");
+                        return approved?.selectionSource ? <AssignSourceChip source={approved.selectionSource} /> : null;
+                      })()}
+                    </div>
+                  ) : (
+                    <span style={{ color: t.textSub }}>-</span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -2432,11 +2384,15 @@ function StudentApplicationDetailDialog({
             <div style={{ fontSize: 12, color: t.textSub, marginBottom: 8 }}>
               제출 시각: {formatTime(row.submittedAt)} · 최근 수정: {formatTime(row.updatedAt)}
             </div>
+            <div style={{ fontSize: 13, marginBottom: 10, padding: "6px 10px", background: "#f0f2f5", borderRadius: 6 }}>
+              <span style={{ color: t.textSub }}>진로희망: </span>
+              <span style={{ fontWeight: 600 }}>{row.preferences[0]?.careerGoal || "-"}</span>
+            </div>
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
                 <thead>
                   <tr>
-                    {["지망", "동아리", "상태", "결정/사유", "진로희망", "신청사유", "활동계획"].map((head) => (
+                    {["지망", "동아리", "상태", "결정/사유", "신청사유", "활동계획"].map((head) => (
                       <th
                         key={head}
                         style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
@@ -2455,7 +2411,6 @@ function StudentApplicationDetailDialog({
                         {item.status ? <StatusBadge status={item.status} /> : <span style={{ fontSize: 12, color: t.textSub }}>{item.clubName ? "제출" : "-"}</span>}
                       </td>
                       <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: t.textSub }}>{decisionLabel(item)}</td>
-                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{item.careerGoal || "-"}</td>
                       <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{item.applyReason || "-"}</td>
                       <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{item.wantedActivity || "-"}</td>
                     </tr>
@@ -2558,6 +2513,10 @@ function StudentApplyPanel({
   const selectableClubs = canEdit ? available : nonInterviewClubs;
 
   const [rows, setRows] = useState(() => createPreferenceRows(readonlyRows));
+  const [careerGoal, setCareerGoal] = useState(() => {
+    const src = readonlyRows[0];
+    return src?.careerGoal || "";
+  });
 
   const showForm = canEdit || hasDraft || finalized || (cycle?.status === "open" && submissionState?.phase === "open");
   const statusPalette = finalized
@@ -2603,9 +2562,24 @@ function StudentApplyPanel({
 
       {showForm ? (
         <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ ...cardStyle, background: "#f5f7fa" }}>
+            <Field label="진로희망">
+              <input
+                value={careerGoal}
+                disabled={!canEdit}
+                onChange={(e) => setCareerGoal(e.target.value)}
+                style={inputBase}
+                placeholder="예: 방송기획자, 디자이너"
+              />
+            </Field>
+            <div style={{ fontSize: 11, color: t.textSub, marginTop: 4 }}>
+              본인의 진로 희망을 한 번만 입력하면 모든 지망에 공통 적용됩니다.
+            </div>
+          </div>
+
           {[0, 1, 2].map((idx) => (
             <div key={idx} style={{ ...cardStyle, background: "#fafbfd" }}>
-              <h3 style={{ fontSize: 14, marginBottom: 10 }}>{idx + 1}지망</h3>
+              <h3 style={{ fontSize: 14, marginBottom: 10 }}>{idx + 1}지망 <span style={{ color: "#e53935", fontSize: 12, fontWeight: 400 }}>(필수)</span></h3>
               <div style={{ display: "grid", gap: 8 }}>
                 <Field label="동아리 선택">
                   <Select
@@ -2617,27 +2591,13 @@ function StudentApplyPanel({
                       setRows(next);
                     }}
                   >
-                    <option value="">선택 안함</option>
+                    <option value="">-- 동아리를 선택하세요 --</option>
                     {selectableClubs.map((club) => (
                       <option key={club.id} value={club.id}>
                         {club.clubName} ({club.room})
                       </option>
                     ))}
                   </Select>
-                </Field>
-
-                <Field label="진로희망">
-                  <input
-                    value={rows[idx].careerGoal}
-                    disabled={!canEdit}
-                    onChange={(e) => {
-                      const next = [...rows];
-                      next[idx] = { ...next[idx], careerGoal: e.target.value };
-                      setRows(next);
-                    }}
-                    style={inputBase}
-                    placeholder="예: 방송기획자"
-                  />
                 </Field>
 
                 <Field label="신청사유">
@@ -2672,7 +2632,7 @@ function StudentApplyPanel({
           {canEdit ? (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button
-                onClick={() => onSubmit(rows)}
+                onClick={() => onSubmit(rows, careerGoal)}
                 disabled={submitting || available.length === 0}
                 style={{
                   ...buttonBase,
@@ -2718,16 +2678,74 @@ function StudentApplyPanel({
   );
 }
 
+function StudentMyStatusChip({ status, rejectReason }) {
+  if (status === "approved") return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 700, background: "#e8f5e9", color: t.ok }}>선정</span>;
+  if (status === "rejected") {
+    const reason = rejectReason === "random_unselected" ? "추첨 미선정"
+      : rejectReason === "higher_choice_assigned" ? "다른 지망 배정"
+      : rejectReason === "final_round_closed" ? "최종 미배정"
+      : rejectReason === "approval_revoked" ? "승인 취소"
+      : "미선정";
+    return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 700, background: "#ffebee", color: t.danger }}>{reason}</span>;
+  }
+  if (status === "pending") return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 700, background: "#fff8e1", color: t.warn }}>심사중</span>;
+  if (status === "waiting_round") return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 700, background: "#f3f4f6", color: t.textSub }}>대기</span>;
+  if (status === "cancelled") return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 700, background: "#eceff1", color: "#4b5563" }}>취소</span>;
+  return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 10px", fontSize: 11, fontWeight: 700, background: "#f3f4f6", color: t.textSub }}>-</span>;
+}
+
+function AssignSourceChip({ source }) {
+  const label = source === "random" ? "추첨 선발"
+    : source === "approval" ? "승인"
+    : source === "manual_assign" ? "수동 배정"
+    : source === "interview_manual" ? "면접 선발"
+    : source === "leader_auto" ? "동아리장 자동"
+    : source || "";
+  if (!label) return null;
+  return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 600, background: "#e3f2fd", color: "#1565c0", marginLeft: 6 }}>{label}</span>;
+}
+
 function StudentMyPanel({ apps }) {
+  const sharedCareerGoal = apps[0]?.careerGoal || "-";
+  const approvedApp = apps.find((row) => row.status === "approved");
+
   return (
     <section style={cardStyle}>
       <h2 style={{ fontSize: 17, marginBottom: 12 }}>내 신청 현황</h2>
 
+      {apps.length > 0 ? (
+        <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+          <div style={{ fontSize: 13, padding: "8px 10px", background: "#f5f7fa", borderRadius: 6 }}>
+            <span style={{ color: t.textSub }}>진로희망: </span>
+            <span style={{ fontWeight: 600 }}>{sharedCareerGoal}</span>
+          </div>
+
+          <div style={{
+            padding: "10px 14px",
+            borderRadius: 8,
+            background: approvedApp ? "#e8f5e9" : "#fff8e1",
+            border: `1px solid ${approvedApp ? "#a5d6a7" : "#ffe082"}`,
+          }}>
+            <div style={{ fontSize: 12, color: t.textSub, marginBottom: 4 }}>배정 동아리</div>
+            {approvedApp ? (
+              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: t.ok }}>
+                  {approvedApp.club?.clubName || approvedApp.clubId}
+                </span>
+                <AssignSourceChip source={approvedApp.selectionSource} />
+              </div>
+            ) : (
+              <span style={{ fontSize: 14, fontWeight: 600, color: t.warn }}>아직 배정되지 않았습니다.</span>
+            )}
+          </div>
+        </div>
+      ) : null}
+
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
           <thead>
             <tr>
-              {["지망", "동아리", "상태", "결정/사유", "진로희망", "신청사유", "활동계획", "수정일"].map((head) => (
+              {["지망", "동아리", "결과", "신청사유", "활동계획"].map((head) => (
                 <th key={head} style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}>
                   {head}
                 </th>
@@ -2736,20 +2754,21 @@ function StudentMyPanel({ apps }) {
           </thead>
           <tbody>
             {apps.map((row) => (
-              <tr key={row.id}>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.preferenceRank}지망</td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.club?.clubName || row.clubId}</td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}><StatusBadge status={row.status} /></td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: t.textSub }}>{decisionLabel(row)}</td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.careerGoal || "-"}</td>
+              <tr key={row.id} style={{ background: row.status === "approved" ? "#f1f8f2" : undefined }}>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13, fontWeight: 600 }}>{row.preferenceRank}지망</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>
+                  {row.club?.clubName || row.clubId}
+                </td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                  <StudentMyStatusChip status={row.status} rejectReason={row.rejectReason} />
+                </td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.applyReason || "-"}</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.wantedActivity || "-"}</td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: t.textSub }}>{formatTime(row.updatedAt || row.createdAt)}</td>
               </tr>
             ))}
             {apps.length === 0 ? (
               <tr>
-                <td colSpan={8} style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
+                <td colSpan={5} style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
                   신청 내역이 없습니다.
                 </td>
               </tr>
@@ -2779,7 +2798,7 @@ function RequestCardApplicationsDialog({
           <div>
             <div style={{ fontSize: 18, fontWeight: 800 }}>{card?.title || "신청 카드"} 신청 현황</div>
             <div style={{ fontSize: 12, color: t.textSub }}>
-              {requestCardTargetLabel(card?.targetRole)} · 모집 {card?.capacity || 0}명 · 신청 {card?.applicantCount || 0}명
+              {requestCardTargetLabel(card?.targetRole)} · 모집인원 {card?.capacity || 0}명 · 현재 신청인원 {card?.applicantCount || 0}명
             </div>
           </div>
           <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>닫기</button>
@@ -2924,7 +2943,7 @@ function RequestCardAdminPanel({
                 style={inputBase}
               />
             </Field>
-            <Field label="신청 종료 일시">
+            <Field label="신청 마감 일시">
               <input
                 type="datetime-local"
                 value={form.endAt}
@@ -2956,10 +2975,10 @@ function RequestCardAdminPanel({
       </div>
 
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1120 }}>
           <thead>
             <tr>
-              {["제목", "대상", "상태", "신청기간", "모집", "신청", "선정", "작업"].map((head) => (
+              {["제목", "대상", "상태", "신청 시작", "신청 마감", "모집인원", "현재 신청", "선정인원", "작업"].map((head) => (
                 <th
                   key={head}
                   style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
@@ -2984,12 +3003,15 @@ function RequestCardAdminPanel({
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13, fontWeight: 700 }}>{card.title}</td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{requestCardTargetLabel(card.targetRole)}</td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}>
-                    <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, color: phaseMeta.color }}>
+                    <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, border: `1px solid ${phaseMeta.border}`, color: phaseMeta.color }}>
                       {phaseMeta.label}
                     </span>
                   </td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, color: t.textSub }}>
-                    {formatTime(card.startAt)} ~ {formatTime(card.endAt)}
+                    {formatTime(card.startAt)}
+                  </td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, color: t.textSub }}>
+                    {formatTime(card.endAt)}
                   </td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{card.capacity}명</td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{card.applicantCount || 0}명</td>
@@ -3054,7 +3076,7 @@ function RequestCardAdminPanel({
             })}
             {cards.length === 0 ? (
               <tr>
-                <td colSpan={8} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
+                <td colSpan={9} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
                   아직 생성된 신청 카드가 없습니다.
                 </td>
               </tr>
@@ -3104,7 +3126,7 @@ function RequestCardUserSection({
         const leftRank = phaseRank[a.state.phase] ?? 9;
         const rightRank = phaseRank[b.state.phase] ?? 9;
         if (leftRank !== rightRank) return leftRank - rightRank;
-        return 0;
+        return String(a.card.title || a.card.id).localeCompare(String(b.card.title || b.card.id), "ko");
       });
 
     return sortedRows.reduce((acc, row) => {
@@ -3137,17 +3159,81 @@ function RequestCardUserSection({
         const myApplication = appMap.get(card.id) || null;
         const resultMeta = requestCardResultMeta(myApplication?.status, state);
         const statusText = getRequestCardStatusText(card, state, myApplication);
-        const scheduleMeta = getRequestCardScheduleMeta(card, state);
-        const periodText = getRequestCardPeriodText(card, state);
         const canApply = !myApplication && state.phase === "open";
         const canCancel = myApplication?.status === "applied" && state.phase === "open";
+        const useCompactActionStatus = state.phase === "open" && (canApply || canCancel);
+        const startAt = state?.startAt || card?.startAt || null;
+        const endAt = state?.endAt || card?.endAt || null;
+        const capacity = Math.max(0, Number(card?.capacity || 0));
+        const applicantCount = Math.max(0, Number(card?.applicantCount || 0));
+        const fillRatioRaw = capacity > 0 ? applicantCount / capacity : 0;
+        const fillBarWidth = capacity > 0 ? `${Math.min(fillRatioRaw * 100, 100)}%` : "0%";
+        const fillPercent = capacity > 0 ? Math.round(fillRatioRaw * 100) : 0;
+        const isOverCapacity = capacity > 0 && applicantCount > capacity;
+        const applicantTone = isOverCapacity
+          ? { bg: "#fff1f1", border: "#f3c7c7", color: t.danger }
+          : fillRatioRaw >= 1
+            ? { bg: "#fff8e1", border: "#f3dfb9", color: t.warn }
+            : { bg: "#edf4ff", border: "#c8dcff", color: t.accent };
+        const applicantDetail = capacity <= 0
+          ? "모집 인원을 확인해 주세요."
+          : isOverCapacity
+            ? `정원보다 ${applicantCount - capacity}명 많습니다.`
+            : applicantCount === 0
+              ? "아직 신청자가 없습니다."
+              : `충원율 ${fillPercent}%`;
+        const statusNote = statusText.note && !/^신청 (시작|마감):/.test(statusText.note)
+          ? statusText.note
+          : null;
+        const summaryItems = [
+          {
+            key: "startAt",
+            label: "신청 시작",
+            value: formatTime(startAt),
+            detail: startAt ? "접수가 열리는 시각입니다." : "아직 신청 일정이 없습니다.",
+            bg: "#f8fafc",
+            border: t.border,
+            color: t.text,
+            accent: t.textSub,
+          },
+          {
+            key: "endAt",
+            label: "신청 마감",
+            value: formatTime(endAt),
+            detail: endAt ? "이 시각 이후에는 신청이 잠깁니다." : "아직 마감 시각이 없습니다.",
+            bg: "#fff8e1",
+            border: "#f3dfb9",
+            color: t.warn,
+            accent: t.warn,
+          },
+          {
+            key: "capacity",
+            label: "모집인원",
+            value: `${capacity}명`,
+            detail: "선정 예정 인원입니다.",
+            bg: "#eef7ee",
+            border: "#cbe6cd",
+            color: t.ok,
+            accent: t.ok,
+          },
+          {
+            key: "applicantCount",
+            label: "현재 신청인원",
+            value: `${applicantCount}명`,
+            detail: applicantDetail,
+            bg: applicantTone.bg,
+            border: applicantTone.border,
+            color: applicantTone.color,
+            accent: applicantTone.color,
+          },
+        ];
         return (
-          <div key={card.id} style={{ ...cardStyle, background: "#fafbfd" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8, flexWrap: "wrap" }}>
+          <div key={card.id} style={{ ...cardStyle, background: "linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)", border: "1px solid #d9e4f5" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
               <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
                   <div style={{ fontSize: 16, fontWeight: 800 }}>{card.title}</div>
-                  <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, color: phaseMeta.color }}>
+                  <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, border: `1px solid ${phaseMeta.border}`, color: phaseMeta.color }}>
                     {phaseMeta.label}
                   </span>
                   {myApplication ? (
@@ -3156,34 +3242,81 @@ function RequestCardUserSection({
                     </span>
                   ) : null}
                 </div>
-                <div style={{ fontSize: 12, color: t.textSub }}>
+              </div>
+              <div style={{ display: "grid", gap: 4, minWidth: 132 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: t.textSub, textAlign: "right" }}>현재 신청 현황</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: applicantTone.color, textAlign: "right", lineHeight: 1 }}>
+                  {applicantCount}
+                  <span style={{ fontSize: 13, marginLeft: 4 }}>명</span>
+                </div>
+                <div style={{ fontSize: 11, color: t.textSub, textAlign: "right" }}>
+                  모집 {capacity}명 기준
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(165px, 1fr))", gap: 10, marginBottom: 12 }}>
+              {summaryItems.map((item) => (
+                <div
+                  key={item.key}
+                  style={{
+                    borderRadius: 14,
+                    border: `1px solid ${item.border}`,
+                    background: item.bg,
+                    padding: "12px 13px",
+                    minHeight: 94,
+                    display: "grid",
+                    alignContent: "start",
+                    gap: 6,
+                  }}
+                >
+                  <div style={{ fontSize: 11, fontWeight: 700, color: t.textSub, letterSpacing: "0.02em" }}>{item.label}</div>
+                  <div style={{ fontSize: item.key === "startAt" || item.key === "endAt" ? 14 : 24, fontWeight: 800, color: item.color, lineHeight: 1.35 }}>
+                    {item.value}
+                  </div>
+                  <div style={{ fontSize: 12, color: item.key === "applicantCount" ? item.accent : t.textSub, lineHeight: 1.5 }}>
+                    {item.detail}
+                  </div>
+                  {item.key === "applicantCount" && capacity > 0 ? (
+                    <div style={{ marginTop: 2 }}>
+                      <div style={{ height: 6, borderRadius: 999, background: "#e7edf6", overflow: "hidden" }}>
+                        <div style={{ width: fillBarWidth, height: "100%", borderRadius: 999, background: item.accent }} />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+
+            {!useCompactActionStatus ? (
+              <div
+                style={{
+                  borderRadius: 14,
+                  border: `1px solid ${phaseMeta.border}`,
+                  background: phaseMeta.bg,
+                  padding: "12px 14px",
+                  marginBottom: 12,
+                }}
+              >
+                <div style={{ fontSize: 11, fontWeight: 700, color: phaseMeta.color, marginBottom: 4 }}>
+                  {statusText.label}
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: t.text, lineHeight: 1.5 }}>
                   {statusText.description}
                 </div>
-                {statusText.note ? (
-                  <div style={{ fontSize: 11, color: t.textSub, marginTop: 4 }}>
-                    {statusText.note}
+                {statusNote ? (
+                  <div style={{ fontSize: 12, color: t.textSub, marginTop: 4, lineHeight: 1.5 }}>
+                    {statusNote}
                   </div>
                 ) : null}
               </div>
-              <div style={{ fontSize: 12, color: t.textSub, textAlign: "right" }}>
-                모집 {card.capacity}명 · 신청 {card.applicantCount || 0}명
-              </div>
-            </div>
+            ) : null}
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8, marginBottom: 10 }}>
-              <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", background: "#fff" }}>
-                <div style={{ fontSize: 11, color: t.textSub, marginBottom: 4 }}>신청 기간</div>
-                <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.5 }}>{periodText}</div>
+            {card.description ? (
+              <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6, marginBottom: 10 }}>
+                {card.description}
               </div>
-              <div style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: "10px 12px", background: scheduleMeta.bg }}>
-                <div style={{ fontSize: 11, color: scheduleMeta.color, marginBottom: 4 }}>{scheduleMeta.label}</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: scheduleMeta.color, lineHeight: 1.5 }}>{scheduleMeta.value}</div>
-              </div>
-            </div>
-
-            <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6, marginBottom: 10 }}>
-              {card.description}
-            </div>
+            ) : null}
 
             {(canApply || canCancel) ? (
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -3204,6 +3337,11 @@ function RequestCardUserSection({
                   >
                     신청 취소
                   </button>
+                ) : null}
+                {useCompactActionStatus ? (
+                  <div style={{ fontSize: 13, fontWeight: 700, color: t.accent }}>
+                    {statusText.description}
+                  </div>
                 ) : null}
               </div>
             ) : null}
@@ -3311,6 +3449,7 @@ function UserManagementPanel({
   loading,
   bulkResetLoading,
 }) {
+  const [userListTab, setUserListTab] = useState("teacher"); // "teacher" | "student"
   const [search, setSearch] = useState("");
   const [createForm, setCreateForm] = useState({
     loginId: "",
@@ -3329,7 +3468,11 @@ function UserManagementPanel({
     subject: "",
   });
 
-  const filtered = users.filter((u) => {
+  const teacherUsers = users.filter((u) => u.role === "teacher" || u.role === "admin");
+  const studentUsers = users.filter((u) => u.role === "student");
+
+  const baseList = userListTab === "teacher" ? teacherUsers : studentUsers;
+  const filtered = baseList.filter((u) => {
     const q = search.trim();
     if (!q) return true;
     return (
@@ -3441,32 +3584,61 @@ function UserManagementPanel({
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
           <h2 style={{ fontSize: 17 }}>회원 목록</h2>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <button
-              onClick={onResetStudentPasswords}
-              disabled={bulkResetLoading || loading}
-              style={{
-                ...buttonBase,
-                background: bulkResetLoading || loading ? "#cfd8e3" : "#fff3e0",
-                color: bulkResetLoading || loading ? "#6b7280" : t.warn,
-                fontWeight: 700,
-              }}
-            >
-              {bulkResetLoading ? "학생 비번 초기화 중..." : "학생 비번 일괄 초기화"}
-            </button>
+            {userListTab === "student" ? (
+              <button
+                onClick={onResetStudentPasswords}
+                disabled={bulkResetLoading || loading}
+                style={{
+                  ...buttonBase,
+                  background: bulkResetLoading || loading ? "#cfd8e3" : "#fff3e0",
+                  color: bulkResetLoading || loading ? "#6b7280" : t.warn,
+                  fontWeight: 700,
+                }}
+              >
+                {bulkResetLoading ? "학생 비번 초기화 중..." : "학생 비번 일괄 초기화"}
+              </button>
+            ) : null}
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={{ ...inputBase, width: 260 }}
-              placeholder="아이디/이름/학번 검색"
+              placeholder={userListTab === "teacher" ? "아이디/이름/과목 검색" : "아이디/이름/학번 검색"}
             />
           </div>
         </div>
 
+        <div style={{ display: "flex", gap: 0, marginBottom: 12, borderBottom: `2px solid ${t.border}` }}>
+          {[
+            { key: "teacher", label: `교사/관리자 (${teacherUsers.length})` },
+            { key: "student", label: `학생 (${studentUsers.length})` },
+          ].map((item) => (
+            <button
+              key={item.key}
+              onClick={() => { setUserListTab(item.key); setSearch(""); setEditingUid(""); }}
+              style={{
+                ...buttonBase,
+                padding: "8px 18px",
+                fontWeight: userListTab === item.key ? 700 : 400,
+                color: userListTab === item.key ? t.accent : t.textSub,
+                borderBottom: userListTab === item.key ? `2px solid ${t.accent}` : "2px solid transparent",
+                borderRadius: 0,
+                marginBottom: -2,
+                background: "transparent",
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: userListTab === "teacher" ? 700 : 920 }}>
             <thead>
               <tr>
-                {["아이디", "이름", "역할", "학번", "과목", "작업"].map((head) => (
+                {(userListTab === "teacher"
+                  ? ["아이디", "이름", "역할", "과목", "작업"]
+                  : ["학번(아이디)", "이름", "학번", "작업"]
+                ).map((head) => (
                   <th key={head} style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}>{head}</th>
                 ))}
               </tr>
@@ -3474,6 +3646,108 @@ function UserManagementPanel({
             <tbody>
               {filtered.map((row) => {
                 const editing = editingUid === row.uid;
+
+                if (userListTab === "teacher") {
+                  return (
+                    <tr key={row.uid}>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.loginId}</td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                        {editing ? (
+                          <input
+                            value={editForm.name}
+                            onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))}
+                            style={{ ...inputBase, padding: "6px 8px" }}
+                          />
+                        ) : (
+                          <span style={{ fontSize: 13 }}>{row.name || "-"}</span>
+                        )}
+                      </td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                        {editing ? (
+                          <Select
+                            value={editForm.role}
+                            onChange={(e) => setEditForm((prev) => ({ ...prev, role: e.target.value }))}
+                          >
+                            <option value="teacher">교사</option>
+                            <option value="admin">관리자</option>
+                          </Select>
+                        ) : (
+                          <span style={{ fontSize: 13 }}>{roleLabel(row.role)}</span>
+                        )}
+                      </td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                        {editing ? (
+                          <input
+                            value={editForm.subject}
+                            onChange={(e) => setEditForm((prev) => ({ ...prev, subject: e.target.value }))}
+                            style={{ ...inputBase, padding: "6px 8px" }}
+                          />
+                        ) : (
+                          <span style={{ fontSize: 13 }}>{row.subject || "-"}</span>
+                        )}
+                      </td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {editing ? (
+                            <>
+                              <button
+                                onClick={async () => {
+                                  await onUpdate(row, editForm);
+                                  setEditingUid("");
+                                }}
+                                style={{ ...buttonBase, padding: "5px 8px", background: "#e8f5e9", color: t.ok, fontWeight: 700 }}
+                              >
+                                저장
+                              </button>
+                              <button
+                                onClick={() => setEditingUid("")}
+                                style={{ ...buttonBase, padding: "5px 8px", background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+                              >
+                                취소
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setEditingUid(row.uid);
+                                setEditForm({
+                                  name: row.name || "",
+                                  role: row.role || "teacher",
+                                  studentNo: row.studentNo || "",
+                                  subject: row.subject || "",
+                                });
+                              }}
+                              style={{ ...buttonBase, padding: "5px 8px", background: "#fff", border: `1px solid ${t.border}` }}
+                            >
+                              수정
+                            </button>
+                          )}
+                          <button
+                            onClick={() => onResetPassword(row)}
+                            style={{ ...buttonBase, padding: "5px 8px", background: "#fff3e0", color: t.warn, fontWeight: 700 }}
+                          >
+                            비번초기화
+                          </button>
+                          <button
+                            onClick={() => onDelete(row)}
+                            disabled={row.uid === currentUser?.uid}
+                            style={{
+                              ...buttonBase,
+                              padding: "5px 8px",
+                              background: row.uid === currentUser?.uid ? "#cfd8e3" : "#ffebee",
+                              color: row.uid === currentUser?.uid ? "#6b7280" : t.danger,
+                              fontWeight: 700,
+                            }}
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }
+
+                // Student tab
                 return (
                   <tr key={row.uid}>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.loginId}</td>
@@ -3490,20 +3764,6 @@ function UserManagementPanel({
                     </td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
                       {editing ? (
-                        <Select
-                          value={editForm.role}
-                          onChange={(e) => setEditForm((prev) => ({ ...prev, role: e.target.value }))}
-                        >
-                          <option value="student">학생</option>
-                          <option value="teacher">교사</option>
-                          <option value="admin">관리자</option>
-                        </Select>
-                      ) : (
-                        <span style={{ fontSize: 13 }}>{roleLabel(row.role)}</span>
-                      )}
-                    </td>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
-                      {editing ? (
                         <input
                           value={editForm.studentNo}
                           onChange={(e) => setEditForm((prev) => ({ ...prev, studentNo: e.target.value }))}
@@ -3511,17 +3771,6 @@ function UserManagementPanel({
                         />
                       ) : (
                         <span style={{ fontSize: 13 }}>{row.studentNo || "-"}</span>
-                      )}
-                    </td>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
-                      {editing ? (
-                        <input
-                          value={editForm.subject}
-                          onChange={(e) => setEditForm((prev) => ({ ...prev, subject: e.target.value }))}
-                          style={{ ...inputBase, padding: "6px 8px" }}
-                        />
-                      ) : (
-                        <span style={{ fontSize: 13 }}>{row.subject || "-"}</span>
                       )}
                     </td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
@@ -3552,7 +3801,7 @@ function UserManagementPanel({
                                 name: row.name || "",
                                 role: row.role || "student",
                                 studentNo: row.studentNo || "",
-                                subject: row.subject || "",
+                                subject: "",
                               });
                             }}
                             style={{ ...buttonBase, padding: "5px 8px", background: "#fff", border: `1px solid ${t.border}` }}
@@ -3560,22 +3809,19 @@ function UserManagementPanel({
                             수정
                           </button>
                         )}
-
                         <button
                           onClick={() => onResetPassword(row)}
                           style={{ ...buttonBase, padding: "5px 8px", background: "#fff3e0", color: t.warn, fontWeight: 700 }}
                         >
                           비번초기화
                         </button>
-
                         <button
                           onClick={() => onDelete(row)}
-                          disabled={row.uid === currentUser?.uid}
                           style={{
                             ...buttonBase,
                             padding: "5px 8px",
-                            background: row.uid === currentUser?.uid ? "#cfd8e3" : "#ffebee",
-                            color: row.uid === currentUser?.uid ? "#6b7280" : t.danger,
+                            background: "#ffebee",
+                            color: t.danger,
                             fontWeight: 700,
                           }}
                         >
@@ -3588,8 +3834,8 @@ function UserManagementPanel({
               })}
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
-                    사용자 데이터가 없습니다.
+                  <td colSpan={userListTab === "teacher" ? 5 : 4} style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
+                    {userListTab === "teacher" ? "교사/관리자 계정이 없습니다." : "학생 계정이 없습니다."}
                   </td>
                 </tr>
               ) : null}
@@ -4443,7 +4689,7 @@ export default function PrototypeApp() {
   async function handleDrawRequestCard(card) {
     const confirmMessage = [
       `'${card.title}' 카드를 랜덤 추첨할까요?`,
-      `모집 ${card.capacity}명 / 현재 신청 ${card.applicantCount || 0}명`,
+      `모집인원 ${card.capacity}명 / 현재 신청인원 ${card.applicantCount || 0}명`,
     ].join("\n");
     if (!window.confirm(confirmMessage)) return;
 
@@ -4802,42 +5048,33 @@ export default function PrototypeApp() {
     }
   }
 
-  async function handleStudentPreferenceSubmit(rows) {
+  async function handleStudentPreferenceSubmit(rows, sharedCareerGoal) {
     setStudentSubmitLoading(true);
     try {
       const hadDraft = !!myDraft;
+      const careerGoal = String(sharedCareerGoal || "").trim();
+
+      if (!careerGoal) {
+        throw new Error("진로희망을 입력해주세요.");
+      }
+
       const normalized = [];
-      let firstEmptyAfterUsed = false;
 
       for (let idx = 0; idx < rows.length; idx += 1) {
         const row = rows[idx];
-        const hasAny = [row.clubId, row.careerGoal, row.applyReason, row.wantedActivity].some((value) => String(value || "").trim());
-
-        if (!hasAny) {
-          if (normalized.length > 0) {
-            firstEmptyAfterUsed = true;
-          }
-          continue;
-        }
-
-        if (firstEmptyAfterUsed) {
-          throw new Error("지망은 빈 칸 없이 1지망부터 순서대로 입력해주세요.");
-        }
-
         const clubId = String(row.clubId || "").trim();
-        const careerGoal = String(row.careerGoal || "").trim();
         const applyReason = String(row.applyReason || "").trim();
         const wantedActivity = String(row.wantedActivity || "").trim();
 
-        if (!clubId || !careerGoal || !applyReason || !wantedActivity) {
-          throw new Error(`${idx + 1}지망 항목을 모두 입력해주세요.`);
+        if (!clubId || !applyReason || !wantedActivity) {
+          throw new Error(`${idx + 1}지망의 동아리 선택, 신청사유, 원하는 활동을 모두 입력해주세요.`);
         }
 
         normalized.push({ clubId, careerGoal, applyReason, wantedActivity });
       }
 
-      if (normalized.length === 0) {
-        throw new Error("최소 1개 지망을 입력해주세요.");
+      if (normalized.length < 3) {
+        throw new Error("1지망, 2지망, 3지망을 모두 입력해주세요. (교사 사전 배정 학생 제외 전원 필수)");
       }
 
       await saveStudentPreferenceDraft({
