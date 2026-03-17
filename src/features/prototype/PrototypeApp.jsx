@@ -106,8 +106,8 @@ const inputBase = {
   width: "100%",
   border: `1px solid ${t.border}`,
   borderRadius: 10,
-  padding: "10px 12px",
-  fontSize: 14,
+  padding: "12px 14px",
+  fontSize: 15,
   outline: "none",
   background: "#fff",
   color: t.text,
@@ -116,8 +116,8 @@ const inputBase = {
 const buttonBase = {
   border: "none",
   borderRadius: 10,
-  padding: "9px 12px",
-  fontSize: 13,
+  padding: "10px 14px",
+  fontSize: 14,
   cursor: "pointer",
 };
 
@@ -549,7 +549,7 @@ function LoginPanel({ onLogin, loading, error }) {
     <div style={{ ...page, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ width: "min(460px, 100%)", ...cardStyle, padding: 24 }}>
         <h1 style={{ fontSize: 24, marginBottom: 6 }}>강원 설악고등학교 신청 통합 시스템</h1>
-        <p style={{ fontSize: 13, color: t.textSub, marginBottom: 18 }}>
+        <p style={{ fontSize: 14, color: t.textSub, marginBottom: 18 }}>
           교사/학생 탭을 선택해 로그인하세요.
         </p>
 
@@ -720,9 +720,9 @@ function StudentLoginPanel({ onLogin, loading, error }) {
 function Field({ label, children, hint }) {
   return (
     <div style={{ display: "grid", gap: 4 }}>
-      <div style={{ fontSize: 12, color: t.textSub, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 13, color: t.textSub, fontWeight: 600 }}>{label}</div>
       {children}
-      {hint ? <div style={{ fontSize: 11, color: t.textSub }}>{hint}</div> : null}
+      {hint ? <div style={{ fontSize: 12, color: t.textSub }}>{hint}</div> : null}
     </div>
   );
 }
@@ -956,7 +956,7 @@ function StatusBadge({ status }) {
         alignItems: "center",
         borderRadius: 999,
         padding: "3px 8px",
-        fontSize: 12,
+        fontSize: 13,
         fontWeight: 700,
         background: current.bg,
         color: current.color,
