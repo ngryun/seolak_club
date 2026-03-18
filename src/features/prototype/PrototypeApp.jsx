@@ -2206,6 +2206,7 @@ function InterviewSelectDialog({
   club,
   users,
   members,
+  applicants = [],
   loading,
   selectionReady,
   preAssignmentState,
@@ -2369,6 +2370,55 @@ function InterviewSelectDialog({
               </tbody>
             </table>
           </div>
+
+          {/* 신청 학생 목록 */}
+          {applicants.length > 0 ? (
+            <div style={{ ...cardStyle, marginTop: 12, background: "#fffdf6", borderColor: "#f0e6c8", padding: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>
+                학생 신청 현황 ({applicants.length}명)
+              </div>
+              <div style={{ fontSize: 12, color: t.textSub, marginBottom: 8 }}>
+                이 동아리를 지망한 학생 목록입니다. (면접 전환 전 신청 포함)
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
+                  <thead>
+                    <tr>
+                      {["학번", "이름", "지망순위", "상태"].map((head) => (
+                        <th
+                          key={head}
+                          style={{ textAlign: "left", padding: "8px 6px", fontSize: 12, color: t.textSub, borderBottom: `1px solid ${t.border}` }}
+                        >
+                          {head}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {applicants.map((app) => {
+                      const statusLabel = app.status === "approved" ? "승인"
+                        : app.status === "rejected" ? "반려"
+                        : app.status === "cancelled" ? "취소"
+                        : app.status === "pending" ? "대기"
+                        : app.status || "-";
+                      const statusColor = app.status === "approved" ? t.ok
+                        : app.status === "rejected" ? t.danger
+                        : app.status === "cancelled" ? t.textSub
+                        : t.warn;
+                      return (
+                        <tr key={app.id}>
+                          <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{app.studentNo || "-"}</td>
+                          <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{app.studentName || "-"}</td>
+                          <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{app.preferenceRank ? `${app.preferenceRank}지망` : "-"}</td>
+                          <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: statusColor, fontWeight: 700 }}>{statusLabel}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -4739,6 +4789,7 @@ export default function PrototypeApp({ studentOnly = false }) {
     open: false,
     club: null,
     members: [],
+    applicants: [],
     selectedStudentUid: "",
     loading: false,
   });
@@ -5506,23 +5557,29 @@ export default function PrototypeApp({ studentOnly = false }) {
       open: true,
       club,
       members: [],
+      applicants: [],
       selectedStudentUid: "",
       loading: true,
     });
 
     try {
-      await ensureUsersLoaded();
-      const members = await listClubMembers(club.id);
+      const loadedUsers = await ensureUsersLoaded();
+      const profilesByUid = new Map((loadedUsers || []).map((row) => [row.uid, row]));
+      const [members, applicants] = await Promise.all([
+        listClubMembers(club.id),
+        listApplicationsBySchedule(club.id, { cycle, profilesByUid }),
+      ]);
       setInterviewDialog({
         open: true,
         club,
         members,
+        applicants,
         selectedStudentUid: "",
         loading: false,
       });
     } catch (error) {
       withMessageError(error, "동아리 구성원을 불러오지 못했습니다.");
-      setInterviewDialog({ open: false, club: null, members: [], selectedStudentUid: "", loading: false });
+      setInterviewDialog({ open: false, club: null, members: [], applicants: [], selectedStudentUid: "", loading: false });
     }
   }
 
@@ -5530,11 +5587,14 @@ export default function PrototypeApp({ studentOnly = false }) {
     if (!club) return;
     setInterviewDialog((prev) => ({ ...prev, loading: true }));
     try {
+      const loadedUsers = usersLoaded ? users : await ensureUsersLoaded();
+      const profilesByUid = new Map((loadedUsers || []).map((row) => [row.uid, row]));
       const [members, clubsData, cycleInfo] = await Promise.all([
         listClubMembers(club.id),
         refreshClubs(),
         refreshCycle(),
       ]);
+      const applicants = await listApplicationsBySchedule(club.id, { cycle: cycleInfo, profilesByUid });
       await refreshRecruitmentViews(clubsData, cycleInfo);
 
       const latestClub = clubsData.find((item) => item.id === club.id) || club;
@@ -5543,6 +5603,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         open: true,
         club: latestClub,
         members,
+        applicants,
         loading: false,
       }));
     } catch (error) {
@@ -5624,7 +5685,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         setApplicantDialog({ open: false, club: null, rows: [], loading: false });
       }
       if (interviewDialog.open) {
-        setInterviewDialog({ open: false, club: null, members: [], selectedStudentUid: "", loading: false });
+        setInterviewDialog({ open: false, club: null, members: [], applicants: [], selectedStudentUid: "", loading: false });
       }
     } catch (error) {
       withMessageError(error, "모집 데이터 초기화에 실패했습니다.");
@@ -6436,13 +6497,14 @@ export default function PrototypeApp({ studentOnly = false }) {
         club={interviewDialog.club}
         users={users}
         members={interviewDialog.members}
+        applicants={interviewDialog.applicants}
         loading={interviewDialog.loading}
         selectionReady={submissionState.selectionReady}
         preAssignmentState={preAssignmentState}
         cycleClosed={cycle?.status === "closed"}
         selectedStudentUid={interviewDialog.selectedStudentUid}
         setSelectedStudentUid={(value) => setInterviewDialog((prev) => ({ ...prev, selectedStudentUid: value }))}
-        onClose={() => setInterviewDialog({ open: false, club: null, members: [], selectedStudentUid: "", loading: false })}
+        onClose={() => setInterviewDialog({ open: false, club: null, members: [], applicants: [], selectedStudentUid: "", loading: false })}
         onSelect={handleDirectSelect}
         onRevoke={handleRevokeInterviewMember}
       />
