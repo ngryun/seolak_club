@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
 import {
   adminForceAssignStudentToClub,
@@ -1104,6 +1104,67 @@ function StatusBadge({ status }) {
   );
 }
 
+function StudentDetailPanel({ loading, detail, studentName, studentNo, currentClubId }) {
+  return (
+    <div style={{ padding: "10px 12px", background: "#f8fafc" }}>
+      {loading ? (
+        <div style={{ fontSize: 12, color: t.textSub }}>불러오는 중...</div>
+      ) : detail ? (
+        <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>
+            {studentName} ({studentNo}) 전체 신청 정보
+          </div>
+          {detail.careerGoal ? (
+            <div style={{ fontSize: 12, padding: "6px 10px", background: "#eef2ff", borderRadius: 6, border: "1px solid #dde3f0" }}>
+              <span style={{ fontWeight: 700, color: t.accent }}>진로희망:</span>{" "}
+              <span style={{ color: t.text }}>{detail.careerGoal}</span>
+            </div>
+          ) : null}
+          <div style={{ display: "grid", gap: 6 }}>
+            {detail.apps.map((app) => {
+              const isThis = app.clubId === currentClubId;
+              return (
+                <div
+                  key={app.id}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 6,
+                    border: `1px solid ${isThis ? "#b3d4fc" : t.border}`,
+                    background: isThis ? "#edf4ff" : "#fff",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                    <span style={{
+                      fontSize: 11, fontWeight: 800, padding: "2px 6px", borderRadius: 4,
+                      background: isThis ? t.accent : "#e5e7eb", color: isThis ? "#fff" : t.textSub,
+                    }}>
+                      {app.preferenceRank}지망
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: 700 }}>{app.club?.clubName || app.clubId}</span>
+                    <StatusBadge status={app.status} />
+                    {isThis ? <span style={{ fontSize: 10, color: t.accent }}>(현재 동아리)</span> : null}
+                  </div>
+                  <div style={{ fontSize: 12, color: t.textSub, display: "grid", gridTemplateColumns: "auto 1fr", gap: "2px 8px" }}>
+                    <span style={{ fontWeight: 600 }}>신청사유</span>
+                    <span>{app.applyReason || "-"}</span>
+                    <span style={{ fontWeight: 600 }}>활동계획</span>
+                    <span>{app.wantedActivity || "-"}</span>
+                  </div>
+                </div>
+              );
+            })}
+            {detail.apps.length === 0 ? (
+              <div style={{ fontSize: 12, color: t.textSub }}>신청 내역이 없습니다.</div>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: t.textSub }}>정보를 불러올 수 없습니다.</div>
+      )}
+    </div>
+  );
+}
+
 function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
   const [isMobile, setIsMobile] = useState(
     () => (typeof window !== "undefined" ? window.innerWidth < 980 : false),
@@ -1989,6 +2050,28 @@ function ApplicantsDialog({
   randomLocked,
 }) {
   const [manualStudentUid, setManualStudentUid] = useState("");
+  const [expandedStudentUid, setExpandedStudentUid] = useState(null);
+  const [studentDetail, setStudentDetail] = useState(null);
+  const [studentDetailLoading, setStudentDetailLoading] = useState(false);
+
+  async function toggleStudentDetail(row) {
+    if (expandedStudentUid === row.teacherUid) {
+      setExpandedStudentUid(null);
+      setStudentDetail(null);
+      return;
+    }
+    setExpandedStudentUid(row.teacherUid);
+    setStudentDetailLoading(true);
+    try {
+      const apps = await listStudentApplications(row.teacherUid, { cycle });
+      const profile = (users || []).find((u) => u.uid === row.teacherUid);
+      setStudentDetail({ apps, profile, careerGoal: row.careerGoal || apps[0]?.careerGoal || "" });
+    } catch {
+      setStudentDetail(null);
+    } finally {
+      setStudentDetailLoading(false);
+    }
+  }
 
   const clubTargetGradesKey = Array.isArray(club?.targetGrades) ? club.targetGrades.join(",") : "";
   const students = useMemo(
@@ -2114,10 +2197,14 @@ function ApplicantsDialog({
               && cycle?.status === "open"
               && (selectionReady || preAssignmentReady)
               && row.selectionSource !== "leader_auto";
+            const isExpanded = expandedStudentUid === row.teacherUid;
             return (
-              <tr key={row.id}>
+              <Fragment key={row.id}>
+              <tr style={{ cursor: "pointer", background: isExpanded ? "#f0f6ff" : undefined }} onClick={() => toggleStudentDetail(row)}>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.studentNo || "-"}</td>
-                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.studentName || "-"}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13, color: t.accent, fontWeight: 600 }}>
+                  {row.studentName || "-"} <span style={{ fontSize: 10, color: t.textSub }}>{isExpanded ? "▲" : "▼"}</span>
+                </td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.preferenceRank}지망</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}><StatusBadge status={row.status} /></td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap", maxWidth: 140, wordBreak: "break-word" }}>{row.careerGoal || "-"}</td>
@@ -2174,6 +2261,20 @@ function ApplicantsDialog({
                   ) : null}
                 </td>
               </tr>
+              {isExpanded ? (
+                <tr>
+                  <td colSpan={theadCols.length} style={{ padding: 0, borderBottom: `1px solid ${t.border}` }}>
+                    <StudentDetailPanel
+                      loading={studentDetailLoading}
+                      detail={studentDetail}
+                      studentName={row.studentName}
+                      studentNo={row.studentNo}
+                      currentClubId={club?.id}
+                    />
+                  </td>
+                </tr>
+              ) : null}
+              </Fragment>
             );
           };
           const renderThead = () => (
@@ -2259,6 +2360,29 @@ function InterviewSelectDialog({
   onSelect,
   onRevoke,
 }) {
+  const [expandedInterviewUid, setExpandedInterviewUid] = useState(null);
+  const [interviewStudentDetail, setInterviewStudentDetail] = useState(null);
+  const [interviewDetailLoading, setInterviewDetailLoading] = useState(false);
+
+  async function toggleInterviewStudentDetail(studentUid) {
+    if (expandedInterviewUid === studentUid) {
+      setExpandedInterviewUid(null);
+      setInterviewStudentDetail(null);
+      return;
+    }
+    setExpandedInterviewUid(studentUid);
+    setInterviewDetailLoading(true);
+    try {
+      const apps = await listStudentApplications(studentUid);
+      const profile = (users || []).find((u) => u.uid === studentUid);
+      setInterviewStudentDetail({ apps, profile, careerGoal: apps[0]?.careerGoal || "" });
+    } catch {
+      setInterviewStudentDetail(null);
+    } finally {
+      setInterviewDetailLoading(false);
+    }
+  }
+
   if (!open) return null;
 
   const students = users.filter((u) => u.role === "student");
@@ -2447,16 +2571,34 @@ function InterviewSelectDialog({
                         : app.status === "rejected" ? t.danger
                         : app.status === "cancelled" ? t.textSub
                         : t.warn;
+                      const isExpanded = expandedInterviewUid === app.teacherUid;
                       return (
-                        <tr key={app.id}>
+                        <Fragment key={app.id}>
+                        <tr style={{ cursor: "pointer", background: isExpanded ? "#fdf8ef" : undefined }} onClick={() => toggleInterviewStudentDetail(app.teacherUid)}>
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{app.studentNo || "-"}</td>
-                          <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{app.studentName || "-"}</td>
+                          <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13, color: t.accent, fontWeight: 600 }}>
+                            {app.studentName || "-"} <span style={{ fontSize: 10, color: t.textSub }}>{isExpanded ? "▲" : "▼"}</span>
+                          </td>
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{app.preferenceRank ? `${app.preferenceRank}지망` : "-"}</td>
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, maxWidth: 140, wordBreak: "break-word" }}>{app.careerGoal || "-"}</td>
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, maxWidth: 180, wordBreak: "break-word" }}>{app.applyReason || "-"}</td>
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, maxWidth: 180, wordBreak: "break-word" }}>{app.wantedActivity || "-"}</td>
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: statusColor, fontWeight: 700 }}>{statusLabel}</td>
                         </tr>
+                        {isExpanded ? (
+                          <tr>
+                            <td colSpan={7} style={{ padding: 0, borderBottom: `1px solid ${t.border}` }}>
+                              <StudentDetailPanel
+                                loading={interviewDetailLoading}
+                                detail={interviewStudentDetail}
+                                studentName={app.studentName}
+                                studentNo={app.studentNo}
+                                currentClubId={club?.id}
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
+                        </Fragment>
                       );
                     })}
                   </tbody>
@@ -3486,8 +3628,9 @@ function RequestCardAdminPanel({
   onOpenApplications,
   onChangeStatus,
 }) {
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.loginId === "admin";
   const canManageCard = (card) => isAdmin || card?.createdByUid === user?.uid;
+  const visibleCards = isAdmin ? cards : cards.filter((card) => card.createdByUid === user?.uid);
   return (
     <section style={cardStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
@@ -3604,7 +3747,7 @@ function RequestCardAdminPanel({
             </tr>
           </thead>
           <tbody>
-            {cards.map((card) => {
+            {visibleCards.map((card) => {
               const state = getRequestCardState(card);
               const phaseMeta = requestCardPhaseMeta(state);
               const drawDisabled = loading || !state.canDraw;
@@ -3698,10 +3841,10 @@ function RequestCardAdminPanel({
                 </tr>
               );
             })}
-            {cards.length === 0 ? (
+            {visibleCards.length === 0 ? (
               <tr>
                 <td colSpan={9} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
-                  아직 생성된 신청 카드가 없습니다.
+                  {isAdmin ? "아직 생성된 신청 카드가 없습니다." : "내가 만든 신청 카드가 없습니다."}
                 </td>
               </tr>
             ) : null}
