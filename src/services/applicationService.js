@@ -1126,6 +1126,37 @@ export async function listApplicationsBySchedule(clubId, options = {}) {
   const rows = (await getApplicationsByClub(clubId)).filter((item) => item.cycleId === cycle.id)
   const profilesByUid = options?.profilesByUid
 
+  // 신청 기간 중이면 draft도 포함 (아직 application으로 변환되지 않은 학생 신청)
+  const submission = getSubmissionWindowState(cycle)
+  if (submission.configured && (submission.phase === 'open' || submission.phase === 'before')) {
+    const drafts = await listDraftsByCycle(cycle.id)
+    const existingStudents = new Set(rows.map((row) => row.studentUid))
+    drafts.forEach((draft) => {
+      if (existingStudents.has(draft.studentUid)) return
+      draft.preferences.forEach((pref) => {
+        if (pref.clubId !== clubId) return
+        rows.push(normalizeApplication(
+          `draft__${draft.id}__${pref.preferenceRank}`,
+          {
+            cycleId: cycle.id,
+            studentUid: draft.studentUid,
+            studentNo: draft.studentNo,
+            studentName: draft.studentName,
+            clubId: pref.clubId,
+            preferenceRank: pref.preferenceRank,
+            careerGoal: pref.careerGoal,
+            applyReason: pref.applyReason,
+            wantedActivity: pref.wantedActivity,
+            status: pref.preferenceRank === 1 ? STATUS.PENDING : STATUS.WAITING,
+            selectionSource: 'draft',
+            createdAt: draft.submittedAt,
+            updatedAt: draft.updatedAt,
+          },
+        ))
+      })
+    })
+  }
+
   const cachedProfiles = rows.map((row) => readProfileFromCache(profilesByUid, row.studentUid))
   const missingIndexes = cachedProfiles
     .map((profile, index) => (profile ? -1 : index))

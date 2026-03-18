@@ -2106,7 +2106,8 @@ function ApplicantsDialog({
             </thead>
             <tbody>
               {rows.map((row) => {
-                const canDecide = row.status === "pending" && cycle?.status === "open" && selectionReady;
+                const isDraft = row.selectionSource === "draft";
+                const canDecide = !isDraft && row.status === "pending" && cycle?.status === "open" && selectionReady;
                 const canRevoke = row.status === "approved"
                   && cycle?.status === "open"
                   && (selectionReady || preAssignmentReady)
