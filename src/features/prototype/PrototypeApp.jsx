@@ -2055,16 +2055,17 @@ function ApplicantsDialog({
   const [studentDetailLoading, setStudentDetailLoading] = useState(false);
 
   async function toggleStudentDetail(row) {
-    if (expandedStudentUid === row.teacherUid) {
+    const uid = row.studentUid || row.teacherUid;
+    if (expandedStudentUid === uid) {
       setExpandedStudentUid(null);
       setStudentDetail(null);
       return;
     }
-    setExpandedStudentUid(row.teacherUid);
+    setExpandedStudentUid(uid);
     setStudentDetailLoading(true);
     try {
-      const apps = await listStudentApplications(row.teacherUid, { cycle });
-      const profile = (users || []).find((u) => u.uid === row.teacherUid);
+      const apps = await listStudentApplications(uid, { cycle });
+      const profile = (users || []).find((u) => u.uid === uid);
       setStudentDetail({ apps, profile, careerGoal: row.careerGoal || apps[0]?.careerGoal || "" });
     } catch {
       setStudentDetail(null);
@@ -2197,7 +2198,7 @@ function ApplicantsDialog({
               && cycle?.status === "open"
               && (selectionReady || preAssignmentReady)
               && row.selectionSource !== "leader_auto";
-            const isExpanded = expandedStudentUid === row.teacherUid;
+            const isExpanded = expandedStudentUid === (row.studentUid || row.teacherUid);
             return (
               <Fragment key={row.id}>
               <tr style={{ cursor: "pointer", background: isExpanded ? "#f0f6ff" : undefined }} onClick={() => toggleStudentDetail(row)}>
@@ -2571,10 +2572,10 @@ function InterviewSelectDialog({
                         : app.status === "rejected" ? t.danger
                         : app.status === "cancelled" ? t.textSub
                         : t.warn;
-                      const isExpanded = expandedInterviewUid === app.teacherUid;
+                      const isExpanded = expandedInterviewUid === (app.studentUid || app.teacherUid);
                       return (
                         <Fragment key={app.id}>
-                        <tr style={{ cursor: "pointer", background: isExpanded ? "#fdf8ef" : undefined }} onClick={() => toggleInterviewStudentDetail(app.teacherUid)}>
+                        <tr style={{ cursor: "pointer", background: isExpanded ? "#fdf8ef" : undefined }} onClick={() => toggleInterviewStudentDetail(app.studentUid || app.teacherUid)}>
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{app.studentNo || "-"}</td>
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13, color: t.accent, fontWeight: 600 }}>
                             {app.studentName || "-"} <span style={{ fontSize: 10, color: t.textSub }}>{isExpanded ? "▲" : "▼"}</span>
