@@ -2103,11 +2103,83 @@ function ApplicantsDialog({
           </div>
         </div>
 
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+        {(() => {
+          const approvedRows = rows.filter((r) => r.status === "approved");
+          const otherRows = rows.filter((r) => r.status !== "approved");
+          const theadCols = ["학번", "이름", "지망", "상태", "진로희망", "신청사유", "활동계획", "결정", "작업"];
+          const renderRow = (row) => {
+            const isDraft = row.selectionSource === "draft";
+            const canDecide = !isDraft && row.status === "pending" && cycle?.status === "open" && selectionReady;
+            const canRevoke = row.status === "approved"
+              && cycle?.status === "open"
+              && (selectionReady || preAssignmentReady)
+              && row.selectionSource !== "leader_auto";
+            return (
+              <tr key={row.id}>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.studentNo || "-"}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.studentName || "-"}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.preferenceRank}지망</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}><StatusBadge status={row.status} /></td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap", maxWidth: 140, wordBreak: "break-word" }}>{row.careerGoal || "-"}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap", maxWidth: 160, wordBreak: "break-word" }}>{row.applyReason || "-"}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap", maxWidth: 160, wordBreak: "break-word" }}>{row.wantedActivity || "-"}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, color: t.textSub }}>
+                  {decisionLabel(row)}
+                </td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}>
+                  {canDecide ? (
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        onClick={() => onApprove(row)}
+                        disabled={loading}
+                        style={{
+                          ...buttonBase,
+                          padding: "5px 8px",
+                          background: !loading ? "#e8f5e9" : "#cfd8e3",
+                          color: !loading ? t.ok : "#6b7280",
+                          fontWeight: 700,
+                        }}
+                      >
+                        승인
+                      </button>
+                      <button
+                        onClick={() => onReject(row)}
+                        disabled={loading}
+                        style={{
+                          ...buttonBase,
+                          padding: "5px 8px",
+                          background: !loading ? "#ffebee" : "#cfd8e3",
+                          color: !loading ? t.danger : "#6b7280",
+                          fontWeight: 700,
+                        }}
+                      >
+                        반려
+                      </button>
+                    </div>
+                  ) : null}
+                  {canRevoke ? (
+                    <button
+                      onClick={() => onRevoke(row)}
+                      disabled={loading}
+                      style={{
+                        ...buttonBase,
+                        padding: "5px 8px",
+                        background: !loading ? "#fff4e5" : "#cfd8e3",
+                        color: !loading ? t.warn : "#6b7280",
+                        fontWeight: 700,
+                      }}
+                    >
+                      승인 취소
+                    </button>
+                  ) : null}
+                </td>
+              </tr>
+            );
+          };
+          const renderThead = () => (
             <thead>
               <tr>
-                {["학번", "이름", "지망", "상태", "신청사유", "활동계획", "결정", "작업"].map((head) => (
+                {theadCols.map((head) => (
                   <th
                     key={head}
                     style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
@@ -2117,85 +2189,55 @@ function ApplicantsDialog({
                 ))}
               </tr>
             </thead>
-            <tbody>
-              {rows.map((row) => {
-                const isDraft = row.selectionSource === "draft";
-                const canDecide = !isDraft && row.status === "pending" && cycle?.status === "open" && selectionReady;
-                const canRevoke = row.status === "approved"
-                  && cycle?.status === "open"
-                  && (selectionReady || preAssignmentReady)
-                  && row.selectionSource !== "leader_auto";
-                return (
-                  <tr key={row.id}>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.studentNo || "-"}</td>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.studentName || "-"}</td>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{row.preferenceRank}지망</td>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}><StatusBadge status={row.status} /></td>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.applyReason || "-"}</td>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, whiteSpace: "pre-wrap" }}>{row.wantedActivity || "-"}</td>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, color: t.textSub }}>
-                      {decisionLabel(row)}
-                    </td>
-                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}>
-                      {canDecide ? (
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button
-                            onClick={() => onApprove(row)}
-                            disabled={loading}
-                            style={{
-                              ...buttonBase,
-                              padding: "5px 8px",
-                              background: !loading ? "#e8f5e9" : "#cfd8e3",
-                              color: !loading ? t.ok : "#6b7280",
-                              fontWeight: 700,
-                            }}
-                          >
-                            승인
-                          </button>
-                          <button
-                            onClick={() => onReject(row)}
-                            disabled={loading}
-                            style={{
-                              ...buttonBase,
-                              padding: "5px 8px",
-                              background: !loading ? "#ffebee" : "#cfd8e3",
-                              color: !loading ? t.danger : "#6b7280",
-                              fontWeight: 700,
-                            }}
-                          >
-                            반려
-                          </button>
-                        </div>
+          );
+          return (
+            <>
+              {/* 승인된 학생 */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6, color: t.ok }}>
+                  승인된 학생 ({approvedRows.length}명)
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1060 }}>
+                    {renderThead()}
+                    <tbody>
+                      {approvedRows.map(renderRow)}
+                      {approvedRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={theadCols.length} style={{ padding: 14, textAlign: "center", fontSize: 13, color: t.textSub }}>
+                            아직 승인된 학생이 없습니다.
+                          </td>
+                        </tr>
                       ) : null}
-                      {canRevoke ? (
-                        <button
-                          onClick={() => onRevoke(row)}
-                          disabled={loading}
-                          style={{
-                            ...buttonBase,
-                            padding: "5px 8px",
-                            background: !loading ? "#fff4e5" : "#cfd8e3",
-                            color: !loading ? t.warn : "#6b7280",
-                            fontWeight: 700,
-                          }}
-                        >
-                          승인 취소
-                        </button>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* 나머지 학생 (대기/반려/취소 등) */}
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6 }}>
+                  대기 / 기타 ({otherRows.length}명)
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1060 }}>
+                    {renderThead()}
+                    <tbody>
+                      {otherRows.map(renderRow)}
+                      {otherRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={theadCols.length} style={{ padding: 14, textAlign: "center", fontSize: 13, color: t.textSub }}>
+                            대기 중인 신청이 없습니다.
+                          </td>
+                        </tr>
                       ) : null}
-                    </td>
-                  </tr>
-                );
-              })}
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={9} style={{ padding: 16, textAlign: "center", fontSize: 13, color: t.textSub }}>
-                    신청 데이터가 없습니다.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          );
+        })()}
       </div>
     </div>
   );
