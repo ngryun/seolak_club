@@ -2381,10 +2381,10 @@ function InterviewSelectDialog({
                 이 동아리를 지망한 학생 목록입니다. (면접 전환 전 신청 포함)
               </div>
               <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
                   <thead>
                     <tr>
-                      {["학번", "이름", "지망순위", "상태"].map((head) => (
+                      {["학번", "이름", "지망순위", "진로", "희망사유", "하고싶은 활동", "상태"].map((head) => (
                         <th
                           key={head}
                           style={{ textAlign: "left", padding: "8px 6px", fontSize: 12, color: t.textSub, borderBottom: `1px solid ${t.border}` }}
@@ -2410,6 +2410,9 @@ function InterviewSelectDialog({
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{app.studentNo || "-"}</td>
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{app.studentName || "-"}</td>
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{app.preferenceRank ? `${app.preferenceRank}지망` : "-"}</td>
+                          <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, maxWidth: 140, wordBreak: "break-word" }}>{app.careerGoal || "-"}</td>
+                          <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, maxWidth: 180, wordBreak: "break-word" }}>{app.applyReason || "-"}</td>
+                          <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, maxWidth: 180, wordBreak: "break-word" }}>{app.wantedActivity || "-"}</td>
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: statusColor, fontWeight: 700 }}>{statusLabel}</td>
                         </tr>
                       );
