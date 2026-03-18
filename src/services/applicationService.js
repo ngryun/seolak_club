@@ -540,9 +540,6 @@ async function normalizeStudentPreferences(studentNo, preferences) {
     if (club.isInterviewSelection) {
       throw new Error('자체면접 동아리는 학생 신청으로 선택할 수 없습니다.')
     }
-    if (!club.leaderUid) {
-      throw new Error(`${club.clubName} 동아리는 동아리장이 지정되지 않아 현재 신청할 수 없습니다.`)
-    }
     if (!isStudentEligibleForClub(club, studentNo)) {
       throw new Error(`${club.clubName}은(는) 대상학년에 해당하지 않습니다.`)
     }
