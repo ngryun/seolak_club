@@ -1616,7 +1616,7 @@ function ClubTable({
   const headers = ["동아리명", "담당교사", "동아리장", "대상학년", "동아리실"];
   if (showCapacity) headers.push("정원");
   headers.push("면접");
-  if (showRoundStatus) headers.push("라운드 현황");
+  if (showRoundStatus) headers.push("1지망", "2지망", "3지망", "라운드 현황");
   if (showActions) headers.push("작업");
 
   return (
@@ -1707,14 +1707,22 @@ function ClubTable({
                   </div>
                 ) : null}
                 {showRoundStatus ? (
-                  <div style={mobileRow}>
-                    <span style={mobileLabel}>라운드</span>
-                    <span style={{ ...mobileVal, fontSize: 12, color: t.textSub }}>
-                      {cycle?.status === "closed"
-                        ? "종료"
-                        : `${cycle?.currentRound || 1}R 대기 ${stats.pendingCurrent}명 / 승인 ${stats.approved}명`}
-                    </span>
-                  </div>
+                  <>
+                    <div style={mobileRow}>
+                      <span style={mobileLabel}>지망별</span>
+                      <span style={{ ...mobileVal, fontSize: 12, color: t.textSub }}>
+                        1지망 {stats.pref1 || 0} / 2지망 {stats.pref2 || 0} / 3지망 {stats.pref3 || 0}
+                      </span>
+                    </div>
+                    <div style={mobileRow}>
+                      <span style={mobileLabel}>라운드</span>
+                      <span style={{ ...mobileVal, fontSize: 12, color: t.textSub }}>
+                        {cycle?.status === "closed"
+                          ? "종료"
+                          : `${cycle?.currentRound || 1}R 대기 ${stats.pendingCurrent}명 / 승인 ${stats.approved}명`}
+                      </span>
+                    </div>
+                  </>
                 ) : null}
                 {/* 액션 버튼 */}
                 {showActions ? (
@@ -1826,11 +1834,16 @@ function ClubTable({
                       {club.isInterviewSelection ? "O" : "X"}
                     </td>
                     {showRoundStatus ? (
-                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 12, color: t.textSub }}>
-                        {cycle?.status === "closed"
-                          ? "종료"
-                          : `${cycle?.currentRound || 1}R 대기 ${stats.pendingCurrent}명 / 승인 ${stats.approved}명`}
-                      </td>
+                      <>
+                        <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13, textAlign: "center" }}>{stats.pref1 || 0}</td>
+                        <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13, textAlign: "center" }}>{stats.pref2 || 0}</td>
+                        <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 13, textAlign: "center" }}>{stats.pref3 || 0}</td>
+                        <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px", fontSize: 12, color: t.textSub }}>
+                          {cycle?.status === "closed"
+                            ? "종료"
+                            : `${cycle?.currentRound || 1}R 대기 ${stats.pendingCurrent}명 / 승인 ${stats.approved}명`}
+                        </td>
+                      </>
                     ) : null}
                     {showActions ? (
                       <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 8px" }}>
@@ -2540,7 +2553,7 @@ function RoundPanel({
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
           <thead>
             <tr>
-              {["동아리", "현재라운드 대기", "총신청", "승인", "반려", "취소"].map((head) => (
+              {["동아리", "1지망", "2지망", "3지망", "현재라운드 대기", "총신청", "승인", "반려", "취소"].map((head) => (
                 <th key={head} style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}>{head}</th>
               ))}
             </tr>
@@ -2549,6 +2562,9 @@ function RoundPanel({
             {Object.values(stats).map((row) => (
               <tr key={row.clubId}>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13, fontWeight: 700 }}>{row.clubName}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13, textAlign: "center" }}>{row.pref1 || 0}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13, textAlign: "center" }}>{row.pref2 || 0}</td>
+                <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13, textAlign: "center" }}>{row.pref3 || 0}</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.pendingCurrent}</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.total}</td>
                 <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.approved}</td>
@@ -2558,7 +2574,7 @@ function RoundPanel({
             ))}
             {Object.keys(stats).length === 0 ? (
               <tr>
-                <td colSpan={6} style={{ padding: 14, textAlign: "center", color: t.textSub, fontSize: 13 }}>
+                <td colSpan={9} style={{ padding: 14, textAlign: "center", color: t.textSub, fontSize: 13 }}>
                   동아리 데이터가 없습니다.
                 </td>
               </tr>

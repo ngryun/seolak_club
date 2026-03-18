@@ -1205,6 +1205,9 @@ export async function getRoundStatsByClubIds(clubIds, options = {}) {
         approved: 0,
         rejected: 0,
         cancelled: 0,
+        pref1: 0,
+        pref2: 0,
+        pref3: 0,
       },
     ]),
   )
@@ -1236,7 +1239,11 @@ export async function getRoundStatsByClubIds(clubIds, options = {}) {
         if (!target) return
         draftStudentClubs.add(`${draft.studentUid}__${pref.clubId}`)
         target.total += 1
-        if (Number(pref.preferenceRank) === currentRound) {
+        const rank = Number(pref.preferenceRank)
+        if (rank === 1) target.pref1 += 1
+        else if (rank === 2) target.pref2 += 1
+        else if (rank === 3) target.pref3 += 1
+        if (rank === currentRound) {
           target.pendingCurrent += 1
         }
       })
@@ -1248,7 +1255,11 @@ export async function getRoundStatsByClubIds(clubIds, options = {}) {
     if (!target) return
 
     target.total += 1
-    if (row.status === STATUS.PENDING && Number(row.preferenceRank) === currentRound) {
+    const rank = Number(row.preferenceRank)
+    if (rank === 1) target.pref1 += 1
+    else if (rank === 2) target.pref2 += 1
+    else if (rank === 3) target.pref3 += 1
+    if (row.status === STATUS.PENDING && rank === currentRound) {
       target.pendingCurrent += 1
     }
     if (row.status === STATUS.APPROVED) target.approved += 1
