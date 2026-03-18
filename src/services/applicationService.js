@@ -1191,6 +1191,27 @@ export async function getRoundStatsByClubIds(clubIds, options = {}) {
       .docs
       .map((item) => normalizeApplication(item.id, item.data()))
 
+  // 신청 기간 중이면 draft도 통계에 포함 (아직 application으로 변환되지 않은 학생 신청)
+  const submission = getSubmissionWindowState(cycle)
+  const draftStudentClubs = new Set()
+  if (submission.configured && (submission.phase === 'open' || submission.phase === 'before')) {
+    const drafts = await listDraftsByCycle(cycle.id)
+    // 이미 application이 있는 학생은 제외
+    const existingStudents = new Set(rows.map((row) => row.studentUid))
+    drafts.forEach((draft) => {
+      if (existingStudents.has(draft.studentUid)) return
+      draft.preferences.forEach((pref) => {
+        const target = stats[pref.clubId]
+        if (!target) return
+        draftStudentClubs.add(`${draft.studentUid}__${pref.clubId}`)
+        target.total += 1
+        if (Number(pref.preferenceRank) === currentRound) {
+          target.pendingCurrent += 1
+        }
+      })
+    })
+  }
+
   rows.forEach((row) => {
     const target = stats[row.clubId]
     if (!target) return
