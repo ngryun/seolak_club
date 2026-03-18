@@ -2109,8 +2109,7 @@ function ApplicantsDialog({
                 const canDecide = row.status === "pending" && cycle?.status === "open" && selectionReady;
                 const canRevoke = row.status === "approved"
                   && cycle?.status === "open"
-                  && selectionReady
-                  && row.selectionSource !== "random"
+                  && (selectionReady || preAssignmentReady)
                   && row.selectionSource !== "leader_auto";
                 return (
                   <tr key={row.id}>
@@ -5379,7 +5378,7 @@ export default function PrototypeApp({ studentOnly = false }) {
     }
 
     try {
-      await revokeApprovedApplication({ applicationId: row.id, actor: user });
+      await revokeApprovedApplication({ applicationId: row.id, actor: user, allowPreAssignment: true });
       setMessage({ type: "ok", text: "승인 취소 처리했습니다." });
       await reloadApplicantDialog(applicantDialog.club);
       await refreshMyApplications();
