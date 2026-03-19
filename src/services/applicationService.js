@@ -450,6 +450,15 @@ async function getAllApplications() {
   return snapshot.docs.map((item) => normalizeApplication(item.id, item.data()))
 }
 
+async function getApplicationsByCycle(cycleId) {
+  if (!isFirebaseEnabled()) {
+    return localApplications.filter((row) => row.cycleId === cycleId)
+  }
+
+  const snapshot = await getDocs(query(collection(db, APPLICATIONS), where('cycleId', '==', cycleId)))
+  return snapshot.docs.map((item) => normalizeApplication(item.id, item.data()))
+}
+
 async function getApplicationsByStudent(studentUid) {
   if (!isFirebaseEnabled()) {
     return localApplications.filter((row) => row.studentUid === studentUid)
@@ -809,7 +818,7 @@ export async function updateRecruitmentSubmissionWindow(payload) {
     throw new Error('신청 종료 일시는 시작 일시보다 뒤여야 합니다.')
   }
 
-  const existingApps = (await getAllApplications()).filter((row) => row.cycleId === cycle.id)
+  const existingApps = await getApplicationsByCycle(cycle.id)
   const existingDrafts = await listDraftsByCycle(cycle.id)
   const hasSelectionData = existingApps.some((row) => row.selectionSource !== LEADER_AUTO_SOURCE || row.status !== STATUS.APPROVED)
   if ((!startAt || !endAt) && (existingDrafts.length > 0 || hasSelectionData)) {
@@ -992,7 +1001,7 @@ export async function finalizeCurrentCycleDraftsIfNeeded() {
   }
 
   const drafts = await listDraftsByCycle(cycle.id)
-  const existingApps = (await getAllApplications()).filter((row) => row.cycleId === cycle.id)
+  const existingApps = await getApplicationsByCycle(cycle.id)
   const existingByStudent = new Set(existingApps.map((row) => row.studentUid))
   const draftIds = drafts.map((row) => buildDraftDocId(cycle.id, row.studentUid))
   const appRows = []
@@ -1088,10 +1097,25 @@ export async function submitStudentPreferences(payload) {
   return saveStudentPreferenceDraft(payload)
 }
 
-export async function listCurrentCycleApplications() {
+const _cycleAppsCache = { data: null, cycleId: null, ts: 0 }
+const CYCLE_APPS_TTL = 30_000 // 30초 캐시
+
+export async function listCurrentCycleApplications({ forceRefresh = false } = {}) {
   const cycle = await getCurrentRecruitmentCycle()
-  const rows = await getAllApplications()
-  return rows.filter((row) => row.cycleId === cycle.id)
+  const now = Date.now()
+  if (!forceRefresh && _cycleAppsCache.data && _cycleAppsCache.cycleId === cycle.id && now - _cycleAppsCache.ts < CYCLE_APPS_TTL) {
+    return _cycleAppsCache.data
+  }
+  const rows = await getApplicationsByCycle(cycle.id)
+  _cycleAppsCache.data = rows
+  _cycleAppsCache.cycleId = cycle.id
+  _cycleAppsCache.ts = now
+  return rows
+}
+
+export function invalidateApplicationCache() {
+  _cycleAppsCache.data = null
+  _cycleAppsCache.ts = 0
 }
 
 export async function listCurrentCycleDrafts() {
@@ -1885,10 +1909,9 @@ export async function advanceRecruitmentRound(payload) {
   const cycle = await ensureSelectionPhaseReady()
   assertOpenCycle(cycle)
 
-  const allApps = await getAllApplications()
+  const allApps = await getApplicationsByCycle(cycle.id)
   const currentPending = allApps.filter(
-    (row) => row.cycleId === cycle.id
-      && row.preferenceRank === cycle.currentRound
+    (row) => row.preferenceRank === cycle.currentRound
       && row.status === STATUS.PENDING,
   )
 

@@ -27,6 +27,7 @@ import {
   syncLeaderAssignmentForClub,
   updateRecruitmentPreAssignmentWindow,
   updateRecruitmentSubmissionWindow,
+  invalidateApplicationCache,
 } from "../../services/applicationService";
 import {
   applyToRequestCard,
@@ -55,6 +56,7 @@ import {
   listSchedules,
   syncClubDisplayFieldsForUser,
   updateSchedule,
+  invalidateScheduleCache,
 } from "../../services/scheduleService";
 import {
   createUserAccount,
@@ -68,6 +70,7 @@ import {
   updateMyProfile,
   updateMyPassword,
   updateUserByAdmin,
+  invalidateUserCache,
 } from "../../services/userService";
 import { exportFullBackup } from "../../services/backupService";
 
@@ -5026,14 +5029,14 @@ export default function PrototypeApp({ studentOnly = false }) {
     return current;
   }
 
-  async function refreshClubs() {
-    const rows = await listSchedules();
+  async function refreshClubs({ forceRefresh = false } = {}) {
+    const rows = await listSchedules({ forceRefresh });
     setClubs(rows);
     return rows;
   }
 
-  async function refreshUsers() {
-    const rows = await listUsers();
+  async function refreshUsers({ forceRefresh = false } = {}) {
+    const rows = await listUsers({ forceRefresh });
     setUsers(rows);
     setUsersLoaded(true);
     return rows;
@@ -5327,7 +5330,9 @@ export default function PrototypeApp({ studentOnly = false }) {
 
       setClubFormDialogOpen(false);
       resetClubForm();
-      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      invalidateScheduleCache();
+      invalidateApplicationCache();
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs({ forceRefresh: true }), refreshCycle()]);
       await refreshRecruitmentViews(clubRows, cycleInfo);
     } catch (error) {
       withMessageError(error, "동아리 저장에 실패했습니다.");
@@ -5400,8 +5405,9 @@ export default function PrototypeApp({ studentOnly = false }) {
     if (!window.confirm(`동아리 '${club.clubName}'를 삭제하시겠습니까?`)) return;
     try {
       await deleteSchedule(club.id, { actor: user });
+      invalidateScheduleCache();
       setMessage({ type: "ok", text: "동아리를 삭제했습니다." });
-      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs({ forceRefresh: true }), refreshCycle()]);
       await refreshRecruitmentViews(clubRows, cycleInfo);
       if (editingClubId === club.id) {
         closeClubFormDialog();
@@ -5610,6 +5616,8 @@ export default function PrototypeApp({ studentOnly = false }) {
   async function handleApproveApplication(row) {
     try {
       await approveApplication({ applicationId: row.id, actor: user });
+      invalidateApplicationCache();
+      invalidateScheduleCache();
       setMessage({ type: "ok", text: "승인 처리했습니다." });
       await reloadApplicantDialog(applicantDialog.club);
       await refreshMyApplications();
@@ -5621,6 +5629,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   async function handleRejectApplication(row) {
     try {
       await rejectApplication({ applicationId: row.id, actor: user, reason: "manual" });
+      invalidateApplicationCache();
       setMessage({ type: "ok", text: "반려 처리했습니다." });
       await reloadApplicantDialog(applicantDialog.club);
       await refreshMyApplications();
@@ -5636,6 +5645,8 @@ export default function PrototypeApp({ studentOnly = false }) {
 
     try {
       await revokeApprovedApplication({ applicationId: row.id, actor: user, allowPreAssignment: true });
+      invalidateApplicationCache();
+      invalidateScheduleCache();
       setMessage({ type: "ok", text: "승인 취소 처리했습니다." });
       await reloadApplicantDialog(applicantDialog.club);
       await refreshMyApplications();
@@ -5650,6 +5661,8 @@ export default function PrototypeApp({ studentOnly = false }) {
         clubId: applicantDialog.club?.id,
         actor: user,
       });
+      invalidateApplicationCache();
+      invalidateScheduleCache();
       setMessage({
         type: "ok",
         text: `무작위 선발 완료: 승인 ${result.selected}명, 반려 ${result.rejected}명`,
@@ -5675,6 +5688,8 @@ export default function PrototypeApp({ studentOnly = false }) {
         studentUid: targetUid,
         actor: user,
       });
+      invalidateApplicationCache();
+      invalidateScheduleCache();
       const selected = users.find((row) => row.uid === targetUid);
       setMessage({
         type: "ok",
@@ -5716,11 +5731,13 @@ export default function PrototypeApp({ studentOnly = false }) {
         reason,
         actor: user,
       });
+      invalidateApplicationCache();
+      invalidateScheduleCache();
       setMessage({
         type: "ok",
         text: `${targetStudent?.name || "선택한 학생"} 학생을 ${targetClub?.clubName || "선택한 동아리"}로 강제 배정했습니다.`,
       });
-      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs({ forceRefresh: true }), refreshCycle()]);
       await Promise.all([
         refreshRecruitmentViews(clubRows, cycleInfo),
         refreshMyDraft(),
@@ -5808,6 +5825,8 @@ export default function PrototypeApp({ studentOnly = false }) {
         studentUid: student.uid,
         actor: user,
       });
+      invalidateApplicationCache();
+      invalidateScheduleCache();
       setMessage({ type: "ok", text: `${student.name} 학생을 선발했습니다.` });
       await reloadInterviewDialog(interviewDialog.club);
       await refreshMyApplications();
@@ -5834,6 +5853,8 @@ export default function PrototypeApp({ studentOnly = false }) {
         actor: user,
         allowPreAssignment: true,
       });
+      invalidateApplicationCache();
+      invalidateScheduleCache();
       setMessage({ type: "ok", text: `${member.name || "해당 학생"} 학생의 직접 선발을 취소했습니다.` });
       await reloadInterviewDialog(interviewDialog.club);
       await refreshMyApplications();
@@ -5845,8 +5866,10 @@ export default function PrototypeApp({ studentOnly = false }) {
   async function handleAdvanceRound() {
     try {
       const next = await advanceRecruitmentRound({ actor: user });
+      invalidateApplicationCache();
+      invalidateScheduleCache();
       setCycle(next);
-      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs({ forceRefresh: true }), refreshCycle()]);
       await Promise.all([
         refreshRecruitmentViews(clubRows, cycleInfo),
         refreshMyApplications(),
@@ -5863,8 +5886,10 @@ export default function PrototypeApp({ studentOnly = false }) {
 
     try {
       await purgeLegacyRecruitmentData({ actor: user });
+      invalidateApplicationCache();
+      invalidateScheduleCache();
       setMessage({ type: "ok", text: "모집 데이터를 초기화했습니다." });
-      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs({ forceRefresh: true }), refreshCycle()]);
       await Promise.all([
         refreshRecruitmentViews(clubRows, cycleInfo),
         refreshMyDraft(),
@@ -5997,8 +6022,9 @@ export default function PrototypeApp({ studentOnly = false }) {
         studentNo: String(form.studentNo || "").trim(),
         subject: String(form.subject || "").trim(),
       });
+      invalidateUserCache();
       setMessage({ type: "ok", text: "계정을 생성했습니다." });
-      const userRows = await refreshUsers();
+      const userRows = await refreshUsers({ forceRefresh: true });
       await refreshStudentStatusRows(userRows);
     } catch (error) {
       withMessageError(error, "계정 생성에 실패했습니다.");
@@ -6013,13 +6039,14 @@ export default function PrototypeApp({ studentOnly = false }) {
       }
 
       const result = await createUsersBatch(parsed);
+      invalidateUserCache();
       const failMessages = result.failed.slice(0, 5).map((item) => `${item.row}행 ${item.loginId}: ${item.reason}`);
       const summary = [`생성 ${result.created.length}건`, `실패 ${result.failed.length}건`];
       if (failMessages.length > 0) {
         summary.push(failMessages.join(" / "));
       }
       setMessage({ type: result.failed.length > 0 ? "info" : "ok", text: summary.join(" · ") });
-      const userRows = await refreshUsers();
+      const userRows = await refreshUsers({ forceRefresh: true });
       await refreshStudentStatusRows(userRows);
     } catch (error) {
       withMessageError(error, "엑셀 일괄 등록에 실패했습니다.");
@@ -6034,10 +6061,12 @@ export default function PrototypeApp({ studentOnly = false }) {
         studentNo: patch.studentNo,
         subject: patch.subject,
       });
+      invalidateUserCache();
+      invalidateScheduleCache();
       await syncClubDisplayFieldsForUser(row.uid);
       setMessage({ type: "ok", text: "회원 정보를 수정했습니다." });
-      await refreshClubs();
-      const userRows = await refreshUsers();
+      await refreshClubs({ forceRefresh: true });
+      const userRows = await refreshUsers({ forceRefresh: true });
       await refreshStudentStatusRows(userRows);
     } catch (error) {
       withMessageError(error, "회원 수정에 실패했습니다.");
@@ -6049,9 +6078,11 @@ export default function PrototypeApp({ studentOnly = false }) {
 
     try {
       await deleteUserByAdmin(row.uid);
+      invalidateUserCache();
+      invalidateScheduleCache();
       setMessage({ type: "ok", text: "회원을 삭제했습니다." });
-      const [clubRows, cycleInfo] = await Promise.all([refreshClubs(), refreshCycle()]);
-      const userRows = await refreshUsers();
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs({ forceRefresh: true }), refreshCycle()]);
+      const userRows = await refreshUsers({ forceRefresh: true });
       await refreshRecruitmentViews(clubRows, cycleInfo, userRows);
     } catch (error) {
       withMessageError(error, "회원 삭제에 실패했습니다.");

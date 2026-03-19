@@ -289,8 +289,12 @@ export function canManageSelection(club, actor) {
   return isClubTeacher(club, uid)
 }
 
+const _listSchedulesCache = { data: null, ts: 0 }
+const LIST_SCHEDULES_TTL = 30_000 // 30초 캐시
+
 export async function listSchedules(options = {}) {
   const includeLegacy = options?.includeLegacy === true
+  const forceRefresh = options?.forceRefresh === true
 
   if (!isFirebaseEnabled()) {
     const rows = scheduleStore.map((item) => normalizeClub(item.id, item))
@@ -298,11 +302,24 @@ export async function listSchedules(options = {}) {
     return sortClubs(filtered)
   }
 
+  const now = Date.now()
+  if (!forceRefresh && _listSchedulesCache.data && now - _listSchedulesCache.ts < LIST_SCHEDULES_TTL) {
+    const filtered = includeLegacy ? _listSchedulesCache.data : _listSchedulesCache.data.filter((row) => !row.legacy)
+    return sortClubs(filtered)
+  }
+
   const schedulesRef = collection(db, COLLECTION_NAME)
   const snapshot = await getDocs(schedulesRef)
   const rows = snapshot.docs.map((row) => normalizeClub(row.id, row.data()))
+  _listSchedulesCache.data = rows
+  _listSchedulesCache.ts = now
   const filtered = includeLegacy ? rows : rows.filter((row) => !row.legacy)
   return sortClubs(filtered)
+}
+
+export function invalidateScheduleCache() {
+  _listSchedulesCache.data = null
+  _listSchedulesCache.ts = 0
 }
 
 export async function getScheduleById(scheduleId) {

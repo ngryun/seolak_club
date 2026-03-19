@@ -585,19 +585,35 @@ export async function getUserProfile(uid) {
   return normalizeUser(snapshot.id, snapshot.data())
 }
 
-export async function listUsers() {
+const _listUsersCache = { data: null, ts: 0 }
+const LIST_USERS_TTL = 30_000 // 30초 캐시
+
+export async function listUsers({ forceRefresh = false } = {}) {
   if (!isFirebaseEnabled()) {
     return getLocalUsers().map((item) => normalizeUser(item.uid, item))
+  }
+
+  const now = Date.now()
+  if (!forceRefresh && _listUsersCache.data && now - _listUsersCache.ts < LIST_USERS_TTL) {
+    return _listUsersCache.data
   }
 
   const usersRef = collection(db, COLLECTION)
   const snapshot = await getDocs(usersRef)
   const rows = snapshot.docs.map((item) => normalizeUser(item.id, item.data()))
-  return rows.sort((a, b) => {
+  const sorted = rows.sort((a, b) => {
     const left = a.loginId || a.email || a.uid
     const right = b.loginId || b.email || b.uid
     return left.localeCompare(right, 'ko')
   })
+  _listUsersCache.data = sorted
+  _listUsersCache.ts = now
+  return sorted
+}
+
+export function invalidateUserCache() {
+  _listUsersCache.data = null
+  _listUsersCache.ts = 0
 }
 
 export async function updateUserRole(uid, role) {
