@@ -2837,6 +2837,7 @@ function StudentApplicationStatusPanel({
 }) {
   const [query, setQuery] = useState("");
   const [classFilter, setClassFilter] = useState("");
+  const [cardModal, setCardModal] = useState(null); // { label, students }
 
   const classOptions = useMemo(() => {
     const set = new Set();
@@ -2897,12 +2898,18 @@ function StudentApplicationStatusPanel({
     return { total, applied, notApplied, assigned, unassigned, totalCapacity, totalMembers, remaining, assignRate, filtered: !!classFilter };
   }, [rows, clubs, classFilter, filteredRows]);
 
+  const base = classFilter ? filteredRows : rows;
+  const notAppliedStudents = base.filter((r) => !r.preferences.some((p) => p.clubId));
+  const assignedStudents = base.filter((r) => r.finalClubName);
+  const appliedStudents = base.filter((r) => r.preferences.some((p) => p.clubId));
+  const unassignedStudents = appliedStudents.filter((r) => !r.finalClubName);
+
   const dashboardCards = [
     { label: stats.filtered ? "해당 학급" : "전체 학생", value: stats.total, accent: t.accent, bg: "#edf4ff", border: "#c8dcff" },
     { label: "신청 완료", value: stats.applied, accent: t.accent, bg: "#edf4ff", border: "#c8dcff" },
-    { label: "미신청", value: stats.notApplied, accent: stats.notApplied > 0 ? t.warn : t.textSub, bg: stats.notApplied > 0 ? "#fff8e1" : "#f3f4f6", border: stats.notApplied > 0 ? "#f3dfb9" : "#d6dae3" },
-    { label: "배정 완료", value: stats.assigned, accent: t.ok, bg: "#eef7ee", border: "#cbe6cd" },
-    { label: "미배정", value: stats.unassigned, accent: stats.unassigned > 0 ? t.danger : t.textSub, bg: stats.unassigned > 0 ? "#fff1f1" : "#f3f4f6", border: stats.unassigned > 0 ? "#f3c7c7" : "#d6dae3" },
+    { label: "미신청", value: stats.notApplied, accent: stats.notApplied > 0 ? t.warn : t.textSub, bg: stats.notApplied > 0 ? "#fff8e1" : "#f3f4f6", border: stats.notApplied > 0 ? "#f3dfb9" : "#d6dae3", clickable: true, students: notAppliedStudents },
+    { label: "배정 완료", value: stats.assigned, accent: t.ok, bg: "#eef7ee", border: "#cbe6cd", clickable: true, students: assignedStudents },
+    { label: "미배정", value: stats.unassigned, accent: stats.unassigned > 0 ? t.danger : t.textSub, bg: stats.unassigned > 0 ? "#fff1f1" : "#f3f4f6", border: stats.unassigned > 0 ? "#f3c7c7" : "#d6dae3", clickable: true, students: unassignedStudents },
     { label: "잔여석", value: stats.remaining, sub: `/ ${stats.totalCapacity}`, accent: t.accent, bg: "#edf4ff", border: "#c8dcff" },
   ];
 
@@ -2956,12 +2963,17 @@ function StudentApplicationStatusPanel({
           {dashboardCards.map((card, i) => (
             <div
               key={card.label}
+              onClick={card.clickable && card.value > 0 ? () => setCardModal({ label: card.label, students: card.students }) : undefined}
               style={{
                 padding: "14px 10px",
                 borderRight: i < dashboardCards.length - 1 ? `1px solid ${t.border}` : "none",
                 background: card.bg,
                 textAlign: "center",
+                cursor: card.clickable && card.value > 0 ? "pointer" : "default",
+                transition: "filter 0.15s",
               }}
+              onMouseEnter={(e) => { if (card.clickable && card.value > 0) e.currentTarget.style.filter = "brightness(0.95)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.filter = ""; }}
             >
               <div style={{ fontSize: 11, color: t.textSub, fontWeight: 600, marginBottom: 6, letterSpacing: "0.02em" }}>
                 {card.label}
@@ -3076,6 +3088,57 @@ function StudentApplicationStatusPanel({
           </tbody>
         </table>
       </div>
+
+      {/* 카드 클릭 모달 */}
+      {cardModal ? (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setCardModal(null); }}>
+          <div style={{ maxWidth: 600, margin: "40px auto", ...cardStyle, padding: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderBottom: `1px solid ${t.border}` }}>
+              <div style={{ fontSize: 16, fontWeight: 800 }}>
+                {cardModal.label} 학생 목록
+                <span style={{ fontSize: 13, fontWeight: 500, color: t.textSub, marginLeft: 8 }}>{cardModal.students.length}명</span>
+              </div>
+              <button onClick={() => setCardModal(null)} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>닫기</button>
+            </div>
+            <div style={{ maxHeight: "60vh", overflowY: "auto", padding: "0 4px" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    {["학번", "이름", ...(cardModal.label === "배정 완료" ? ["배정 동아리"] : cardModal.label === "미배정" ? ["1지망", "2지망", "3지망"] : [])].map((h) => (
+                      <th key={h} style={{ textAlign: "left", padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub, position: "sticky", top: 0, background: "#fff" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {cardModal.students.map((s) => (
+                    <tr key={s.studentUid || s.studentNo}>
+                      <td style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 13 }}>{s.studentNo || "-"}</td>
+                      <td style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 13, fontWeight: 600 }}>{s.studentName || "-"}</td>
+                      {cardModal.label === "배정 완료" ? (
+                        <td style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 13 }}>
+                          {s.finalClubName || "-"}
+                          {s.finalSource ? <span style={{ fontSize: 10, marginLeft: 6, padding: "1px 5px", borderRadius: 4, background: "#e5e7eb", color: t.textSub }}>{s.finalSource}</span> : null}
+                        </td>
+                      ) : null}
+                      {cardModal.label === "미배정" ? (
+                        <>
+                          <td style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 12 }}>{s.preferences[0]?.clubName || "-"}</td>
+                          <td style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 12 }}>{s.preferences[1]?.clubName || "-"}</td>
+                          <td style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 12 }}>{s.preferences[2]?.clubName || "-"}</td>
+                        </>
+                      ) : null}
+                    </tr>
+                  ))}
+                  {cardModal.students.length === 0 ? (
+                    <tr><td colSpan={5} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>해당 학생이 없습니다.</td></tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
