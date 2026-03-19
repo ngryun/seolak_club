@@ -1130,6 +1130,33 @@ export async function listStudentApplications(studentUid, options = {}) {
     ? rows
     : rows.filter((item) => item.cycleId === cycle.id)
 
+  // 신청 기간 중이면 아직 applications로 변환되지 않은 draft도 포함
+  if (!options?.allCycles && filtered.length === 0) {
+    const draft = await getStudentDraftByCycle(cycle.id, studentUid)
+    if (draft?.preferences?.length) {
+      const draftRows = draft.preferences.map((pref) => normalizeApplication(
+        `draft__${draft.id}__${pref.preferenceRank}`,
+        {
+          cycleId: cycle.id,
+          clubId: pref.clubId,
+          studentUid,
+          studentNo: draft.studentNo || '',
+          studentName: draft.studentName || '',
+          preferenceRank: pref.preferenceRank,
+          careerGoal: pref.careerGoal || '',
+          applyReason: pref.applyReason || '',
+          wantedActivity: pref.wantedActivity || '',
+          status: 'pending',
+          selectionSource: 'draft',
+        },
+      ))
+      const draftClubs = await Promise.all(draftRows.map((item) => getScheduleById(item.clubId)))
+      return draftRows
+        .map((item, index) => ({ ...item, club: draftClubs[index] }))
+        .sort((a, b) => Number(a.preferenceRank || 0) - Number(b.preferenceRank || 0))
+    }
+  }
+
   const clubs = await Promise.all(filtered.map((item) => getScheduleById(item.clubId)))
 
   return filtered

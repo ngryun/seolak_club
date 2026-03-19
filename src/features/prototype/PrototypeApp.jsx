@@ -2069,9 +2069,10 @@ function ApplicantsDialog({
     try {
       const apps = await listStudentApplications(uid, { cycle });
       const profile = (users || []).find((u) => u.uid === uid);
-      setStudentDetail({ apps, profile, careerGoal: row.careerGoal || apps[0]?.careerGoal || "" });
-    } catch {
-      setStudentDetail(null);
+      setStudentDetail({ apps: apps || [], profile, careerGoal: row.careerGoal || apps[0]?.careerGoal || "" });
+    } catch (err) {
+      console.warn("학생 상세 조회 실패:", err);
+      setStudentDetail({ apps: [], profile: null, careerGoal: row.careerGoal || "" });
     } finally {
       setStudentDetailLoading(false);
     }
