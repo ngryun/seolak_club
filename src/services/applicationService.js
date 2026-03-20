@@ -996,11 +996,15 @@ export async function finalizeCurrentCycleDraftsIfNeeded() {
   const cycle = await getCurrentRecruitmentCycle()
   const submission = getSubmissionWindowState(cycle)
 
-  if (!submission.configured || !submission.needsFinalization) {
+  // 신청 기간 종료 전이면 finalize 불필요
+  if (!submission.configured || submission.phase === 'open' || submission.phase === 'before') {
     return { finalized: false, created: 0, skipped: 0 }
   }
 
   const drafts = await listDraftsByCycle(cycle.id)
+  if (drafts.length === 0) {
+    return { finalized: false, created: 0, skipped: 0 }
+  }
   const existingApps = await getApplicationsByCycle(cycle.id)
   const existingByStudent = new Set(existingApps.map((row) => row.studentUid))
   const appRows = []
