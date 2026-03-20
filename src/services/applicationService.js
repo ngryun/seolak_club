@@ -1003,22 +1003,35 @@ export async function finalizeCurrentCycleDraftsIfNeeded() {
   const drafts = await listDraftsByCycle(cycle.id)
   const existingApps = await getApplicationsByCycle(cycle.id)
   const existingByStudent = new Set(existingApps.map((row) => row.studentUid))
-  const draftIds = drafts.map((row) => buildDraftDocId(cycle.id, row.studentUid))
   const appRows = []
+  const finalizedStudentUids = new Set()
   let skipped = 0
 
   for (const draft of drafts) {
     if (existingByStudent.has(draft.studentUid)) {
       skipped += 1
+      finalizedStudentUids.add(draft.studentUid)
       continue
     }
 
-    const normalizedPreferences = await normalizeStudentPreferences(draft.studentNo, draft.preferences)
-    appRows.push(...buildApplicationsFromDraft(cycle, {
-      ...draft,
-      preferences: normalizedPreferences,
-    }))
+    try {
+      const normalizedPreferences = await normalizeStudentPreferences(draft.studentNo, draft.preferences)
+      appRows.push(...buildApplicationsFromDraft(cycle, {
+        ...draft,
+        preferences: normalizedPreferences,
+      }))
+      finalizedStudentUids.add(draft.studentUid)
+    } catch {
+      // 검증 실패한 draft(자체면접 동아리 포함, 대상학년 불일치 등)는
+      // finalize에서 제외하고 건너뜀 — 전체 finalize를 중단하지 않음
+      skipped += 1
+    }
   }
+
+  // 성공적으로 finalize된 draft만 삭제 (검증 실패한 draft는 유지)
+  const draftIds = drafts
+    .filter((row) => finalizedStudentUids.has(row.studentUid))
+    .map((row) => buildDraftDocId(cycle.id, row.studentUid))
 
   if (!isFirebaseEnabled()) {
     const nextMap = new Map(localApplications.map((row) => [row.id, row]))
@@ -1177,9 +1190,8 @@ export async function listApplicationsBySchedule(clubId, options = {}) {
   const rows = (await getApplicationsByClub(clubId)).filter((item) => item.cycleId === cycle.id)
   const profilesByUid = options?.profilesByUid
 
-  // 신청 기간 중이면 draft도 포함 (아직 application으로 변환되지 않은 학생 신청)
-  const submission = getSubmissionWindowState(cycle)
-  if (submission.configured && (submission.phase === 'open' || submission.phase === 'before')) {
+  // draft가 남아있으면 항상 포함 (신청 기간 중, finalize 대기 중, 또는 검증 실패로 잔류)
+  if (cycle.status === 'open') {
     const drafts = await listDraftsByCycle(cycle.id)
     const existingStudents = new Set(rows.map((row) => row.studentUid))
     drafts.forEach((draft) => {
@@ -1276,10 +1288,9 @@ export async function getRoundStatsByClubIds(clubIds, options = {}) {
       .docs
       .map((item) => normalizeApplication(item.id, item.data()))
 
-  // 신청 기간 중이면 draft도 통계에 포함 (아직 application으로 변환되지 않은 학생 신청)
-  const submission = getSubmissionWindowState(cycle)
+  // draft가 남아있으면 항상 통계에 포함 (검증 실패로 finalize되지 못한 draft 포함)
   const draftStudentClubs = new Set()
-  if (submission.configured && (submission.phase === 'open' || submission.phase === 'before')) {
+  if (cycle.status === 'open') {
     const drafts = await listDraftsByCycle(cycle.id)
     // 이미 application이 있는 학생은 제외
     const existingStudents = new Set(rows.map((row) => row.studentUid))
