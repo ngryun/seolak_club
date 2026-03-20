@@ -5077,9 +5077,12 @@ export default function PrototypeApp({ studentOnly = false }) {
 
   async function refreshCycle() {
     let current = await getCurrentRecruitmentCycle({ force: true });
-    if (getSubmissionWindowState(current).needsFinalization) {
-      await finalizeCurrentCycleDraftsIfNeeded();
-      current = await getCurrentRecruitmentCycle({ force: true });
+    const sw = getSubmissionWindowState(current);
+    if (sw.configured && sw.phase === 'closed') {
+      const result = await finalizeCurrentCycleDraftsIfNeeded();
+      if (result.finalized) {
+        current = await getCurrentRecruitmentCycle({ force: true });
+      }
     }
     setCycle(current);
     setPreAssignmentWindowForm({
