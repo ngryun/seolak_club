@@ -2364,6 +2364,8 @@ function InterviewSelectDialog({
   onClose,
   onSelect,
   onRevoke,
+  onApprove,
+  onReject,
 }) {
   const [expandedInterviewUid, setExpandedInterviewUid] = useState(null);
   const [interviewStudentDetail, setInterviewStudentDetail] = useState(null);
@@ -2555,7 +2557,7 @@ function InterviewSelectDialog({
                 <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
                   <thead>
                     <tr>
-                      {["학번", "이름", "지망순위", "진로", "희망사유", "하고싶은 활동", "상태"].map((head) => (
+                      {["학번", "이름", "지망순위", "진로", "희망사유", "하고싶은 활동", "상태", "작업"].map((head) => (
                         <th
                           key={head}
                           style={{ textAlign: "left", padding: "8px 6px", fontSize: 12, color: t.textSub, borderBottom: `1px solid ${t.border}` }}
@@ -2589,10 +2591,42 @@ function InterviewSelectDialog({
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, maxWidth: 180, wordBreak: "break-word" }}>{app.applyReason || "-"}</td>
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, maxWidth: 180, wordBreak: "break-word" }}>{app.wantedActivity || "-"}</td>
                           <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: statusColor, fontWeight: 700 }}>{statusLabel}</td>
+                          <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                            {app.status === "pending" && selectionReady && !cycleClosed && app.selectionSource !== "draft" ? (
+                              <div style={{ display: "flex", gap: 6 }}>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); onApprove(app); }}
+                                  disabled={loading}
+                                  style={{
+                                    ...buttonBase,
+                                    padding: "5px 8px",
+                                    background: !loading ? "#e8f5e9" : "#cfd8e3",
+                                    color: !loading ? t.ok : "#6b7280",
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  승인
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); onReject(app); }}
+                                  disabled={loading}
+                                  style={{
+                                    ...buttonBase,
+                                    padding: "5px 8px",
+                                    background: !loading ? "#ffebee" : "#cfd8e3",
+                                    color: !loading ? t.danger : "#6b7280",
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  반려
+                                </button>
+                              </div>
+                            ) : null}
+                          </td>
                         </tr>
                         {isExpanded ? (
                           <tr>
-                            <td colSpan={7} style={{ padding: 0, borderBottom: `1px solid ${t.border}` }}>
+                            <td colSpan={8} style={{ padding: 0, borderBottom: `1px solid ${t.border}` }}>
                               <StudentDetailPanel
                                 loading={interviewDetailLoading}
                                 detail={interviewStudentDetail}
@@ -6794,6 +6828,8 @@ export default function PrototypeApp({ studentOnly = false }) {
         onClose={() => setInterviewDialog({ open: false, club: null, members: [], applicants: [], selectedStudentUid: "", loading: false })}
         onSelect={handleDirectSelect}
         onRevoke={handleRevokeInterviewMember}
+        onApprove={handleApproveApplication}
+        onReject={handleRejectApplication}
       />
 
       <RequestCardApplicationsDialog
