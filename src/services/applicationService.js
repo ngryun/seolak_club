@@ -1014,16 +1014,37 @@ export async function finalizeCurrentCycleDraftsIfNeeded() {
       continue
     }
 
-    try {
-      const normalizedPreferences = await normalizeStudentPreferences(draft.studentNo, draft.preferences)
+    // finalize 시에는 개별 지망 단위로 유효성을 판단하여,
+    // 자체면접 동아리 등 검증 실패한 지망만 제외하고 나머지는 정상 변환
+    const validPrefs = []
+    for (const pref of (draft.preferences || [])) {
+      try {
+        const club = await getScheduleById(pref.clubId)
+        if (!club || club.legacy || club.isInterviewSelection) continue
+        if (!isStudentEligibleForClub(club, draft.studentNo)) continue
+        const careerGoal = String(pref.careerGoal || '').trim()
+        const applyReason = String(pref.applyReason || '').trim()
+        const wantedActivity = String(pref.wantedActivity || '').trim()
+        if (!careerGoal || !applyReason || !wantedActivity) continue
+        validPrefs.push({
+          clubId: pref.clubId,
+          preferenceRank: pref.preferenceRank,
+          careerGoal,
+          applyReason,
+          wantedActivity,
+        })
+      } catch {
+        // 개별 지망 검증 실패 시 해당 지망만 건너뜀
+      }
+    }
+
+    if (validPrefs.length > 0) {
       appRows.push(...buildApplicationsFromDraft(cycle, {
         ...draft,
-        preferences: normalizedPreferences,
+        preferences: validPrefs,
       }))
       finalizedStudentUids.add(draft.studentUid)
-    } catch {
-      // 검증 실패한 draft(자체면접 동아리 포함, 대상학년 불일치 등)는
-      // finalize에서 제외하고 건너뜀 — 전체 finalize를 중단하지 않음
+    } else {
       skipped += 1
     }
   }
