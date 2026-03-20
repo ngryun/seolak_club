@@ -5715,6 +5715,9 @@ export default function PrototypeApp({ studentOnly = false }) {
   }
 
   async function handleApproveApplication(row) {
+    if (!window.confirm(`${row.studentName || "해당 학생"}을(를) 승인하시겠습니까?\n승인 후에는 취소가 어렵습니다.`)) {
+      return;
+    }
     try {
       await approveApplication({ applicationId: row.id, actor: user });
       invalidateApplicationCache();
@@ -5728,6 +5731,9 @@ export default function PrototypeApp({ studentOnly = false }) {
   }
 
   async function handleRejectApplication(row) {
+    if (!window.confirm(`${row.studentName || "해당 학생"}을(를) 반려하시겠습니까?\n반려 후에는 취소가 어렵습니다.`)) {
+      return;
+    }
     try {
       await rejectApplication({ applicationId: row.id, actor: user, reason: "manual" });
       invalidateApplicationCache();
