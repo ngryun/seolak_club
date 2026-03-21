@@ -1334,45 +1334,49 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, notifications, 
 
   const navByRole = {
     admin: [
+      { type: "group", label: "동아리" },
       { key: "clubs", label: "동아리 관리" },
       { key: "studentStatus", label: "학생 신청 현황" },
       { key: "round", label: "동아리 선발 진행" },
       { key: "users", label: "회원 관리" },
-      { type: "divider" },
+      { type: "group", label: "신청카드" },
       { key: "extraRequests", label: "기타신청현황" },
       { key: "requestCards", label: "공통 신청카드 관리" },
-      { type: "divider" },
+      { type: "group", label: "설정" },
       { key: "backup", label: "데이터 백업" },
       { key: "profile", label: "내 정보" },
     ],
     teacher: [
+      { type: "group", label: "동아리" },
       { key: "myClubs", label: "내 동아리" },
       { key: "clubOverview", label: "동아리개설현황" },
       { key: "studentStatus", label: "학생 신청 현황" },
-      { type: "divider" },
+      { type: "group", label: "신청카드" },
       { key: "extraRequests", label: "기타신청현황" },
       { key: "requestCards", label: "공통 신청카드 관리" },
-      { type: "divider" },
+      { type: "group", label: "설정" },
       { key: "profile", label: "내 정보" },
     ],
     student: isStudentLeader
       ? [
+        { type: "group", label: "동아리" },
         { key: "apply", label: "동아리 신청" },
         { key: "my", label: "신청 현황" },
         { key: "clubOverview", label: "동아리개설현황" },
         { key: "clubs", label: "동아리 수정(동아리장)" },
-        { type: "divider" },
+        { type: "group", label: "신청카드" },
         { key: "extraRequests", label: "기타신청현황" },
-        { type: "divider" },
+        { type: "group", label: "설정" },
         { key: "profile", label: "내 정보" },
       ]
       : [
+        { type: "group", label: "동아리" },
         { key: "apply", label: "동아리 신청" },
         { key: "my", label: "신청 현황" },
         { key: "clubOverview", label: "동아리개설현황" },
-        { type: "divider" },
+        { type: "group", label: "신청카드" },
         { key: "extraRequests", label: "기타신청현황" },
-        { type: "divider" },
+        { type: "group", label: "설정" },
         { key: "profile", label: "내 정보" },
       ],
   };
@@ -1410,6 +1414,16 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, notifications, 
             <nav style={{ ...cardStyle, padding: 8 }}>
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                 {nav.map((item, index) => {
+                  if (item.type === "group") {
+                    return (
+                      <div
+                        key={`group-${index}`}
+                        style={{ width: "100%", fontSize: 10, fontWeight: 700, color: t.textSub, textTransform: "uppercase", letterSpacing: 0.5, padding: index === 0 ? "2px 4px 0" : "6px 4px 0", borderTop: index === 0 ? "none" : `1px solid ${t.border}`, marginTop: index === 0 ? 0 : 2 }}
+                      >
+                        {item.label}
+                      </div>
+                    );
+                  }
                   if (item.type === "divider") {
                     return (
                       <div
@@ -1446,8 +1460,18 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, notifications, 
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 12 }}>
             <aside style={{ ...cardStyle, height: "fit-content", padding: 10 }}>
-              <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ display: "grid", gap: 4 }}>
                 {nav.map((item, index) => {
+                  if (item.type === "group") {
+                    return (
+                      <div
+                        key={`group-${index}`}
+                        style={{ fontSize: 10, fontWeight: 800, color: t.textSub, textTransform: "uppercase", letterSpacing: 0.8, padding: index === 0 ? "2px 8px 4px" : "10px 8px 4px" }}
+                      >
+                        {item.label}
+                      </div>
+                    );
+                  }
                   if (item.type === "divider") {
                     return (
                       <div
