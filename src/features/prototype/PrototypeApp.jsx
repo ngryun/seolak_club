@@ -3313,9 +3313,21 @@ function StudentApplicationStatusPanel({
                       ) : null}
                       {cardModal.label === "미배정" ? (
                         <>
-                          <td style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 12 }}>{s.preferences[0]?.clubName || "-"}</td>
-                          <td style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 12 }}>{s.preferences[1]?.clubName || "-"}</td>
-                          <td style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 12 }}>{s.preferences[2]?.clubName || "-"}</td>
+                          {[0, 1, 2].map((idx) => {
+                            const pref = s.preferences[idx];
+                            const clubName = pref?.clubName || "";
+                            const status = pref?.status || "";
+                            return (
+                              <td key={idx} style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 12 }}>
+                                {clubName ? (
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{clubName}</span>
+                                    {status ? <StudentMyStatusChip status={status} rejectReason={pref?.rejectReason} /> : null}
+                                  </div>
+                                ) : "-"}
+                              </td>
+                            );
+                          })}
                         </>
                       ) : null}
                     </tr>
