@@ -47,5 +47,9 @@ service cloud.firestore {
     match /requestCardApplications/{applicationId} {
       allow read, write: if true;
     }
+
+    match /notifications/{notificationId} {
+      allow read, write: if true;
+    }
   }
 }

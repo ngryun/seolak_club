@@ -1,5 +1,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
+import { useNotifications } from "../../hooks/useNotifications";
+import {
+  createNotification,
+  createNotificationBatch,
+  getNotificationMeta,
+  NOTIFICATION_TYPE,
+} from "../../services/notificationService";
 import {
   adminForceAssignStudentToClub,
   advanceRecruitmentRound,
@@ -1168,7 +1175,148 @@ function StudentDetailPanel({ loading, detail, studentName, studentNo, currentCl
   );
 }
 
-function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
+function NotificationBell({ notifications, unreadCount, onMarkAsRead, onMarkAllAsRead }) {
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function handleClick(e) {
+      if (panelRef.current && !panelRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div ref={panelRef} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          ...buttonBase,
+          background: "#fff",
+          border: `1px solid ${t.border}`,
+          color: t.textSub,
+          fontWeight: 700,
+          padding: "8px 10px",
+          position: "relative",
+          fontSize: 18,
+          lineHeight: 1,
+        }}
+        title="알림"
+      >
+        🔔
+        {unreadCount > 0 ? (
+          <span
+            style={{
+              position: "absolute",
+              top: -4,
+              right: -4,
+              background: t.danger,
+              color: "#fff",
+              fontSize: 10,
+              fontWeight: 800,
+              borderRadius: 10,
+              minWidth: 18,
+              height: 18,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "0 4px",
+            }}
+          >
+            {unreadCount > 99 ? "99+" : unreadCount}
+          </span>
+        ) : null}
+      </button>
+
+      {open ? (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 8px)",
+            right: 0,
+            width: 340,
+            maxHeight: 420,
+            overflowY: "auto",
+            background: t.card,
+            border: `1px solid ${t.border}`,
+            borderRadius: t.radius,
+            boxShadow: "0 8px 32px rgba(9,30,66,0.12)",
+            zIndex: 3000,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "12px 14px 8px",
+              borderBottom: `1px solid ${t.border}`,
+            }}
+          >
+            <span style={{ fontSize: 15, fontWeight: 800 }}>알림</span>
+            {unreadCount > 0 ? (
+              <button
+                onClick={() => { onMarkAllAsRead(); }}
+                style={{ ...buttonBase, background: "transparent", color: t.accent, fontSize: 12, padding: "4px 8px" }}
+              >
+                모두 읽음
+              </button>
+            ) : null}
+          </div>
+
+          {notifications.length === 0 ? (
+            <div style={{ padding: "24px 14px", textAlign: "center", fontSize: 13, color: t.textSub }}>
+              알림이 없습니다.
+            </div>
+          ) : (
+            notifications.slice(0, 50).map((n) => {
+              const meta = getNotificationMeta(n.type);
+              return (
+                <div
+                  key={n.id}
+                  onClick={() => { if (!n.read) onMarkAsRead(n.id); }}
+                  style={{
+                    padding: "10px 14px",
+                    borderBottom: `1px solid ${t.border}`,
+                    cursor: n.read ? "default" : "pointer",
+                    background: n.read ? "#fff" : "#f0f6ff",
+                    transition: "background 0.15s",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                    <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>{meta.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: n.read ? 500 : 700, color: t.text, lineHeight: 1.4 }}>
+                        {n.title}
+                      </div>
+                      {n.message ? (
+                        <div style={{ fontSize: 12, color: t.textSub, marginTop: 2, lineHeight: 1.4 }}>
+                          {n.message}
+                        </div>
+                      ) : null}
+                      <div style={{ fontSize: 11, color: t.textSub, marginTop: 4 }}>
+                        {formatTime(n.createdAt)}
+                      </div>
+                    </div>
+                    {!n.read ? (
+                      <span style={{ width: 8, height: 8, borderRadius: 4, background: t.accent, flexShrink: 0, marginTop: 4 }} />
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Layout({ user, tab, setTab, onSignOut, isStudentLeader, notifications, unreadCount, onMarkAsRead, onMarkAllAsRead, children }) {
   const [isMobile, setIsMobile] = useState(
     () => (typeof window !== "undefined" ? window.innerWidth < 980 : false),
   );
@@ -1237,12 +1385,20 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, children }) {
               {roleLabel(user?.role)} · {user?.name || "-"} ({user?.loginId || "-"})
             </div>
           </div>
-          <button
-            onClick={onSignOut}
-            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700, whiteSpace: "nowrap", padding: "10px 14px" }}
-          >
-            로그아웃
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <NotificationBell
+              notifications={notifications}
+              unreadCount={unreadCount}
+              onMarkAsRead={onMarkAsRead}
+              onMarkAllAsRead={onMarkAllAsRead}
+            />
+            <button
+              onClick={onSignOut}
+              style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700, whiteSpace: "nowrap", padding: "10px 14px" }}
+            >
+              로그아웃
+            </button>
+          </div>
         </header>
 
         {isMobile ? (
@@ -5021,6 +5177,14 @@ export default function PrototypeApp({ studentOnly = false }) {
     signOut,
   } = useAuth();
 
+  const {
+    notifications,
+    unreadCount,
+    markAsRead: handleNotifMarkAsRead,
+    markAllAsRead: handleNotifMarkAllAsRead,
+    refresh: refreshNotifications,
+  } = useNotifications(user?.uid);
+
   const [tab, setTab] = useState("clubs");
   const [loading, setLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
@@ -5536,6 +5700,16 @@ export default function PrototypeApp({ studentOnly = false }) {
       } else {
         await createRequestCard(payload, { actor: user });
         setMessage({ type: "ok", text: "신청 카드를 생성했습니다." });
+        // Notify target users about new request card
+        const allUsers = await ensureUsersLoaded();
+        const targetUsers = allUsers.filter((u) => u.role === payload.targetRole);
+        const items = targetUsers.map((u) => ({
+          recipientUid: u.uid,
+          type: NOTIFICATION_TYPE.REQUEST_CARD_CREATED,
+          title: `새 신청카드: ${payload.title}`,
+          message: payload.description ? payload.description.slice(0, 100) : "",
+        }));
+        createNotificationBatch(items).catch(() => {});
       }
 
       resetRequestCardForm();
@@ -5630,6 +5804,24 @@ export default function PrototypeApp({ studentOnly = false }) {
         type: "ok",
         text: `랜덤 추첨 완료: 총 ${result.applicantCount}명 중 ${result.selectedCount}명 선발`,
       });
+      // Notify applicants about draw results
+      try {
+        const appRows = await listRequestCardApplicationsByCard(card.id);
+        const notifItems = appRows.map((row) => ({
+          recipientUid: row.applicantUid,
+          type: row.status === "selected"
+            ? NOTIFICATION_TYPE.REQUEST_CARD_SELECTED
+            : NOTIFICATION_TYPE.REQUEST_CARD_NOT_SELECTED,
+          title: row.status === "selected"
+            ? `🎉 '${card.title}' 당첨되었습니다!`
+            : `'${card.title}' 추첨 결과 안내`,
+          message: row.status === "selected"
+            ? "축하합니다! 신청카드 추첨에 당첨되었습니다."
+            : "아쉽지만 이번 추첨에서 선정되지 못했습니다.",
+          relatedId: card.id,
+        }));
+        createNotificationBatch(notifItems).catch(() => {});
+      } catch { /* ignore notification errors */ }
       await Promise.all([refreshRequestCards(), refreshMyRequestCardApplications()]);
       if (requestCardDialog.open && requestCardDialog.card?.id === card.id) {
         await reloadRequestCardDialog(card);
@@ -5723,6 +5915,16 @@ export default function PrototypeApp({ studentOnly = false }) {
       invalidateApplicationCache();
       invalidateScheduleCache();
       setMessage({ type: "ok", text: "승인 처리했습니다." });
+      // Notify student about approval
+      if (row.studentUid) {
+        createNotification({
+          recipientUid: row.studentUid,
+          type: NOTIFICATION_TYPE.APPLICATION_APPROVED,
+          title: `동아리 신청 승인: ${applicantDialog.club?.clubName || ""}`,
+          message: "동아리 신청이 승인되었습니다.",
+          relatedId: row.id,
+        }).catch(() => {});
+      }
       await reloadApplicantDialog(applicantDialog.club);
       await refreshMyApplications();
     } catch (error) {
@@ -6510,7 +6712,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   }
 
   return (
-    <Layout user={user} tab={tab} setTab={setTab} onSignOut={handleSignOut} isStudentLeader={isStudentLeader}>
+    <Layout user={user} tab={tab} setTab={setTab} onSignOut={handleSignOut} isStudentLeader={isStudentLeader} notifications={notifications} unreadCount={unreadCount} onMarkAsRead={handleNotifMarkAsRead} onMarkAllAsRead={handleNotifMarkAllAsRead}>
       <MessageBar message={message} onClose={() => setMessage({ type: "", text: "" })} />
 
       {loading ? (
