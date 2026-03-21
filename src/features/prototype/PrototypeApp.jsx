@@ -3391,7 +3391,7 @@ function StudentApplicationDetailDialog({
   if (!open || !row) return null;
 
   const selectableClubs = (clubs || []).filter((club) => !club.legacy);
-  const forceLocked = cycle?.status === "closed" || submissionState?.selectionReady === false;
+  const forceLocked = cycle?.status === "closed";
   const forceDisabled = loading
     || forceLocked
     || !row.studentUid
@@ -3498,10 +3498,10 @@ function StudentApplicationDetailDialog({
                     {loading ? "배정 중..." : "강제 배정 실행"}
                   </button>
                   <span style={{ fontSize: 12, color: t.textSub }}>
-                    {submissionState?.selectionReady === false
-                      ? "학생 신청 기간이 끝난 뒤에만 강제 배정할 수 있습니다."
-                      : cycle?.status === "closed"
-                        ? "모집 종료 후에는 강제 배정할 수 없습니다."
+                    {cycle?.status === "closed"
+                      ? "모집 종료 후에는 강제 배정할 수 없습니다."
+                      : submissionState?.selectionReady === false
+                        ? "신청 기간 중 강제 배정 시 학생 신청 내용과 충돌할 수 있으니 주의하세요."
                         : "기존 승인 동아리가 있으면 선택한 동아리로 이동 처리합니다."}
                   </span>
                 </div>
