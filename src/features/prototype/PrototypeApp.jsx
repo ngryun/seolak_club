@@ -4720,12 +4720,12 @@ function UserManagementPanel({
         </div>
 
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: userListTab === "teacher" ? 700 : 920 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: userListTab === "teacher" ? 820 : 1020 }}>
             <thead>
               <tr>
                 {(userListTab === "teacher"
-                  ? ["아이디", "이름", "역할", "과목", "작업"]
-                  : ["학번(아이디)", "이름", "학번", "작업"]
+                  ? ["아이디", "이름", "역할", "과목", "최종 로그인", "작업"]
+                  : ["학번(아이디)", "이름", "학번", "최종 로그인", "작업"]
                 ).map((head) => (
                   <th key={head} style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}>{head}</th>
                 ))}
@@ -4773,6 +4773,9 @@ function UserManagementPanel({
                         ) : (
                           <span style={{ fontSize: 13 }}>{row.subject || "-"}</span>
                         )}
+                      </td>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: row.lastLoginAt ? t.text : t.textSub, whiteSpace: "nowrap" }}>
+                        {formatTime(row.lastLoginAt)}
                       </td>
                       <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -4861,6 +4864,9 @@ function UserManagementPanel({
                         <span style={{ fontSize: 13 }}>{row.studentNo || "-"}</span>
                       )}
                     </td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: row.lastLoginAt ? t.text : t.textSub, whiteSpace: "nowrap" }}>
+                      {formatTime(row.lastLoginAt)}
+                    </td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                         {editing ? (
@@ -4922,7 +4928,7 @@ function UserManagementPanel({
               })}
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={userListTab === "teacher" ? 5 : 4} style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
+                  <td colSpan={userListTab === "teacher" ? 6 : 5} style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
                     {userListTab === "teacher" ? "교사/관리자 계정이 없습니다." : "학생 계정이 없습니다."}
                   </td>
                 </tr>

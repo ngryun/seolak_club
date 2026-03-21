@@ -5,6 +5,7 @@ import {
   ensureDefaultAdminAccount,
   getUserProfile,
   signInWithLoginId,
+  recordLastLogin,
 } from '../services/userService'
 
 const AuthContext = createContext(null)
@@ -176,6 +177,8 @@ export function AuthProvider({ children }) {
 
         const account = await signInWithLoginId(normalizedId, rawPassword)
         assertLoginPolicy(account, { loginRole, studentName })
+
+        recordLastLogin(account.uid).catch(() => {})
 
         const nextSession = buildSession(account, {
           uid: account.uid,

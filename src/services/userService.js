@@ -160,6 +160,7 @@ function normalizeUser(uid, data, { includeSecret = false } = {}) {
     studentNo: String(data.studentNo || '').trim(),
     role: normalizeRole(data.role),
     passwordChangedAt: data.passwordChangedAt || null,
+    lastLoginAt: data.lastLoginAt || null,
     createdAt: data.createdAt || null,
     updatedAt: data.updatedAt || null,
   }
@@ -390,6 +391,26 @@ export async function signInWithLoginId(loginId, password) {
   }
 
   return normalizeUser(user.uid, user)
+}
+
+export async function recordLastLogin(uid) {
+  if (!uid) return
+  const now = new Date().toISOString()
+
+  if (!isFirebaseEnabled()) {
+    const existing = localUsers.get(uid)
+    if (existing) {
+      existing.lastLoginAt = now
+    }
+    return
+  }
+
+  try {
+    const ref = doc(db, COLLECTION, uid)
+    await updateDoc(ref, { lastLoginAt: now })
+  } catch {
+    // 로그인 기록 실패는 무시
+  }
 }
 
 export async function createUserAccount(payload) {
