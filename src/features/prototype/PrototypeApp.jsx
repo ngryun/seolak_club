@@ -1906,7 +1906,7 @@ function ClubRoomManagementPage({
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
             <thead>
               <tr>
-                {["동아리실", "배정 동아리", "담당교사", "정원"].map((h) => (
+                {["동아리실", "배정 동아리", "담당교사", "인원"].map((h) => (
                   <th key={h} style={{ textAlign: "left", padding: "8px 10px", borderBottom: `2px solid ${t.border}`, fontSize: 12, color: t.textSub, background: "#f8f9fb" }}>{h}</th>
                 ))}
               </tr>
@@ -1958,7 +1958,8 @@ function ClubRoomManagementPage({
                       {club.teacherName || "-"}
                     </td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px", fontSize: 13 }}>
-                      {club.maxMembers || "-"}명
+                      <span style={{ fontWeight: 600 }}>{club.memberCount || 0}</span>
+                      <span style={{ color: t.textSub }}>/{club.maxMembers || 0}명</span>
                     </td>
                   </tr>
                 ));
