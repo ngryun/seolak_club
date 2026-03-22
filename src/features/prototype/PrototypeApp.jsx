@@ -81,6 +81,7 @@ import {
   invalidateUserCache,
 } from "../../services/userService";
 import { exportFullBackup } from "../../services/backupService";
+import { isAiAvailable, generateClubOverview, generateLessonActivities } from "../../services/aiService";
 
 const t = {
   bg: "#f6f7fb",
@@ -2382,9 +2383,52 @@ function ClubDetailDialog({
 }
 
 function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving }) {
+  const [aiLoading, setAiLoading] = useState("");  // "" | "overview" | "activities"
+
   if (!open || !club || !form) return null;
 
+  const aiEnabled = isAiAvailable();
   const updateField = (key, value) => onChange({ ...form, [key]: value });
+
+  const handleAiOverview = async () => {
+    setAiLoading("overview");
+    try {
+      const overview = await generateClubOverview({
+        clubName: club.clubName,
+        description: club.description || "",
+      });
+      updateField("overview", overview);
+    } catch (err) {
+      alert(`AI 개요 생성 실패: ${err.message}`);
+    } finally {
+      setAiLoading("");
+    }
+  };
+
+  const handleAiActivities = async () => {
+    const basis = String(form.overview || "").trim() || String(club.description || "").trim();
+    if (!basis) {
+      alert("동아리 개요 또는 동아리 소개가 입력되어 있어야 AI 작성이 가능합니다.");
+      return;
+    }
+    setAiLoading("activities");
+    try {
+      const contents = await generateLessonActivities({
+        clubName: club.clubName,
+        overview: basis,
+        lessonCount: form.lessonCount,
+      });
+      const activities = form.activities.map((act, i) => ({
+        ...act,
+        content: contents[i] || act.content,
+      }));
+      updateField("activities", activities);
+    } catch (err) {
+      alert(`AI 활동내용 생성 실패: ${err.message}`);
+    } finally {
+      setAiLoading("");
+    }
+  };
 
   const handleLessonCountChange = (newCount) => {
     const count = Math.max(1, Math.min(100, Math.trunc(Number(newCount) || 1)));
@@ -2448,7 +2492,18 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving })
         </div>
 
         {/* 동아리 개요 */}
-        <div style={sectionTitle}>동아리 개요 <span style={{ fontWeight: 400, fontSize: 12, color: t.textSub }}>({form.overview.length}/200자)</span></div>
+        <div style={{ ...sectionTitle, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span>동아리 개요 <span style={{ fontWeight: 400, fontSize: 12, color: t.textSub }}>({form.overview.length}/200자)</span></span>
+          {aiEnabled ? (
+            <button
+              onClick={handleAiOverview}
+              disabled={!!aiLoading}
+              style={{ ...buttonBase, padding: "3px 10px", fontSize: 11, background: aiLoading === "overview" ? "#e5e7eb" : "#ede9fe", color: aiLoading === "overview" ? t.textSub : "#7c3aed", fontWeight: 600 }}
+            >
+              {aiLoading === "overview" ? "AI 작성 중..." : "AI 작성"}
+            </button>
+          ) : null}
+        </div>
         <textarea
           value={form.overview}
           onChange={(e) => updateField("overview", e.target.value.slice(0, 200))}
@@ -2458,7 +2513,18 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving })
         />
 
         {/* 차시별 활동내용 */}
-        <div style={sectionTitle}>차시별 활동내용</div>
+        <div style={{ ...sectionTitle, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span>차시별 활동내용</span>
+          {aiEnabled ? (
+            <button
+              onClick={handleAiActivities}
+              disabled={!!aiLoading}
+              style={{ ...buttonBase, padding: "3px 10px", fontSize: 11, background: aiLoading === "activities" ? "#e5e7eb" : "#ede9fe", color: aiLoading === "activities" ? t.textSub : "#7c3aed", fontWeight: 600 }}
+            >
+              {aiLoading === "activities" ? "AI 작성 중..." : "AI 작성"}
+            </button>
+          ) : null}
+        </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
