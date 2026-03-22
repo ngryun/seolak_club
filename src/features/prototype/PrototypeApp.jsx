@@ -1955,7 +1955,9 @@ function ClubRoomManagementPage({
                       {club.legacy ? <span style={{ fontSize: 10, marginLeft: 6, padding: "1px 5px", borderRadius: 4, background: "#e5e7eb", color: t.textSub }}>보관</span> : null}
                     </td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px", fontSize: 13 }}>
-                      {club.teacherName || "-"}
+                      {Array.isArray(club.teacherNames) && club.teacherNames.filter(Boolean).length > 0
+                        ? club.teacherNames.filter(Boolean).join(", ")
+                        : club.teacherName || "-"}
                     </td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px", fontSize: 13 }}>
                       <span style={{ fontWeight: 600 }}>{club.memberCount || 0}</span>
@@ -2015,8 +2017,23 @@ function ClubTable({
 
   return (
     <section style={cardStyle}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12 }}>
-        <h2 style={{ fontSize: 17 }}>동아리 목록</h2>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <h2 style={{ fontSize: 17, margin: 0 }}>동아리 목록</h2>
+          {showActions ? (() => {
+            const activeClubs = clubs.filter((c) => !c.legacy);
+            const submitted = activeClubs.filter((c) => c.plan?.planStatus === "submitted").length;
+            const draft = activeClubs.filter((c) => c.plan?.planStatus === "draft").length;
+            const none = activeClubs.length - submitted - draft;
+            return (
+              <div style={{ display: "flex", gap: 8, fontSize: 12, color: t.textSub }}>
+                <span>계획 제출 <strong style={{ color: t.ok }}>{submitted}</strong>/{activeClubs.length}</span>
+                {draft > 0 ? <span>작성중 <strong style={{ color: t.warn }}>{draft}</strong></span> : null}
+                {none > 0 ? <span>미작성 <strong style={{ color: t.danger }}>{none}</strong></span> : null}
+              </div>
+            );
+          })() : null}
+        </div>
         {canCreate ? (
           <button
             onClick={onCreate}
@@ -2145,14 +2162,24 @@ function ClubTable({
                         직접선발
                       </button>
                     ) : null}
-                    {editable ? (
-                      <button
-                        onClick={() => onOpenPlan(club)}
-                        style={{ ...buttonBase, background: "#e8f5e9", color: t.ok, padding: "8px 12px", fontWeight: 700, minHeight: 44 }}
-                      >
-                        계획작성
-                      </button>
-                    ) : null}
+                    {editable ? (() => {
+                      const ps = club.plan?.planStatus;
+                      return ps === "submitted" ? (
+                        <button
+                          onClick={() => onOpenPlan(club)}
+                          style={{ ...buttonBase, background: "#e8f5e9", color: t.ok, padding: "8px 12px", fontWeight: 700, minHeight: 44, cursor: "pointer" }}
+                        >
+                          ✓ 계획완료
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => onOpenPlan(club)}
+                          style={{ ...buttonBase, background: ps === "draft" ? "#fffbeb" : "#e8f5e9", color: ps === "draft" ? t.warn : t.ok, padding: "8px 12px", fontWeight: 700, minHeight: 44 }}
+                        >
+                          {ps === "draft" ? "계획수정" : "계획작성"}
+                        </button>
+                      );
+                    })() : null}
                     {(actor?.role === "admin" || actor?.loginId === "admin") ? (
                       <button
                         onClick={() => onDelete(club)}
@@ -2277,14 +2304,24 @@ function ClubTable({
                             </button>
                           ) : null}
 
-                          {editable ? (
-                            <button
-                              onClick={() => onOpenPlan(club)}
-                              style={{ ...buttonBase, background: "#e8f5e9", color: t.ok, padding: "6px 9px", fontWeight: 700 }}
-                            >
-                              계획작성
-                            </button>
-                          ) : null}
+                          {editable ? (() => {
+                            const ps = club.plan?.planStatus;
+                            return ps === "submitted" ? (
+                              <button
+                                onClick={() => onOpenPlan(club)}
+                                style={{ ...buttonBase, background: "#e8f5e9", color: t.ok, padding: "6px 9px", fontWeight: 700, cursor: "pointer" }}
+                              >
+                                ✓ 계획완료
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => onOpenPlan(club)}
+                                style={{ ...buttonBase, background: ps === "draft" ? "#fffbeb" : "#e8f5e9", color: ps === "draft" ? t.warn : t.ok, padding: "6px 9px", fontWeight: 700 }}
+                              >
+                                {ps === "draft" ? "계획수정" : "계획작성"}
+                              </button>
+                            );
+                          })() : null}
 
                           {(actor?.role === "admin" || actor?.loginId === "admin") ? (
                             <button
@@ -2382,7 +2419,7 @@ function ClubDetailDialog({
   );
 }
 
-function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving }) {
+function ClubPlanDialog({ open, club, form, onChange, onSave, onSubmit, onUnsubmit, onClose, saving }) {
   const [aiLoading, setAiLoading] = useState("");  // "" | "overview" | "activities"
 
   if (!open || !club || !form) return null;
@@ -2413,7 +2450,7 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving })
       ? `<p style="margin:4px 0;font-size:13px;">봉사활동 연계: <strong>O</strong> (${form.volunteerHours || 0}시간)</p>`
       : `<p style="margin:4px 0;font-size:13px;">봉사활동 연계: <strong>X</strong></p>`;
 
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>동아리 활동 계획</title><style>@media print{@page{margin:15mm 12mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}body{font-family:'Pretendard',sans-serif;color:#1a1a1a;line-height:1.6;max-width:800px;margin:0 auto;padding:20px;}h1{text-align:center;font-size:20px;margin-bottom:4px;}table{width:100%;border-collapse:collapse;margin-bottom:16px;}th{background:#f0f0f0;}</style></head><body>
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${year}학년도_${club.clubName || "동아리"}_창체동아리활동계획</title><style>@media print{@page{margin:15mm 12mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}body{font-family:'Pretendard',sans-serif;color:#1a1a1a;line-height:1.6;max-width:800px;margin:0 auto;padding:20px;}h1{text-align:center;font-size:20px;margin-bottom:4px;}table{width:100%;border-collapse:collapse;margin-bottom:16px;}th{background:#f0f0f0;}</style></head><body>
 <h1>${year}학년도 설악고등학교 창체 동아리 활동 계획</h1>
 <p style="text-align:center;font-size:13px;color:#555;margin-bottom:20px;">
 대상: ${grades ? grades + "학년" : "-"} | 동아리명: <strong>${club.clubName || "-"}</strong> | ${form.lessonCount || 0}차시 | 지도교사: ${teacherLabel}
@@ -2509,6 +2546,9 @@ ${volunteerInfo}
 
   const memberCount = Number(club.memberCount) || 0;
   const budgetTotal = form.budgetItems.reduce((sum, row) => sum + (Number(row.unitPrice) || 0) * memberCount, 0);
+  const budgetPerPerson = form.budgetItems.reduce((sum, row) => sum + (Number(row.unitPrice) || 0), 0);
+  const BUDGET_LIMIT_PER_PERSON = 15000;
+  const budgetExceeded = budgetPerPerson > BUDGET_LIMIT_PER_PERSON;
 
   const sectionTitle = { fontSize: 14, fontWeight: 700, marginBottom: 8, marginTop: 16 };
   const tdStyle = { padding: "4px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 13 };
@@ -2665,7 +2705,12 @@ ${volunteerInfo}
         {/* 예산활용 내역 */}
         <div style={sectionTitle}>
           예산활용 내역
-          {budgetTotal > 0 ? <span style={{ fontWeight: 400, fontSize: 12, color: t.textSub, marginLeft: 8 }}>합계: {budgetTotal.toLocaleString()}원 ({memberCount}명 기준)</span> : null}
+          {budgetPerPerson > 0 ? (
+            <span style={{ fontWeight: 400, fontSize: 12, color: budgetExceeded ? t.danger : t.textSub, marginLeft: 8 }}>
+              1인 {budgetPerPerson.toLocaleString()}원 · 합계 {budgetTotal.toLocaleString()}원 ({memberCount}명 기준)
+              {budgetExceeded ? ` — 1인 ${BUDGET_LIMIT_PER_PERSON.toLocaleString()}원 초과!` : ""}
+            </span>
+          ) : null}
         </div>
         <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 8 }}>
           <thead>
@@ -2722,8 +2767,19 @@ ${volunteerInfo}
           + 항목 추가
         </button>
 
-        {/* 저장/취소 */}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20, paddingTop: 14, borderTop: `1px solid ${t.border}` }}>
+        {/* 상태 표시 + 저장/제출 */}
+        {form.planStatus === "submitted" ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16, padding: "10px 14px", background: "#e8f5e9", borderRadius: 8 }}>
+            <span style={{ fontSize: 13, color: t.ok, fontWeight: 700 }}>✓ 제출 완료</span>
+            <span style={{ fontSize: 12, color: t.textSub }}>수정하려면 제출을 취소하세요.</span>
+          </div>
+        ) : form.planStatus === "draft" ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16, padding: "10px 14px", background: "#fffbeb", borderRadius: 8 }}>
+            <span style={{ fontSize: 13, color: t.warn, fontWeight: 700 }}>● 작성중</span>
+            <span style={{ fontSize: 12, color: t.textSub }}>저장 후 제출 버튼을 눌러 최종 제출하세요.</span>
+          </div>
+        ) : null}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12, paddingTop: 14, borderTop: `1px solid ${t.border}`, flexWrap: "wrap" }}>
           <button
             onClick={handlePrintPdf}
             style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, padding: "10px 16px", color: t.textSub, marginRight: "auto" }}
@@ -2731,13 +2787,32 @@ ${volunteerInfo}
             PDF 저장
           </button>
           <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, padding: "10px 20px" }}>취소</button>
-          <button
-            onClick={onSave}
-            disabled={saving}
-            style={{ ...buttonBase, background: saving ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700, padding: "10px 24px" }}
-          >
-            {saving ? "저장 중..." : "저장"}
-          </button>
+          {form.planStatus === "submitted" ? (
+            <button
+              onClick={onUnsubmit}
+              disabled={saving}
+              style={{ ...buttonBase, background: saving ? "#cfd8e3" : "#fff3e0", color: saving ? "#6b7280" : t.warn, fontWeight: 700, padding: "10px 20px" }}
+            >
+              {saving ? "처리 중..." : "제출 취소"}
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={onSave}
+                disabled={saving || budgetExceeded}
+                style={{ ...buttonBase, background: saving || budgetExceeded ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700, padding: "10px 24px" }}
+              >
+                {saving ? "저장 중..." : budgetExceeded ? "예산 초과" : "저장"}
+              </button>
+              <button
+                onClick={onSubmit}
+                disabled={saving || budgetExceeded || !String(form.overview || "").trim()}
+                style={{ ...buttonBase, background: saving || budgetExceeded || !String(form.overview || "").trim() ? "#cfd8e3" : t.ok, color: "#fff", fontWeight: 700, padding: "10px 24px" }}
+              >
+                {saving ? "처리 중..." : "제출"}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -6452,17 +6527,24 @@ export default function PrototypeApp({ studentOnly = false }) {
       hasVolunteer: existing?.hasVolunteer || false,
       volunteerHours: existing?.volunteerHours || 0,
       budgetItems: existing?.budgetItems?.length > 0 ? [...existing.budgetItems] : [{ item: "물품구입", unitPrice: 11000 }, { item: "간식비", unitPrice: 4000 }],
+      planStatus: existing?.planStatus || "",
     });
     setPlanDialog({ open: true, club });
   }
 
-  async function handleSavePlan() {
+  async function handleSavePlan(statusOverride) {
     if (!planDialog.club || !planForm) return;
     try {
       setSavingPlan(true);
-      await updateClubPlan(planDialog.club.id, planForm, { actor: user });
+      const payload = { ...planForm };
+      if (statusOverride) payload.planStatus = statusOverride;
+      else if (!payload.planStatus || payload.planStatus === "") payload.planStatus = "draft";
+      await updateClubPlan(planDialog.club.id, payload, { actor: user });
       invalidateScheduleCache();
-      setMessage({ type: "ok", text: "동아리 계획을 저장했습니다." });
+      const msg = statusOverride === "submitted" ? "동아리 계획을 제출했습니다."
+        : statusOverride === "draft" ? "제출을 취소하고 작성중 상태로 변경했습니다."
+        : "동아리 계획을 저장했습니다.";
+      setMessage({ type: "ok", text: msg });
       setPlanDialog({ open: false, club: null });
       setPlanForm(null);
       await refreshClubs();
@@ -7615,7 +7697,17 @@ export default function PrototypeApp({ studentOnly = false }) {
         club={planDialog.club}
         form={planForm}
         onChange={setPlanForm}
-        onSave={handleSavePlan}
+        onSave={() => handleSavePlan()}
+        onSubmit={() => {
+          if (window.confirm("동아리 계획을 최종 제출하시겠습니까?\n제출 후에도 제출 취소 후 수정 가능합니다.")) {
+            handleSavePlan("submitted");
+          }
+        }}
+        onUnsubmit={() => {
+          if (window.confirm("제출을 취소하고 작성중 상태로 되돌리시겠습니까?")) {
+            handleSavePlan("draft");
+          }
+        }}
         onClose={() => { setPlanDialog({ open: false, club: null }); setPlanForm(null); }}
         saving={savingPlan}
       />

@@ -767,6 +767,8 @@ export async function updateClubPlan(scheduleId, planPayload, options = {}) {
       unitPrice: Math.max(0, Math.trunc(toNumber(row.unitPrice, 0))),
     }))
 
+  const planStatus = String(planPayload?.planStatus || 'draft')
+  const validStatuses = new Set(['draft', 'submitted'])
   const plan = {
     lessonCount,
     overview,
@@ -774,6 +776,7 @@ export async function updateClubPlan(scheduleId, planPayload, options = {}) {
     hasVolunteer,
     volunteerHours,
     budgetItems,
+    planStatus: validStatuses.has(planStatus) ? planStatus : 'draft',
     updatedAt: new Date().toISOString(),
   }
 
