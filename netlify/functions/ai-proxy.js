@@ -46,7 +46,7 @@ export default async (req) => {
       body: JSON.stringify({
         model: MODEL,
         messages,
-        max_tokens: Math.min(Number(maxTokens) || 1200, 2000),
+        max_completion_tokens: Math.min(Number(maxTokens) || 1200, 2000),
         temperature: 0.7,
       }),
     })
