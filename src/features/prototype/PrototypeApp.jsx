@@ -1351,6 +1351,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, notifications, 
       { type: "group", label: "동아리" },
       { key: "myClubs", label: "내 동아리" },
       { key: "clubOverview", label: "동아리개설현황" },
+      { key: "clubRooms", label: "동아리실 현황" },
       { key: "studentStatus", label: "학생 신청 현황" },
       { type: "group", label: "신청카드" },
       { key: "extraRequests", label: "기타신청현황" },
@@ -1839,6 +1840,7 @@ function ClubRoomManagementPage({
   rooms,
   clubs,
   loading,
+  isAdmin,
   onAdd,
   onDelete,
   onRefresh,
@@ -1868,13 +1870,15 @@ function ClubRoomManagementPage({
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      <ClubRoomManager
-        rooms={rooms}
-        loading={loading}
-        onAdd={onAdd}
-        onDelete={onDelete}
-        onRefresh={onRefresh}
-      />
+      {isAdmin ? (
+        <ClubRoomManager
+          rooms={rooms}
+          loading={loading}
+          onAdd={onAdd}
+          onDelete={onDelete}
+          onRefresh={onRefresh}
+        />
+      ) : null}
 
       <section style={cardStyle}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>
@@ -6916,11 +6920,12 @@ export default function PrototypeApp({ studentOnly = false }) {
         ) : null
       ) : null}
 
-      {tab === "clubRooms" && user.role === "admin" ? (
+      {tab === "clubRooms" && (user.role === "admin" || user.role === "teacher") ? (
         <ClubRoomManagementPage
           rooms={clubRooms}
           clubs={clubs}
           loading={savingRoom}
+          isAdmin={user.role === "admin"}
           onAdd={handleCreateClubRoom}
           onDelete={handleDeleteClubRoom}
           onRefresh={async () => {
