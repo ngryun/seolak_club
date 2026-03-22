@@ -1136,7 +1136,7 @@ export async function submitStudentPreferences(payload) {
 }
 
 const _cycleAppsCache = { data: null, cycleId: null, ts: 0 }
-const CYCLE_APPS_TTL = 30_000 // 30초 캐시
+const CYCLE_APPS_TTL = Infinity // 명시적 새로고침/데이터 변경 시만 무효화
 
 export async function listCurrentCycleApplications({ forceRefresh = false } = {}) {
   const cycle = await getCurrentRecruitmentCycle()

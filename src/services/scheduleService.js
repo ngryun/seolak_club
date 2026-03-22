@@ -123,6 +123,7 @@ function normalizeClub(id, data) {
     memberCount: Math.max(0, Math.trunc(toNumber(data?.memberCount ?? data?.applied, 0))),
     randomDrawnRounds: normalizeRandomRounds(data?.randomDrawnRounds),
     createdByUid: String(data?.createdByUid || '').trim(),
+    plan: data?.plan || null,
     createdAt: data?.createdAt || null,
     updatedAt: data?.updatedAt || null,
     legacy,
@@ -290,7 +291,7 @@ export function canManageSelection(club, actor) {
 }
 
 const _listSchedulesCache = { data: null, ts: 0 }
-const LIST_SCHEDULES_TTL = 30_000 // 30초 캐시
+const LIST_SCHEDULES_TTL = Infinity // 명시적 새로고침/데이터 변경 시만 무효화
 
 export async function listSchedules(options = {}) {
   const includeLegacy = options?.includeLegacy === true
@@ -738,6 +739,57 @@ export async function deleteSchedule(scheduleId, options = {}) {
     refs.slice(i, i + 400).forEach((ref) => batch.delete(ref))
     await batch.commit()
   }
+}
+
+export async function updateClubPlan(scheduleId, planPayload, options = {}) {
+  const actor = options?.actor
+  if (!actor?.uid) throw new Error('로그인이 필요합니다.')
+
+  const club = await getScheduleById(scheduleId)
+  if (!club) throw new Error('동아리를 찾을 수 없습니다.')
+  if (!canEditClub(club, actor.uid, actor.role)) {
+    throw new Error('동아리 계획을 수정할 권한이 없습니다.')
+  }
+
+  const lessonCount = Math.max(1, Math.trunc(toNumber(planPayload?.lessonCount, 28)))
+  const overview = String(planPayload?.overview || '').slice(0, 200)
+  const rawActivities = Array.isArray(planPayload?.activities) ? planPayload.activities : []
+  const activities = Array.from({ length: lessonCount }, (_, i) => ({
+    lesson: i + 1,
+    content: String(rawActivities[i]?.content || '').trim(),
+  }))
+  const hasVolunteer = Boolean(planPayload?.hasVolunteer)
+  const volunteerHours = hasVolunteer ? Math.max(0, Math.trunc(toNumber(planPayload?.volunteerHours, 0))) : 0
+  const budgetItems = (Array.isArray(planPayload?.budgetItems) ? planPayload.budgetItems : [])
+    .filter((row) => String(row?.item || '').trim())
+    .map((row) => ({
+      item: String(row.item || '').trim(),
+      unitPrice: Math.max(0, Math.trunc(toNumber(row.unitPrice, 0))),
+    }))
+
+  const plan = {
+    lessonCount,
+    overview,
+    activities,
+    hasVolunteer,
+    volunteerHours,
+    budgetItems,
+    updatedAt: new Date().toISOString(),
+  }
+
+  if (!isFirebaseEnabled()) {
+    scheduleStore = scheduleStore.map((item) => {
+      if (item.id !== scheduleId) return item
+      return { ...item, plan, updatedAt: new Date().toISOString() }
+    })
+    invalidateScheduleCache()
+    return plan
+  }
+
+  const ref = doc(db, COLLECTION_NAME, scheduleId)
+  await updateDoc(ref, { plan, updatedAt: serverTimestamp() })
+  invalidateScheduleCache()
+  return plan
 }
 
 export async function updateScheduleMemberCount(scheduleId, nextCount) {

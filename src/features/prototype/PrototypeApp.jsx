@@ -63,6 +63,7 @@ import {
   listSchedules,
   syncClubDisplayFieldsForUser,
   updateSchedule,
+  updateClubPlan,
   invalidateScheduleCache,
 } from "../../services/scheduleService";
 import {
@@ -912,10 +913,8 @@ function formatClubTeacherLabel(club, userMap) {
   const labels = teacherUids.map((teacherUid, index) => {
     const teacher = userMap?.get?.(teacherUid) || null;
     const teacherName = String(teacherNames[index] || (index === 0 ? club?.teacherName : "") || "").trim();
-    const teacherLoginId = String(teacherLoginIds[index] || (index === 0 ? club?.teacherLoginId : "") || "").trim();
-    if (teacherName && teacherLoginId) return `${teacherName}(${teacherLoginId})`;
-    if (teacher) return `${teacher.name}(${teacher.loginId})`;
     if (teacherName) return teacherName;
+    if (teacher) return teacher.name || teacher.loginId;
     return teacherUid;
   }).filter(Boolean);
 
@@ -1992,6 +1991,7 @@ function ClubTable({
   onDelete,
   onOpenApplicants,
   onOpenInterviewSelect,
+  onOpenPlan,
   showCapacity = true,
   showRoundStatus = true,
   showActions = true,
@@ -2144,6 +2144,14 @@ function ClubTable({
                         직접선발
                       </button>
                     ) : null}
+                    {editable ? (
+                      <button
+                        onClick={() => onOpenPlan(club)}
+                        style={{ ...buttonBase, background: "#e8f5e9", color: t.ok, padding: "8px 12px", fontWeight: 700, minHeight: 44 }}
+                      >
+                        계획작성
+                      </button>
+                    ) : null}
                     {(actor?.role === "admin" || actor?.loginId === "admin") ? (
                       <button
                         onClick={() => onDelete(club)}
@@ -2268,6 +2276,15 @@ function ClubTable({
                             </button>
                           ) : null}
 
+                          {editable ? (
+                            <button
+                              onClick={() => onOpenPlan(club)}
+                              style={{ ...buttonBase, background: "#e8f5e9", color: t.ok, padding: "6px 9px", fontWeight: 700 }}
+                            >
+                              계획작성
+                            </button>
+                          ) : null}
+
                           {(actor?.role === "admin" || actor?.loginId === "admin") ? (
                             <button
                               onClick={() => onDelete(club)}
@@ -2358,6 +2375,214 @@ function ClubDetailDialog({
           <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.6, fontSize: 13, color: t.textSub }}>
             {String(club.description || "").trim() || "소개가 아직 입력되지 않았습니다."}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving }) {
+  if (!open || !club || !form) return null;
+
+  const updateField = (key, value) => onChange({ ...form, [key]: value });
+
+  const handleLessonCountChange = (newCount) => {
+    const count = Math.max(1, Math.min(100, Math.trunc(Number(newCount) || 1)));
+    const prev = form.activities || [];
+    const activities = Array.from({ length: count }, (_, i) => ({
+      lesson: i + 1,
+      content: prev[i]?.content || "",
+    }));
+    onChange({ ...form, lessonCount: count, activities });
+  };
+
+  const updateActivity = (index, content) => {
+    const next = [...form.activities];
+    next[index] = { ...next[index], content };
+    updateField("activities", next);
+  };
+
+  const addBudgetRow = () => {
+    updateField("budgetItems", [...form.budgetItems, { item: "", unitPrice: 0 }]);
+  };
+
+  const removeBudgetRow = (index) => {
+    const next = form.budgetItems.filter((_, i) => i !== index);
+    updateField("budgetItems", next.length > 0 ? next : [{ item: "", unitPrice: 0 }]);
+  };
+
+  const updateBudget = (index, key, value) => {
+    const next = [...form.budgetItems];
+    next[index] = { ...next[index], [key]: value };
+    updateField("budgetItems", next);
+  };
+
+  const budgetTotal = form.budgetItems.reduce((sum, row) => sum + (Number(row.unitPrice) || 0), 0);
+
+  const sectionTitle = { fontSize: 14, fontWeight: 700, marginBottom: 8, marginTop: 16 };
+  const tdStyle = { padding: "4px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 13 };
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 12, overflowY: "auto" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{ maxWidth: 900, margin: "10px auto", ...cardStyle }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
+          <div style={{ fontSize: 18, fontWeight: 800 }}>동아리 계획 — {club.clubName}</div>
+          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, padding: "10px 14px" }}>닫기</button>
+        </div>
+
+        {/* 수업차시 */}
+        <div style={sectionTitle}>수업차시</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={form.lessonCount}
+            onChange={(e) => handleLessonCountChange(e.target.value)}
+            style={{ ...inputBase, width: 100, textAlign: "center" }}
+          />
+          <span style={{ fontSize: 13, color: t.textSub }}>차시</span>
+        </div>
+
+        {/* 동아리 개요 */}
+        <div style={sectionTitle}>동아리 개요 <span style={{ fontWeight: 400, fontSize: 12, color: t.textSub }}>({form.overview.length}/200자)</span></div>
+        <textarea
+          value={form.overview}
+          onChange={(e) => updateField("overview", e.target.value.slice(0, 200))}
+          placeholder="동아리 활동 목표와 방향을 간략히 작성해 주세요."
+          rows={3}
+          style={{ ...inputBase, resize: "vertical", lineHeight: 1.6 }}
+        />
+
+        {/* 차시별 활동내용 */}
+        <div style={sectionTitle}>차시별 활동내용</div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={{ ...tdStyle, width: 60, textAlign: "center", fontSize: 12, color: t.textSub, background: "#f8f9fb" }}>차시</th>
+                <th style={{ ...tdStyle, fontSize: 12, color: t.textSub, textAlign: "left", background: "#f8f9fb" }}>활동내용</th>
+              </tr>
+            </thead>
+            <tbody>
+              {form.activities.map((act, i) => (
+                <tr key={i}>
+                  <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: t.textSub }}>{act.lesson}</td>
+                  <td style={tdStyle}>
+                    <input
+                      value={act.content}
+                      onChange={(e) => updateActivity(i, e.target.value)}
+                      placeholder={`${act.lesson}차시 활동내용`}
+                      style={{ ...inputBase, border: "none", padding: "6px 4px", background: "transparent", width: "100%" }}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* 봉사활동 */}
+        <div style={sectionTitle}>창의적체험활동 연계 봉사활동</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 0, borderRadius: 8, overflow: "hidden", border: `1px solid ${t.border}` }}>
+            {[{ label: "O", value: true }, { label: "X", value: false }].map((opt) => (
+              <button
+                key={opt.label}
+                onClick={() => updateField("hasVolunteer", opt.value)}
+                style={{
+                  ...buttonBase,
+                  padding: "8px 20px",
+                  borderRadius: 0,
+                  fontWeight: form.hasVolunteer === opt.value ? 700 : 400,
+                  background: form.hasVolunteer === opt.value ? t.accent : "#fff",
+                  color: form.hasVolunteer === opt.value ? "#fff" : t.text,
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          {form.hasVolunteer ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 13 }}>봉사활동 시간:</span>
+              <input
+                type="number"
+                min={0}
+                value={form.volunteerHours}
+                onChange={(e) => updateField("volunteerHours", Math.max(0, Math.trunc(Number(e.target.value) || 0)))}
+                style={{ ...inputBase, width: 80, textAlign: "center" }}
+              />
+              <span style={{ fontSize: 13, color: t.textSub }}>시간</span>
+            </div>
+          ) : null}
+        </div>
+
+        {/* 예산활용 내역 */}
+        <div style={sectionTitle}>
+          예산활용 내역
+          {budgetTotal > 0 ? <span style={{ fontWeight: 400, fontSize: 12, color: t.textSub, marginLeft: 8 }}>합계: {budgetTotal.toLocaleString()}원</span> : null}
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 8 }}>
+          <thead>
+            <tr>
+              <th style={{ ...tdStyle, textAlign: "left", fontSize: 12, color: t.textSub, background: "#f8f9fb" }}>항목</th>
+              <th style={{ ...tdStyle, width: 140, textAlign: "right", fontSize: 12, color: t.textSub, background: "#f8f9fb" }}>단가 (원)</th>
+              <th style={{ ...tdStyle, width: 50, textAlign: "center", fontSize: 12, color: t.textSub, background: "#f8f9fb" }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {form.budgetItems.map((row, i) => (
+              <tr key={i}>
+                <td style={tdStyle}>
+                  <input
+                    value={row.item}
+                    onChange={(e) => updateBudget(i, "item", e.target.value)}
+                    placeholder="항목명"
+                    style={{ ...inputBase, border: "none", padding: "6px 4px", background: "transparent", width: "100%" }}
+                  />
+                </td>
+                <td style={{ ...tdStyle, textAlign: "right" }}>
+                  <input
+                    type="number"
+                    min={0}
+                    value={row.unitPrice}
+                    onChange={(e) => updateBudget(i, "unitPrice", Number(e.target.value) || 0)}
+                    style={{ ...inputBase, border: "none", padding: "6px 4px", background: "transparent", width: "100%", textAlign: "right" }}
+                  />
+                </td>
+                <td style={{ ...tdStyle, textAlign: "center" }}>
+                  <button
+                    onClick={() => removeBudgetRow(i)}
+                    style={{ ...buttonBase, padding: "2px 8px", background: "transparent", color: t.danger, fontSize: 16 }}
+                  >
+                    ×
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button
+          onClick={addBudgetRow}
+          style={{ ...buttonBase, background: "#fff", border: `1px dashed ${t.border}`, color: t.textSub, padding: "6px 14px", fontSize: 13 }}
+        >
+          + 항목 추가
+        </button>
+
+        {/* 저장/취소 */}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20, paddingTop: 14, borderTop: `1px solid ${t.border}` }}>
+          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, padding: "10px 20px" }}>취소</button>
+          <button
+            onClick={onSave}
+            disabled={saving}
+            style={{ ...buttonBase, background: saving ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700, padding: "10px 24px" }}
+          >
+            {saving ? "저장 중..." : "저장"}
+          </button>
         </div>
       </div>
     </div>
@@ -5429,6 +5654,9 @@ export default function PrototypeApp({ studentOnly = false }) {
     open: false,
     club: null,
   });
+  const [planDialog, setPlanDialog] = useState({ open: false, club: null });
+  const [planForm, setPlanForm] = useState(null);
+  const [savingPlan, setSavingPlan] = useState(false);
 
   const [interviewDialog, setInterviewDialog] = useState({
     open: false,
@@ -6058,6 +6286,36 @@ export default function PrototypeApp({ studentOnly = false }) {
 
   function closeClubDetail() {
     setClubDetailDialog({ open: false, club: null });
+  }
+
+  function handleOpenPlanDialog(club) {
+    const existing = club.plan;
+    setPlanForm({
+      lessonCount: existing?.lessonCount || 28,
+      overview: existing?.overview || "",
+      activities: existing?.activities || Array.from({ length: 28 }, (_, i) => ({ lesson: i + 1, content: "" })),
+      hasVolunteer: existing?.hasVolunteer || false,
+      volunteerHours: existing?.volunteerHours || 0,
+      budgetItems: existing?.budgetItems?.length > 0 ? [...existing.budgetItems] : [{ item: "", unitPrice: 0 }],
+    });
+    setPlanDialog({ open: true, club });
+  }
+
+  async function handleSavePlan() {
+    if (!planDialog.club || !planForm) return;
+    try {
+      setSavingPlan(true);
+      await updateClubPlan(planDialog.club.id, planForm, { actor: user });
+      invalidateScheduleCache();
+      setMessage({ type: "ok", text: "동아리 계획을 저장했습니다." });
+      setPlanDialog({ open: false, club: null });
+      setPlanForm(null);
+      await refreshClubs();
+    } catch (error) {
+      withMessageError(error, "동아리 계획 저장에 실패했습니다.");
+    } finally {
+      setSavingPlan(false);
+    }
   }
 
   async function openApplicantDialog(club) {
@@ -6928,6 +7186,7 @@ export default function PrototypeApp({ studentOnly = false }) {
               onDelete={handleDeleteClub}
               onOpenApplicants={openApplicantDialog}
               onOpenInterviewSelect={openInterviewDialog}
+              onOpenPlan={handleOpenPlanDialog}
             />
           </div>
         ) : null
@@ -6995,6 +7254,7 @@ export default function PrototypeApp({ studentOnly = false }) {
           onDelete={handleDeleteClub}
           onOpenApplicants={openApplicantDialog}
           onOpenInterviewSelect={openInterviewDialog}
+          onOpenPlan={handleOpenPlanDialog}
         />
       ) : null}
 
@@ -7193,6 +7453,16 @@ export default function PrototypeApp({ studentOnly = false }) {
         club={clubDetailDialog.club}
         userMap={userMap}
         onClose={closeClubDetail}
+      />
+
+      <ClubPlanDialog
+        open={planDialog.open}
+        club={planDialog.club}
+        form={planForm}
+        onChange={setPlanForm}
+        onSave={handleSavePlan}
+        onClose={() => { setPlanDialog({ open: false, club: null }); setPlanForm(null); }}
+        saving={savingPlan}
       />
 
       <ApplicantsDialog

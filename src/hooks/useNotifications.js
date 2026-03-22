@@ -1,61 +1,41 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   listNotifications,
   markAllAsRead,
   markAsRead,
-  subscribeNotifications,
 } from '../services/notificationService'
-import { isFirebaseEnabled } from '../lib/firebase'
-
-const POLL_INTERVAL = 30_000 // 30 seconds for non-Firebase mode
 
 export function useNotifications(uid) {
   const [notifications, setNotifications] = useState([])
   const [loading, setLoading] = useState(false)
-  const unsubRef = useRef(null)
 
   const unreadCount = notifications.filter((n) => !n.read).length
 
+  // 앱 진입(uid 변경) 시 1회만 로드 — 주기적 폴링/onSnapshot 없음
   useEffect(() => {
     if (!uid) {
       setNotifications([])
-      return undefined
+      return
     }
 
-    if (isFirebaseEnabled()) {
-      // Real-time listener via Firestore onSnapshot
-      setLoading(true)
-      unsubRef.current = subscribeNotifications(uid, (items) => {
-        setNotifications(items)
-        setLoading(false)
-      })
-      return () => {
-        if (unsubRef.current) unsubRef.current()
-      }
-    }
-
-    // Demo mode: poll periodically
     let active = true
+    setLoading(true)
 
-    async function poll() {
-      if (!active) return
-      try {
-        const items = await listNotifications(uid)
-        if (active) setNotifications(items)
-      } catch {
-        // ignore polling errors
-      }
-    }
+    listNotifications(uid)
+      .then((items) => {
+        if (active) {
+          setNotifications(items)
+          setLoading(false)
+        }
+      })
+      .catch(() => {
+        if (active) setLoading(false)
+      })
 
-    poll()
-    const intervalId = setInterval(poll, POLL_INTERVAL)
-
-    return () => {
-      active = false
-      clearInterval(intervalId)
-    }
+    return () => { active = false }
   }, [uid])
 
+  // 벨 아이콘 클릭 등 사용자 명시 액션 시 호출
   const refresh = useCallback(async () => {
     if (!uid) return
     try {
