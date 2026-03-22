@@ -1743,6 +1743,7 @@ function ClubRoomManager({
   onRefresh,
 }) {
   const [roomInput, setRoomInput] = useState("");
+  const [expanded, setExpanded] = useState(false);
   const rows = Array.isArray(rooms) ? rooms : [];
 
   async function submitRoom() {
@@ -1751,87 +1752,98 @@ function ClubRoomManager({
     if (ok) setRoomInput("");
   }
 
+  const roomCount = rows.filter((r) => r.name !== "미정").length;
+
   return (
     <section style={cardStyle}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
-        <h2 style={{ fontSize: 17 }}>동아리실 등록</h2>
-        <button
-          onClick={onRefresh}
-          disabled={loading}
-          style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
-        >
-          새로고침
-        </button>
-      </div>
-
-      <div style={{ display: "grid", gap: 8 }}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <input
-            value={roomInput}
-            onChange={(e) => setRoomInput(e.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter") return;
-              event.preventDefault();
-              submitRoom();
-            }}
-            style={{ ...inputBase, minWidth: 260, flex: 1 }}
-            placeholder="예: 2층 창의융합실 (비워도 등록 가능)"
-          />
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <h2 style={{ fontSize: 17, margin: 0 }}>동아리실 등록</h2>
+          <span style={{ fontSize: 12, color: t.textSub }}>{roomCount}개 등록됨</span>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
           <button
-            onClick={submitRoom}
-            disabled={loading}
-            style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700 }}
+            onClick={() => setExpanded((v) => !v)}
+            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontSize: 12 }}
           >
-            {loading ? "처리 중..." : "동아리실 등록"}
+            {expanded ? "접기 ▲" : "목록 보기 ▼"}
+          </button>
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+          >
+            새로고침
           </button>
         </div>
-        <div style={{ fontSize: 12, color: t.textSub }}>
-          입력값이 비어 있으면 <strong>미정</strong>으로 등록됩니다.
-        </div>
       </div>
 
-      <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-        <div style={{ fontSize: 12, color: t.textSub }}>등록된 동아리실</div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {rows.map((room) => {
-            const locked = room.name === "미정";
-            return (
-              <div
-                key={room.id}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  border: `1px solid ${locked ? "#f3dfb9" : t.border}`,
-                  background: locked ? "#fff8e1" : "#fff",
-                  borderRadius: 999,
-                  padding: "6px 10px",
-                }}
-              >
-                <span style={{ fontSize: 12, fontWeight: 700, color: locked ? t.warn : t.text }}>
-                  {room.name}
-                </span>
-                <button
-                  onClick={() => onDelete(room)}
-                  disabled={loading || locked}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <input
+          value={roomInput}
+          onChange={(e) => setRoomInput(e.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            submitRoom();
+          }}
+          style={{ ...inputBase, minWidth: 200, flex: 1, maxWidth: 320 }}
+          placeholder="예: 2층 창의융합실"
+        />
+        <button
+          onClick={submitRoom}
+          disabled={loading}
+          style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700 }}
+        >
+          {loading ? "처리 중..." : "등록"}
+        </button>
+        <span style={{ fontSize: 11, color: t.textSub }}>비워두면 <strong>미정</strong>으로 등록</span>
+      </div>
+
+      {expanded ? (
+        <div style={{ marginTop: 10, maxHeight: 160, overflowY: "auto", border: `1px solid ${t.border}`, borderRadius: 8, padding: 8, background: "#f8f9fb" }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {rows.map((room) => {
+              const locked = room.name === "미정";
+              return (
+                <div
+                  key={room.id}
                   style={{
-                    ...buttonBase,
-                    padding: "4px 7px",
-                    background: locked ? "transparent" : "#ffebee",
-                    color: locked ? t.textSub : t.danger,
-                    cursor: loading || locked ? "not-allowed" : "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    border: `1px solid ${locked ? "#f3dfb9" : t.border}`,
+                    background: locked ? "#fff8e1" : "#fff",
+                    borderRadius: 999,
+                    padding: "4px 8px",
                   }}
                 >
-                  {locked ? "고정" : "삭제"}
-                </button>
-              </div>
-            );
-          })}
-          {rows.length === 0 ? (
-            <div style={{ fontSize: 12, color: t.textSub }}>등록된 동아리실이 없습니다.</div>
-          ) : null}
+                  <span style={{ fontSize: 11, fontWeight: 700, color: locked ? t.warn : t.text }}>
+                    {room.name}
+                  </span>
+                  <button
+                    onClick={() => onDelete(room)}
+                    disabled={loading || locked}
+                    style={{
+                      ...buttonBase,
+                      padding: "2px 5px",
+                      fontSize: 10,
+                      background: locked ? "transparent" : "#ffebee",
+                      color: locked ? t.textSub : t.danger,
+                      cursor: loading || locked ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {locked ? "고정" : "×"}
+                  </button>
+                </div>
+              );
+            })}
+            {rows.length === 0 ? (
+              <span style={{ fontSize: 12, color: t.textSub }}>등록된 동아리실이 없습니다.</span>
+            ) : null}
+          </div>
         </div>
-      </div>
+      ) : null}
     </section>
   );
 }
