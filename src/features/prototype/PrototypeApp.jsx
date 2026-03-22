@@ -30,6 +30,7 @@ import {
   randomSelectPending,
   rejectApplication,
   revokeApprovedApplication,
+  revertRejectedApplication,
   saveStudentPreferenceDraft,
   syncLeaderAssignmentForClub,
   updateRecruitmentPreAssignmentWindow,
@@ -2832,6 +2833,7 @@ function ApplicantsDialog({
   onApprove,
   onReject,
   onRevoke,
+  onRevertReject,
   onRandom,
   onManualAssign,
   randomLocked,
@@ -2986,6 +2988,9 @@ function ApplicantsDialog({
               && cycle?.status === "open"
               && (selectionReady || preAssignmentReady)
               && row.selectionSource !== "leader_auto";
+            const canRevertReject = row.status === "rejected"
+              && cycle?.status === "open"
+              && (selectionReady || preAssignmentReady);
             const isExpanded = expandedStudentUid === (row.studentUid || row.teacherUid);
             return (
               <Fragment key={row.id}>
@@ -3046,6 +3051,21 @@ function ApplicantsDialog({
                       }}
                     >
                       승인 취소
+                    </button>
+                  ) : null}
+                  {canRevertReject ? (
+                    <button
+                      onClick={() => onRevertReject(row)}
+                      disabled={loading}
+                      style={{
+                        ...buttonBase,
+                        padding: "5px 8px",
+                        background: !loading ? "#e3f2fd" : "#cfd8e3",
+                        color: !loading ? "#1976d2" : "#6b7280",
+                        fontWeight: 700,
+                      }}
+                    >
+                      반려 취소
                     </button>
                   ) : null}
                 </td>
@@ -6316,6 +6336,10 @@ export default function PrototypeApp({ studentOnly = false }) {
   }
 
   async function handleDeleteClub(club) {
+    if (user.role !== "admin" && Number(club.memberCount) > 0) {
+      alert(`승인된 학생이 ${club.memberCount}명 있어 삭제할 수 없습니다.\n관리자에게 요청해 주세요.`);
+      return;
+    }
     if (!window.confirm(`동아리 '${club.clubName}'를 삭제하시겠습니까?`)) return;
     try {
       await deleteSchedule(club.id, { actor: user });
@@ -6545,9 +6569,21 @@ export default function PrototypeApp({ studentOnly = false }) {
         : statusOverride === "draft" ? "제출을 취소하고 작성중 상태로 변경했습니다."
         : "동아리 계획을 저장했습니다.";
       setMessage({ type: "ok", text: msg });
-      setPlanDialog({ open: false, club: null });
-      setPlanForm(null);
-      await refreshClubs();
+
+      const updatedClubs = await refreshClubs();
+
+      if (statusOverride === "submitted" || statusOverride === "draft") {
+        // 제출/제출취소 시에는 모달 닫기
+        setPlanDialog({ open: false, club: null });
+        setPlanForm(null);
+      } else {
+        // 저장(draft) 시에는 모달 유지, 상태만 업데이트
+        const updatedClub = updatedClubs.find((c) => c.id === planDialog.club.id);
+        if (updatedClub) {
+          setPlanDialog((prev) => ({ ...prev, club: updatedClub }));
+        }
+        setPlanForm((prev) => ({ ...prev, planStatus: payload.planStatus }));
+      }
     } catch (error) {
       withMessageError(error, "동아리 계획 저장에 실패했습니다.");
     } finally {
@@ -6593,7 +6629,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   }
 
   async function handleApproveApplication(row) {
-    if (!window.confirm(`${row.studentName || "해당 학생"}을(를) 승인하시겠습니까?\n승인 후에는 취소가 어렵습니다.`)) {
+    if (!window.confirm(`${row.studentName || "해당 학생"}을(를) 승인하시겠습니까?`)) {
       return;
     }
     try {
@@ -6619,7 +6655,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   }
 
   async function handleRejectApplication(row) {
-    if (!window.confirm(`${row.studentName || "해당 학생"}을(를) 반려하시겠습니까?\n반려 후에는 취소가 어렵습니다.`)) {
+    if (!window.confirm(`${row.studentName || "해당 학생"}을(를) 반려하시겠습니까?`)) {
       return;
     }
     try {
@@ -6647,6 +6683,21 @@ export default function PrototypeApp({ studentOnly = false }) {
       await refreshMyApplications();
     } catch (error) {
       withMessageError(error, "승인 취소에 실패했습니다.");
+    }
+  }
+
+  async function handleRevertRejectedApplication(row) {
+    if (!window.confirm(`${row.studentName || "해당 학생"}의 반려를 취소하고 대기 상태로 되돌릴까요?`)) {
+      return;
+    }
+    try {
+      await revertRejectedApplication({ applicationId: row.id, actor: user });
+      invalidateApplicationCache();
+      setMessage({ type: "ok", text: "반려 취소 처리했습니다." });
+      await reloadApplicantDialog(applicantDialog.club);
+      await refreshMyApplications();
+    } catch (error) {
+      withMessageError(error, "반려 취소에 실패했습니다.");
     }
   }
 
@@ -7726,6 +7777,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         onApprove={handleApproveApplication}
         onReject={handleRejectApplication}
         onRevoke={handleRevokeApprovedApplication}
+        onRevertReject={handleRevertRejectedApplication}
         onRandom={handleRandomSelection}
         onManualAssign={handleManualAssignStudent}
         randomLocked={applicantRandomLocked}

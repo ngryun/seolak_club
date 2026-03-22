@@ -1882,6 +1882,82 @@ export async function revokeApprovedApplication(payload) {
   }
 }
 
+export async function revertRejectedApplication(payload) {
+  const applicationId = String(payload?.applicationId || '')
+  const user = assertActor(payload?.actor)
+  if (!applicationId) {
+    throw new Error('신청 ID가 필요합니다.')
+  }
+
+  const cycle = await ensureSelectionPhaseReady({ allowPreAssignment: true })
+  assertOpenCycle(cycle)
+
+  if (!isFirebaseEnabled()) {
+    const app = localApplications.find((row) => row.id === applicationId)
+    if (!app) throw new Error('신청 정보를 찾을 수 없습니다.')
+    if (app.status !== STATUS.REJECTED) throw new Error('반려 상태 신청만 되돌릴 수 있습니다.')
+
+    const club = await getScheduleById(app.clubId)
+    if (!club) throw new Error('동아리 정보를 찾을 수 없습니다.')
+    if (!canManageSelection(club, user)) throw new Error('반려 취소 권한이 없습니다.')
+
+    const reopenedStatus = getReopenedStatus(app.preferenceRank, cycle.currentRound)
+    if (!reopenedStatus) throw new Error('현재 라운드에서 되돌릴 수 없는 지망입니다.')
+
+    const now = nowIso()
+    localApplications = localApplications.map((row) => {
+      if (row.id !== app.id) return row
+      return {
+        ...row,
+        status: reopenedStatus,
+        rejectReason: '',
+        decisionNote: '',
+        decidedByUid: '',
+        selectionSource: '',
+        decidedAt: null,
+        updatedAt: now,
+      }
+    })
+    return { applicationId }
+  }
+
+  const appRef = doc(db, APPLICATIONS, applicationId)
+  const cycleRef = doc(db, CYCLES, CYCLE_DOC_ID)
+
+  await runTransaction(db, async (tx) => {
+    const cycleSnap = await tx.get(cycleRef)
+    const cycleData = cycleSnap.exists()
+      ? normalizeCycle(cycleSnap.data())
+      : { id: CYCLE_DOC_ID, currentRound: 1, status: 'open' }
+    if (cycleData.status !== 'open') throw new Error('현재 모집 사이클이 닫혀 있습니다.')
+
+    const appSnap = await tx.get(appRef)
+    if (!appSnap.exists()) throw new Error('신청 정보를 찾을 수 없습니다.')
+
+    const app = normalizeApplication(appSnap.id, appSnap.data())
+    if (app.status !== STATUS.REJECTED) throw new Error('반려 상태 신청만 되돌릴 수 있습니다.')
+
+    const club = await getScheduleById(app.clubId)
+    if (!club) throw new Error('동아리 정보를 찾을 수 없습니다.')
+    if (!canManageSelection(club, user)) throw new Error('반려 취소 권한이 없습니다.')
+
+    const reopenedStatus = getReopenedStatus(app.preferenceRank, cycleData.currentRound)
+    if (!reopenedStatus) throw new Error('현재 라운드에서 되돌릴 수 없는 지망입니다.')
+
+    tx.update(appRef, {
+      status: reopenedStatus,
+      rejectReason: '',
+      decisionNote: '',
+      decidedByUid: '',
+      selectionSource: '',
+      decidedAt: null,
+      updatedAt: serverTimestamp(),
+    })
+  })
+
+  return { applicationId }
+}
+
 export async function randomSelectPending(payload) {
   const clubId = String(payload?.clubId || '')
   const user = assertActor(payload?.actor)
