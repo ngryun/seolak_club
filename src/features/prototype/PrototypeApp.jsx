@@ -1801,7 +1801,7 @@ function ClubRoomManager({
       </div>
 
       {expanded ? (
-        <div style={{ marginTop: 10, maxHeight: 160, overflowY: "auto", border: `1px solid ${t.border}`, borderRadius: 8, padding: 8, background: "#f8f9fb" }}>
+        <div style={{ marginTop: 10, border: `1px solid ${t.border}`, borderRadius: 8, padding: 8, background: "#f8f9fb" }}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {rows.map((room) => {
               const locked = room.name === "미정";
