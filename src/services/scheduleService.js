@@ -747,7 +747,7 @@ export async function updateClubPlan(scheduleId, planPayload, options = {}) {
 
   const club = await getScheduleById(scheduleId)
   if (!club) throw new Error('동아리를 찾을 수 없습니다.')
-  if (!canEditClub(club, actor.uid, actor.role)) {
+  if (!canEditClub(club, actor)) {
     throw new Error('동아리 계획을 수정할 권한이 없습니다.')
   }
 

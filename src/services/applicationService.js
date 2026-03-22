@@ -464,8 +464,9 @@ async function getApplicationsByStudent(studentUid) {
     return localApplications.filter((row) => row.studentUid === studentUid)
   }
 
-  const snapshot = await getDocs(query(collection(db, APPLICATIONS), where('studentUid', '==', studentUid)))
-  return snapshot.docs.map((item) => normalizeApplication(item.id, item.data()))
+  // 캐시된 전체 applications에서 필터링 (별도 Firestore 쿼리 방지)
+  const allApps = await listCurrentCycleApplications()
+  return allApps.filter((row) => row.studentUid === studentUid)
 }
 
 async function getApplicationsByClub(clubId) {
@@ -473,8 +474,9 @@ async function getApplicationsByClub(clubId) {
     return localApplications.filter((row) => row.clubId === clubId)
   }
 
-  const snapshot = await getDocs(query(collection(db, APPLICATIONS), where('clubId', '==', clubId)))
-  return snapshot.docs.map((item) => normalizeApplication(item.id, item.data()))
+  // 캐시된 전체 applications에서 필터링 (별도 Firestore 쿼리 방지)
+  const allApps = await listCurrentCycleApplications()
+  return allApps.filter((row) => row.clubId === clubId)
 }
 
 async function listDraftsByCycle(cycleId) {
@@ -1307,11 +1309,8 @@ export async function getRoundStatsByClubIds(clubIds, options = {}) {
   const cycle = options?.cycle || await getCurrentRecruitmentCycle()
   const currentRound = Number(cycle?.currentRound || 1)
 
-  const rows = !isFirebaseEnabled()
-    ? localApplications.filter((row) => row.cycleId === cycle.id)
-    : (await getDocs(query(collection(db, APPLICATIONS), where('cycleId', '==', cycle.id))))
-      .docs
-      .map((item) => normalizeApplication(item.id, item.data()))
+  // 캐시된 applications 재사용 (별도 Firestore 쿼리 방지)
+  const rows = await listCurrentCycleApplications()
 
   // draft가 남아있으면 항상 통계에 포함 (검증 실패로 finalize되지 못한 draft 포함)
   const draftStudentClubs = new Set()
