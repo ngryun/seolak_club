@@ -1336,6 +1336,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, notifications, 
     admin: [
       { type: "group", label: "동아리" },
       { key: "clubs", label: "동아리 관리" },
+      { key: "clubRooms", label: "동아리실 관리" },
       { key: "studentStatus", label: "학생 신청 현황" },
       { key: "round", label: "동아리 선발 진행" },
       { type: "group", label: "신청카드" },
@@ -1831,6 +1832,133 @@ function ClubRoomManager({
         </div>
       </div>
     </section>
+  );
+}
+
+function ClubRoomManagementPage({
+  rooms,
+  clubs,
+  loading,
+  onAdd,
+  onDelete,
+  onRefresh,
+}) {
+  const rows = Array.isArray(rooms) ? rooms : [];
+  const allClubs = Array.isArray(clubs) ? clubs : [];
+
+  // Build room → clubs mapping
+  const roomClubMap = new Map();
+  rows.forEach((room) => roomClubMap.set(room.name, []));
+  allClubs.forEach((club) => {
+    const roomName = String(club.room || "미정").trim();
+    if (!roomClubMap.has(roomName)) roomClubMap.set(roomName, []);
+    roomClubMap.get(roomName).push(club);
+  });
+
+  // Sort: "미정" last
+  const sortedRoomNames = [...roomClubMap.keys()].sort((a, b) => {
+    if (a === "미정") return 1;
+    if (b === "미정") return -1;
+    return a.localeCompare(b, "ko");
+  });
+
+  const totalRooms = rows.filter((r) => r.name !== "미정").length;
+  const assignedRooms = sortedRoomNames.filter((name) => name !== "미정" && roomClubMap.get(name).length > 0).length;
+  const emptyRooms = totalRooms - assignedRooms;
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <ClubRoomManager
+        rooms={rooms}
+        loading={loading}
+        onAdd={onAdd}
+        onDelete={onDelete}
+        onRefresh={onRefresh}
+      />
+
+      <section style={cardStyle}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>
+          <h2 style={{ fontSize: 17 }}>동아리실 배정 현황</h2>
+          <div style={{ display: "flex", gap: 10, fontSize: 12, color: t.textSub }}>
+            <span>전체 <strong style={{ color: t.text }}>{totalRooms}</strong>실</span>
+            <span>배정 <strong style={{ color: t.ok }}>{assignedRooms}</strong></span>
+            <span>공실 <strong style={{ color: emptyRooms > 0 ? t.warn : t.textSub }}>{emptyRooms}</strong></span>
+          </div>
+        </div>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
+            <thead>
+              <tr>
+                {["동아리실", "배정 동아리", "담당교사", "정원"].map((h) => (
+                  <th key={h} style={{ textAlign: "left", padding: "8px 10px", borderBottom: `2px solid ${t.border}`, fontSize: 12, color: t.textSub, background: "#f8f9fb" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRoomNames.map((roomName) => {
+                const assignedClubs = roomClubMap.get(roomName) || [];
+                const isUndecided = roomName === "미정";
+
+                if (assignedClubs.length === 0) {
+                  return (
+                    <tr key={roomName}>
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 10px", fontSize: 13, fontWeight: 700, color: isUndecided ? t.warn : t.text }}>
+                        {roomName}
+                      </td>
+                      <td colSpan={3} style={{ borderBottom: `1px solid ${t.border}`, padding: "10px 10px", fontSize: 12, color: t.textSub, fontStyle: "italic" }}>
+                        {isUndecided ? "-" : "배정된 동아리 없음"}
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return assignedClubs.map((club, idx) => (
+                  <tr key={`${roomName}-${club.id}`} style={{ background: isUndecided ? "#fffdf5" : undefined }}>
+                    {idx === 0 ? (
+                      <td
+                        rowSpan={assignedClubs.length}
+                        style={{
+                          borderBottom: `1px solid ${t.border}`,
+                          padding: "10px 10px",
+                          fontSize: 13,
+                          fontWeight: 700,
+                          verticalAlign: "top",
+                          color: isUndecided ? t.warn : t.text,
+                          background: isUndecided ? "#fffdf5" : undefined,
+                        }}
+                      >
+                        {roomName}
+                        {!isUndecided && assignedClubs.length > 1 ? (
+                          <span style={{ display: "block", fontSize: 10, fontWeight: 400, color: t.textSub, marginTop: 2 }}>{assignedClubs.length}개 동아리</span>
+                        ) : null}
+                      </td>
+                    ) : null}
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px", fontSize: 13 }}>
+                      {club.clubName || "-"}
+                      {club.legacy ? <span style={{ fontSize: 10, marginLeft: 6, padding: "1px 5px", borderRadius: 4, background: "#e5e7eb", color: t.textSub }}>보관</span> : null}
+                    </td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px", fontSize: 13 }}>
+                      {club.teacherName || "-"}
+                    </td>
+                    <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 10px", fontSize: 13 }}>
+                      {club.maxMembers || "-"}명
+                    </td>
+                  </tr>
+                ));
+              })}
+              {sortedRoomNames.length === 0 ? (
+                <tr>
+                  <td colSpan={4} style={{ textAlign: "center", padding: 20, color: t.textSub, fontSize: 13 }}>
+                    등록된 동아리실이 없습니다.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -6770,26 +6898,6 @@ export default function PrototypeApp({ studentOnly = false }) {
       {tab === "clubs" ? (
         (user.role === "admin" || isStudentLeader) ? (
           <div style={{ display: "grid", gap: 12 }}>
-            {user.role === "admin" ? (
-              <ClubRoomManager
-                rooms={clubRooms}
-                loading={savingRoom}
-                onAdd={handleCreateClubRoom}
-                onDelete={handleDeleteClubRoom}
-                onRefresh={async () => {
-                  try {
-                    setSavingRoom(true);
-                    await refreshClubRooms();
-                    setMessage({ type: "ok", text: "동아리실 목록을 새로고침했습니다." });
-                  } catch (error) {
-                    withMessageError(error, "동아리실 목록 갱신에 실패했습니다.");
-                  } finally {
-                    setSavingRoom(false);
-                  }
-                }}
-              />
-            ) : null}
-
             <ClubTable
               actor={user}
               clubs={clubsForManageTab}
@@ -6806,6 +6914,27 @@ export default function PrototypeApp({ studentOnly = false }) {
             />
           </div>
         ) : null
+      ) : null}
+
+      {tab === "clubRooms" && user.role === "admin" ? (
+        <ClubRoomManagementPage
+          rooms={clubRooms}
+          clubs={clubs}
+          loading={savingRoom}
+          onAdd={handleCreateClubRoom}
+          onDelete={handleDeleteClubRoom}
+          onRefresh={async () => {
+            try {
+              setSavingRoom(true);
+              await refreshClubRooms();
+              setMessage({ type: "ok", text: "동아리실 목록을 새로고침했습니다." });
+            } catch (error) {
+              withMessageError(error, "동아리실 목록 갱신에 실패했습니다.");
+            } finally {
+              setSavingRoom(false);
+            }
+          }}
+        />
       ) : null}
 
       {tab === "requestCards" && (user.role === "admin" || user.role === "teacher") ? (
