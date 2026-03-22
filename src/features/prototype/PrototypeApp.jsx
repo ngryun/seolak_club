@@ -2392,6 +2392,48 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving })
 
   const AI_CONFIRM_MSG = "AI로 생성된 내용은 참고용이며,\n반드시 교사가 직접 확인·수정 후 사용해 주세요.\n\n기존 입력 내용이 덮어씌워집니다.\n계속 진행하시겠습니까?";
 
+  const handlePrintPdf = () => {
+    const year = new Date().getFullYear();
+    const grades = (club.targetGrades || []).join("·");
+    const teacherLabel = String(club.teacherName || "").trim() || "-";
+    const memberCount = Number(club.memberCount) || 0;
+
+    const activitiesRows = (form.activities || []).map((act) =>
+      `<tr><td style="border:1px solid #999;padding:6px 10px;text-align:center;width:50px;font-size:13px;">${act.lesson}</td><td style="border:1px solid #999;padding:6px 10px;font-size:13px;">${act.content || ""}</td></tr>`
+    ).join("");
+
+    const budgetRows = (form.budgetItems || []).map((row) => {
+      const price = Number(row.unitPrice) || 0;
+      const total = price * memberCount;
+      return `<tr><td style="border:1px solid #999;padding:6px 10px;font-size:13px;">${row.item || ""}</td><td style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:13px;">${price.toLocaleString()}</td><td style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:13px;">${memberCount}명</td><td style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:13px;font-weight:600;">${total.toLocaleString()}</td></tr>`;
+    }).join("");
+    const budgetTotal = (form.budgetItems || []).reduce((sum, r) => sum + (Number(r.unitPrice) || 0) * memberCount, 0);
+
+    const volunteerInfo = form.hasVolunteer
+      ? `<p style="margin:4px 0;font-size:13px;">봉사활동 연계: <strong>O</strong> (${form.volunteerHours || 0}시간)</p>`
+      : `<p style="margin:4px 0;font-size:13px;">봉사활동 연계: <strong>X</strong></p>`;
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>동아리 활동 계획</title><style>@media print{@page{margin:15mm 12mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}body{font-family:'Pretendard',sans-serif;color:#1a1a1a;line-height:1.6;max-width:800px;margin:0 auto;padding:20px;}h1{text-align:center;font-size:20px;margin-bottom:4px;}table{width:100%;border-collapse:collapse;margin-bottom:16px;}th{background:#f0f0f0;}</style></head><body>
+<h1>${year}학년도 설악고등학교 창체 동아리 활동 계획</h1>
+<p style="text-align:center;font-size:13px;color:#555;margin-bottom:20px;">
+대상: ${grades ? grades + "학년" : "-"} | 동아리명: <strong>${club.clubName || "-"}</strong> | ${form.lessonCount || 0}차시 | 지도교사: ${teacherLabel}
+</p>
+<h3 style="font-size:15px;border-bottom:2px solid #333;padding-bottom:4px;">동아리 개요</h3>
+<p style="font-size:13px;white-space:pre-wrap;margin-bottom:20px;">${form.overview || "-"}</p>
+<h3 style="font-size:15px;border-bottom:2px solid #333;padding-bottom:4px;">차시별 활동내용</h3>
+<table><thead><tr><th style="border:1px solid #999;padding:6px 10px;width:50px;font-size:12px;">차시</th><th style="border:1px solid #999;padding:6px 10px;text-align:left;font-size:12px;">활동내용</th></tr></thead><tbody>${activitiesRows}</tbody></table>
+${volunteerInfo}
+<h3 style="font-size:15px;border-bottom:2px solid #333;padding-bottom:4px;margin-top:20px;">예산활용 내역</h3>
+<table><thead><tr><th style="border:1px solid #999;padding:6px 10px;text-align:left;font-size:12px;">항목</th><th style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:12px;width:100px;">단가(원)</th><th style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:12px;width:70px;">인원</th><th style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:12px;width:110px;">계(원)</th></tr></thead><tbody>${budgetRows}<tr style="background:#f0f0f0;"><td colspan="3" style="border:1px solid #999;padding:6px 10px;text-align:right;font-weight:700;font-size:13px;">합계</td><td style="border:1px solid #999;padding:6px 10px;text-align:right;font-weight:700;font-size:13px;">${budgetTotal.toLocaleString()}원</td></tr></tbody></table>
+</body></html>`;
+
+    const printWin = window.open("", "_blank");
+    if (!printWin) { alert("팝업이 차단되었습니다. 팝업 차단을 해제해 주세요."); return; }
+    printWin.document.write(html);
+    printWin.document.close();
+    printWin.onload = () => { printWin.print(); };
+  };
+
   const handleAiOverview = async () => {
     if (!window.confirm(AI_CONFIRM_MSG)) return;
     setAiLoading("overview");
@@ -2682,6 +2724,12 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving })
 
         {/* 저장/취소 */}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20, paddingTop: 14, borderTop: `1px solid ${t.border}` }}>
+          <button
+            onClick={handlePrintPdf}
+            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, padding: "10px 16px", color: t.textSub, marginRight: "auto" }}
+          >
+            PDF 저장
+          </button>
           <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, padding: "10px 20px" }}>취소</button>
           <button
             onClick={onSave}
