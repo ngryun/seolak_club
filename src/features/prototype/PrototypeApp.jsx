@@ -2473,8 +2473,20 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving })
                   <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: t.textSub }}>{act.lesson}</td>
                   <td style={tdStyle}>
                     <input
+                      data-activity-index={i}
                       value={act.content}
                       onChange={(e) => updateActivity(i, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === "ArrowDown") {
+                          e.preventDefault();
+                          const next = e.target.closest("tbody")?.querySelector(`[data-activity-index="${i + 1}"]`);
+                          if (next) next.focus();
+                        } else if (e.key === "ArrowUp") {
+                          e.preventDefault();
+                          const prev = e.target.closest("tbody")?.querySelector(`[data-activity-index="${i - 1}"]`);
+                          if (prev) prev.focus();
+                        }
+                      }}
                       placeholder={`${act.lesson}차시 활동내용`}
                       style={{ ...inputBase, border: "none", padding: "6px 4px", background: "transparent", width: "100%" }}
                     />
@@ -6296,7 +6308,7 @@ export default function PrototypeApp({ studentOnly = false }) {
       activities: existing?.activities || Array.from({ length: 28 }, (_, i) => ({ lesson: i + 1, content: "" })),
       hasVolunteer: existing?.hasVolunteer || false,
       volunteerHours: existing?.volunteerHours || 0,
-      budgetItems: existing?.budgetItems?.length > 0 ? [...existing.budgetItems] : [{ item: "", unitPrice: 0 }],
+      budgetItems: existing?.budgetItems?.length > 0 ? [...existing.budgetItems] : [{ item: "물품구입", unitPrice: 11000 }, { item: "간식비", unitPrice: 4000 }],
     });
     setPlanDialog({ open: true, club });
   }
