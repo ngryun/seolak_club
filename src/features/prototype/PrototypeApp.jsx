@@ -2390,7 +2390,10 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving })
   const aiEnabled = isAiAvailable();
   const updateField = (key, value) => onChange({ ...form, [key]: value });
 
+  const AI_CONFIRM_MSG = "AI로 생성된 내용은 참고용이며,\n반드시 교사가 직접 확인·수정 후 사용해 주세요.\n\n기존 입력 내용이 덮어씌워집니다.\n계속 진행하시겠습니까?";
+
   const handleAiOverview = async () => {
+    if (!window.confirm(AI_CONFIRM_MSG)) return;
     setAiLoading("overview");
     try {
       const overview = await generateClubOverview({
@@ -2411,6 +2414,7 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving })
       alert("동아리 개요 또는 동아리 소개가 입력되어 있어야 AI 작성이 가능합니다.");
       return;
     }
+    if (!window.confirm(AI_CONFIRM_MSG)) return;
     setAiLoading("activities");
     try {
       const contents = await generateLessonActivities({
@@ -2461,7 +2465,8 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving })
     updateField("budgetItems", next);
   };
 
-  const budgetTotal = form.budgetItems.reduce((sum, row) => sum + (Number(row.unitPrice) || 0), 0);
+  const memberCount = Number(club.memberCount) || 0;
+  const budgetTotal = form.budgetItems.reduce((sum, row) => sum + (Number(row.unitPrice) || 0) * memberCount, 0);
 
   const sectionTitle = { fontSize: 14, fontWeight: 700, marginBottom: 8, marginTop: 16 };
   const tdStyle = { padding: "4px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 13 };
@@ -2553,6 +2558,22 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving })
                           if (prev) prev.focus();
                         }
                       }}
+                      onPaste={(e) => {
+                        const text = e.clipboardData?.getData("text") || "";
+                        const lines = text.split(/\r?\n/).filter((l) => l.trim());
+                        if (lines.length <= 1) return; // 1줄이면 기본 동작
+                        e.preventDefault();
+                        const next = [...form.activities];
+                        lines.forEach((line, offset) => {
+                          const idx = i + offset;
+                          if (idx < next.length) {
+                            // 탭 구분 시 마지막 컬럼(활동내용)만 사용, 아니면 전체
+                            const parts = line.split("\t");
+                            next[idx] = { ...next[idx], content: (parts.length > 1 ? parts[parts.length - 1] : line).trim() };
+                          }
+                        });
+                        onChange({ ...form, activities: next });
+                      }}
                       placeholder={`${act.lesson}차시 활동내용`}
                       style={{ ...inputBase, border: "none", padding: "6px 4px", background: "transparent", width: "100%" }}
                     />
@@ -2602,13 +2623,15 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving })
         {/* 예산활용 내역 */}
         <div style={sectionTitle}>
           예산활용 내역
-          {budgetTotal > 0 ? <span style={{ fontWeight: 400, fontSize: 12, color: t.textSub, marginLeft: 8 }}>합계: {budgetTotal.toLocaleString()}원</span> : null}
+          {budgetTotal > 0 ? <span style={{ fontWeight: 400, fontSize: 12, color: t.textSub, marginLeft: 8 }}>합계: {budgetTotal.toLocaleString()}원 ({memberCount}명 기준)</span> : null}
         </div>
         <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 8 }}>
           <thead>
             <tr>
               <th style={{ ...tdStyle, textAlign: "left", fontSize: 12, color: t.textSub, background: "#f8f9fb" }}>항목</th>
-              <th style={{ ...tdStyle, width: 140, textAlign: "right", fontSize: 12, color: t.textSub, background: "#f8f9fb" }}>단가 (원)</th>
+              <th style={{ ...tdStyle, width: 120, textAlign: "right", fontSize: 12, color: t.textSub, background: "#f8f9fb" }}>단가 (원)</th>
+              <th style={{ ...tdStyle, width: 70, textAlign: "right", fontSize: 12, color: t.textSub, background: "#f8f9fb" }}>인원</th>
+              <th style={{ ...tdStyle, width: 120, textAlign: "right", fontSize: 12, color: t.textSub, background: "#f8f9fb" }}>계 (원)</th>
               <th style={{ ...tdStyle, width: 50, textAlign: "center", fontSize: 12, color: t.textSub, background: "#f8f9fb" }}></th>
             </tr>
           </thead>
@@ -2631,6 +2654,12 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onClose, saving })
                     onChange={(e) => updateBudget(i, "unitPrice", Number(e.target.value) || 0)}
                     style={{ ...inputBase, border: "none", padding: "6px 4px", background: "transparent", width: "100%", textAlign: "right" }}
                   />
+                </td>
+                <td style={{ ...tdStyle, textAlign: "right", fontSize: 13, color: t.textSub }}>
+                  {memberCount > 0 ? `${memberCount}명` : "-"}
+                </td>
+                <td style={{ ...tdStyle, textAlign: "right", fontSize: 13, fontWeight: 600 }}>
+                  {memberCount > 0 ? ((Number(row.unitPrice) || 0) * memberCount).toLocaleString() : "-"}
                 </td>
                 <td style={{ ...tdStyle, textAlign: "center" }}>
                   <button
