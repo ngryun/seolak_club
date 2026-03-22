@@ -1,41 +1,28 @@
-import { appConfig } from '../config/appConfig'
+// AI 서비스 — Netlify 서버리스 함수를 통해 OpenAI 호출
+// API 키는 서버 측(OPENAI_API_KEY)에만 존재, 클라이언트 번들에 포함되지 않음
 
-const MODEL = 'gpt-5.4-nano'
-const API_URL = 'https://api.openai.com/v1/chat/completions'
-
-function getApiKey() {
-  return String(appConfig.openaiApiKey || '').trim()
-}
+const PROXY_URL = '/.netlify/functions/ai-proxy'
 
 export function isAiAvailable() {
-  return getApiKey().length > 0
+  // 서버에 키가 있는지 클라이언트에서 알 수 없으므로 항상 true
+  // (키 미설정 시 서버에서 에러 반환)
+  return true
 }
 
 async function chatCompletion(messages, { maxTokens = 1200 } = {}) {
-  const apiKey = getApiKey()
-  if (!apiKey) throw new Error('OpenAI API 키가 설정되지 않았습니다.')
-
-  const res = await fetch(API_URL, {
+  const res = await fetch(PROXY_URL, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages,
-      max_tokens: maxTokens,
-      temperature: 0.7,
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, maxTokens }),
   })
 
+  const data = await res.json()
+
   if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`AI 요청 실패 (${res.status}): ${body.slice(0, 200)}`)
+    throw new Error(data?.error || `AI 요청 실패 (${res.status})`)
   }
 
-  const data = await res.json()
-  return String(data?.choices?.[0]?.message?.content || '').trim()
+  return String(data?.content || '').trim()
 }
 
 /**

@@ -10,7 +10,6 @@ export const appConfig = {
     .split(',')
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean),
-  openaiApiKey: env.VITE_OPENAI_API_KEY || '',
   firebase: {
     apiKey: env.VITE_FIREBASE_API_KEY || '',
     authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || '',
