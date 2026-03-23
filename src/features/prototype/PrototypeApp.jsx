@@ -1523,6 +1523,7 @@ function ClubForm({
   onReset,
   submitting,
   canCreate,
+  clubs,
 }) {
   const teachers = users.filter((u) => u.role === "teacher" || u.role === "admin");
   const students = users.filter((u) => u.role === "student");
@@ -1557,6 +1558,17 @@ function ClubForm({
       return a.name.localeCompare(b.name, "ko");
     });
   }, [roomOptions, form?.room]);
+  const roomClubMap = useMemo(() => {
+    const map = new Map();
+    (clubs || []).forEach((c) => {
+      const room = String(c.room || "").trim();
+      if (room && room !== "미정" && c.id !== editingId) {
+        if (!map.has(room)) map.set(room, []);
+        map.get(room).push(c.clubName || "이름없음");
+      }
+    });
+    return map;
+  }, [clubs, editingId]);
 
   function toggleTeacher(uid) {
     setForm((prev) => {
@@ -1679,11 +1691,14 @@ function ClubForm({
               value={form.room || "미정"}
               onChange={(e) => setForm((prev) => ({ ...prev, room: e.target.value }))}
             >
-              {normalizedRoomOptions.map((room) => (
-                <option key={room.id} value={room.name}>
-                  {room.name}
-                </option>
-              ))}
+              {normalizedRoomOptions.map((room) => {
+                const assigned = roomClubMap.get(room.name);
+                return (
+                  <option key={room.id} value={room.name}>
+                    {room.name}{assigned ? ` (${assigned.join(", ")})` : ""}
+                  </option>
+                );
+              })}
             </Select>
           </Field>
 
@@ -3778,6 +3793,44 @@ function StudentApplicationStatusPanel({
             placeholder="학번, 이름, 동아리 검색"
             style={{ ...inputBase, width: 200 }}
           />
+          <button
+            onClick={() => {
+              if (!classFilter) { alert("학급을 선택한 후 인쇄할 수 있습니다."); return; }
+              const [grade, cls] = classFilter.split("-");
+              const title = `${grade}학년 ${cls}반 동아리 배정 현황`;
+              const sorted = [...filteredRows].sort((a, b) => {
+                const an = Number(String(a.studentNo || "").slice(-2)) || 0;
+                const bn = Number(String(b.studentNo || "").slice(-2)) || 0;
+                return an - bn;
+              });
+              const tableRows = sorted.map((row, i) => {
+                const no = String(row.studentNo || "").slice(-2).replace(/^0/, "") || "-";
+                const name = row.studentName || "-";
+                const club = row.finalClubName || "";
+                const bg = i % 2 === 0 ? "#fff" : "#f8fafc";
+                return `<tr style="background:${bg}"><td style="border:1px solid #d0d5dd;padding:7px 12px;text-align:center;font-size:13px;">${no}</td><td style="border:1px solid #d0d5dd;padding:7px 12px;font-size:13px;font-weight:600;">${name}</td><td style="border:1px solid #d0d5dd;padding:7px 12px;font-size:13px;text-align:center;${club ? "color:#16a34a;font-weight:700;" : "color:#aaa;"}">${club || "미배정"}</td></tr>`;
+              }).join("");
+              const assignedCount = sorted.filter((r) => r.finalClubName).length;
+              const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>@media print{@page{size:A4 portrait;margin:15mm 18mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}body{font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif;color:#1a1a1a;line-height:1.5;max-width:700px;margin:0 auto;padding:24px;}table{width:100%;border-collapse:collapse;}</style></head><body>
+<div style="text-align:center;margin-bottom:20px;">
+<h1 style="font-size:20px;margin:0 0 4px;">${title}</h1>
+<p style="font-size:12px;color:#666;margin:0;">인쇄일: ${new Date().toLocaleDateString("ko-KR")} · 총 ${sorted.length}명 · 배정 ${assignedCount}명 · 미배정 ${sorted.length - assignedCount}명</p>
+</div>
+<table>
+<thead><tr style="background:#f0f4f8;"><th style="border:1px solid #d0d5dd;padding:8px 12px;font-size:12px;color:#475569;width:50px;">번호</th><th style="border:1px solid #d0d5dd;padding:8px 12px;font-size:12px;color:#475569;text-align:left;">이름</th><th style="border:1px solid #d0d5dd;padding:8px 12px;font-size:12px;color:#475569;width:45%;">배정 동아리</th></tr></thead>
+<tbody>${tableRows}</tbody>
+</table>
+</body></html>`;
+              const printWin = window.open("", "_blank");
+              if (!printWin) { alert("팝업이 차단되었습니다. 팝업 차단을 해제해 주세요."); return; }
+              printWin.document.write(html);
+              printWin.document.close();
+              printWin.onload = () => { printWin.print(); };
+            }}
+            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+          >
+            학급별 인쇄
+          </button>
           <button
             onClick={onRefresh}
             disabled={loading}
@@ -7733,6 +7786,7 @@ export default function PrototypeApp({ studentOnly = false }) {
           onReset={closeClubFormDialog}
           submitting={savingClub}
           canCreate={canCreateClub}
+          clubs={clubs}
         />
       </ClubFormDialog>
 
