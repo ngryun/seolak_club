@@ -3798,26 +3798,39 @@ function StudentApplicationStatusPanel({
               if (!classFilter) { alert("학급을 선택한 후 인쇄할 수 있습니다."); return; }
               const [grade, cls] = classFilter.split("-");
               const title = `${grade}학년 ${cls}반 동아리 배정 현황`;
+              const clubMap = new Map();
+              (Array.isArray(clubs) ? clubs : []).forEach((c) => clubMap.set(c.id, c));
               const sorted = [...filteredRows].sort((a, b) => {
                 const an = Number(String(a.studentNo || "").slice(-2)) || 0;
                 const bn = Number(String(b.studentNo || "").slice(-2)) || 0;
                 return an - bn;
               });
-              const tableRows = sorted.map((row, i) => {
-                const no = String(row.studentNo || "").slice(-2).replace(/^0/, "") || "-";
-                const name = row.studentName || "-";
-                const club = row.finalClubName || "";
-                const bg = i % 2 === 0 ? "#fff" : "#f8fafc";
-                return `<tr style="background:${bg}"><td style="border:1px solid #d0d5dd;padding:7px 12px;text-align:center;font-size:13px;">${no}</td><td style="border:1px solid #d0d5dd;padding:7px 12px;font-size:13px;font-weight:600;">${name}</td><td style="border:1px solid #d0d5dd;padding:7px 12px;font-size:13px;text-align:center;${club ? "color:#16a34a;font-weight:700;" : "color:#aaa;"}">${club || "미배정"}</td></tr>`;
-              }).join("");
               const assignedCount = sorted.filter((r) => r.finalClubName).length;
-              const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>@media print{@page{size:A4 portrait;margin:15mm 18mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}body{font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif;color:#1a1a1a;line-height:1.5;max-width:700px;margin:0 auto;padding:24px;}table{width:100%;border-collapse:collapse;}</style></head><body>
-<div style="text-align:center;margin-bottom:20px;">
-<h1 style="font-size:20px;margin:0 0 4px;">${title}</h1>
-<p style="font-size:12px;color:#666;margin:0;">인쇄일: ${new Date().toLocaleDateString("ko-KR")} · 총 ${sorted.length}명 · 배정 ${assignedCount}명 · 미배정 ${sorted.length - assignedCount}명</p>
+              const td = "border:1px solid #ccc;padding:5px 10px;font-size:12px;";
+              const tableRows = sorted.map((row, i) => {
+                const name = row.studentName || "-";
+                const clubName = row.finalClubName || "";
+                const clubObj = row.finalClubId ? clubMap.get(row.finalClubId) : null;
+                const room = clubObj?.room || "";
+                const bg = i % 2 === 0 ? "#fff" : "#f7f8fb";
+                return `<tr style="background:${bg}"><td style="${td}font-weight:600;">${name}</td><td style="${td}text-align:center;${clubName ? "color:#16a34a;font-weight:600;" : "color:#bbb;"}">${clubName || "미배정"}</td><td style="${td}text-align:center;color:#555;">${room || "-"}</td></tr>`;
+              }).join("");
+              const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
+<style>
+@media print{@page{size:A4 portrait;margin:12mm 15mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+body{font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif;color:#1a1a1a;line-height:1.4;max-width:700px;margin:0 auto;padding:20px;}
+table{width:100%;border-collapse:collapse;}
+</style></head><body>
+<div style="text-align:center;margin-bottom:14px;">
+<h1 style="font-size:18px;margin:0 0 4px;">${title}</h1>
+<p style="font-size:11px;color:#888;margin:0;">인쇄일: ${new Date().toLocaleDateString("ko-KR")} · 총 ${sorted.length}명 · 배정 ${assignedCount}명 · 미배정 ${sorted.length - assignedCount}명</p>
 </div>
 <table>
-<thead><tr style="background:#f0f4f8;"><th style="border:1px solid #d0d5dd;padding:8px 12px;font-size:12px;color:#475569;width:50px;">번호</th><th style="border:1px solid #d0d5dd;padding:8px 12px;font-size:12px;color:#475569;text-align:left;">이름</th><th style="border:1px solid #d0d5dd;padding:8px 12px;font-size:12px;color:#475569;width:45%;">배정 동아리</th></tr></thead>
+<thead><tr style="background:#edf0f5;">
+<th style="border:1px solid #ccc;padding:6px 10px;font-size:11px;color:#475569;text-align:left;width:25%;">학생명</th>
+<th style="border:1px solid #ccc;padding:6px 10px;font-size:11px;color:#475569;text-align:center;width:40%;">동아리명</th>
+<th style="border:1px solid #ccc;padding:6px 10px;font-size:11px;color:#475569;text-align:center;width:35%;">동아리실</th>
+</tr></thead>
 <tbody>${tableRows}</tbody>
 </table>
 </body></html>`;
@@ -7613,6 +7626,7 @@ export default function PrototypeApp({ studentOnly = false }) {
           onDelete={handleDeleteClub}
           onOpenApplicants={openApplicantDialog}
           onOpenInterviewSelect={openInterviewDialog}
+          onOpenPlan={handleOpenPlanDialog}
           showCapacity={user.role !== "student"}
           showRoundStatus={user.role !== "student"}
           showActions={user.role !== "student"}
