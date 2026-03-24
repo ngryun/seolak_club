@@ -6616,7 +6616,7 @@ export default function PrototypeApp({ studentOnly = false }) {
       activities: existing?.activities || Array.from({ length: 28 }, (_, i) => ({ lesson: i + 1, content: "" })),
       hasVolunteer: existing?.hasVolunteer || false,
       volunteerHours: existing?.volunteerHours || 0,
-      budgetItems: existing?.budgetItems?.length > 0 ? [...existing.budgetItems] : [{ item: "물품구입", unitPrice: 11000 }, { item: "간식비", unitPrice: 4000 }],
+      budgetItems: existing?.budgetItems?.length > 0 ? [...existing.budgetItems] : [{ item: "물품구입비", unitPrice: 15000 }],
       planStatus: existing?.planStatus || "",
     });
     setPlanDialog({ open: true, club });
