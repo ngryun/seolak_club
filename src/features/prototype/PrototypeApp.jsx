@@ -2440,8 +2440,9 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onSubmit, onUnsubm
 
   if (!open || !club || !form) return null;
 
+  const isSubmitted = form.planStatus === "submitted";
   const aiEnabled = isAiAvailable();
-  const updateField = (key, value) => onChange({ ...form, [key]: value });
+  const updateField = (key, value) => { if (!isSubmitted) onChange({ ...form, [key]: value }); };
 
   const AI_CONFIRM_MSG = "AI로 생성된 내용은 참고용이며,\n반드시 교사가 직접 확인·수정 후 사용해 주세요.\n\n기존 입력 내용이 덮어씌워집니다.\n계속 진행하시겠습니까?";
 
@@ -2589,7 +2590,8 @@ ${volunteerInfo}
             max={100}
             value={form.lessonCount}
             onChange={(e) => handleLessonCountChange(e.target.value)}
-            style={{ ...inputBase, width: 100, textAlign: "center" }}
+            disabled={isSubmitted}
+            style={{ ...inputBase, width: 100, textAlign: "center", ...(isSubmitted ? { opacity: 0.6 } : {}) }}
           />
           <span style={{ fontSize: 13, color: t.textSub }}>차시</span>
         </div>
@@ -2597,7 +2599,7 @@ ${volunteerInfo}
         {/* 동아리 개요 */}
         <div style={{ ...sectionTitle, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span>동아리 개요 <span style={{ fontWeight: 400, fontSize: 12, color: t.textSub }}>({form.overview.length}/200자)</span></span>
-          {aiEnabled ? (
+          {aiEnabled && !isSubmitted ? (
             <button
               onClick={handleAiOverview}
               disabled={!!aiLoading}
@@ -2612,13 +2614,14 @@ ${volunteerInfo}
           onChange={(e) => updateField("overview", e.target.value.slice(0, 200))}
           placeholder="동아리 활동 목표와 방향을 간략히 작성해 주세요."
           rows={3}
-          style={{ ...inputBase, resize: "vertical", lineHeight: 1.6 }}
+          disabled={isSubmitted}
+          style={{ ...inputBase, resize: "vertical", lineHeight: 1.6, ...(isSubmitted ? { opacity: 0.6 } : {}) }}
         />
 
         {/* 차시별 활동내용 */}
         <div style={{ ...sectionTitle, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span>차시별 활동내용</span>
-          {aiEnabled ? (
+          {aiEnabled && !isSubmitted ? (
             <button
               onClick={handleAiActivities}
               disabled={!!aiLoading}
@@ -2657,6 +2660,7 @@ ${volunteerInfo}
                         }
                       }}
                       onPaste={(e) => {
+                        if (isSubmitted) return;
                         const text = e.clipboardData?.getData("text") || "";
                         const lines = text.split(/\r?\n/).filter((l) => l.trim());
                         if (lines.length <= 1) return; // 1줄이면 기본 동작
@@ -2673,7 +2677,8 @@ ${volunteerInfo}
                         onChange({ ...form, activities: next });
                       }}
                       placeholder={`${act.lesson}차시 활동내용`}
-                      style={{ ...inputBase, border: "none", padding: "6px 4px", background: "transparent", width: "100%" }}
+                      disabled={isSubmitted}
+                      style={{ ...inputBase, border: "none", padding: "6px 4px", background: "transparent", width: "100%", ...(isSubmitted ? { opacity: 0.6 } : {}) }}
                     />
                   </td>
                 </tr>
@@ -2690,6 +2695,7 @@ ${volunteerInfo}
               <button
                 key={opt.label}
                 onClick={() => updateField("hasVolunteer", opt.value)}
+                disabled={isSubmitted}
                 style={{
                   ...buttonBase,
                   padding: "8px 20px",
@@ -2697,6 +2703,7 @@ ${volunteerInfo}
                   fontWeight: form.hasVolunteer === opt.value ? 700 : 400,
                   background: form.hasVolunteer === opt.value ? t.accent : "#fff",
                   color: form.hasVolunteer === opt.value ? "#fff" : t.text,
+                  ...(isSubmitted ? { opacity: 0.6 } : {}),
                 }}
               >
                 {opt.label}
@@ -2711,7 +2718,8 @@ ${volunteerInfo}
                 min={0}
                 value={form.volunteerHours}
                 onChange={(e) => updateField("volunteerHours", Math.max(0, Math.trunc(Number(e.target.value) || 0)))}
-                style={{ ...inputBase, width: 80, textAlign: "center" }}
+                disabled={isSubmitted}
+                style={{ ...inputBase, width: 80, textAlign: "center", ...(isSubmitted ? { opacity: 0.6 } : {}) }}
               />
               <span style={{ fontSize: 13, color: t.textSub }}>시간</span>
             </div>
@@ -2746,7 +2754,8 @@ ${volunteerInfo}
                     value={row.item}
                     onChange={(e) => updateBudget(i, "item", e.target.value)}
                     placeholder="항목명"
-                    style={{ ...inputBase, border: "none", padding: "6px 4px", background: "transparent", width: "100%" }}
+                    disabled={isSubmitted}
+                    style={{ ...inputBase, border: "none", padding: "6px 4px", background: "transparent", width: "100%", ...(isSubmitted ? { opacity: 0.6 } : {}) }}
                   />
                 </td>
                 <td style={{ ...tdStyle, textAlign: "right" }}>
@@ -2755,7 +2764,8 @@ ${volunteerInfo}
                     min={0}
                     value={row.unitPrice}
                     onChange={(e) => updateBudget(i, "unitPrice", Number(e.target.value) || 0)}
-                    style={{ ...inputBase, border: "none", padding: "6px 4px", background: "transparent", width: "100%", textAlign: "right" }}
+                    disabled={isSubmitted}
+                    style={{ ...inputBase, border: "none", padding: "6px 4px", background: "transparent", width: "100%", textAlign: "right", ...(isSubmitted ? { opacity: 0.6 } : {}) }}
                   />
                 </td>
                 <td style={{ ...tdStyle, textAlign: "right", fontSize: 13, color: t.textSub }}>
@@ -2767,7 +2777,8 @@ ${volunteerInfo}
                 <td style={{ ...tdStyle, textAlign: "center" }}>
                   <button
                     onClick={() => removeBudgetRow(i)}
-                    style={{ ...buttonBase, padding: "2px 8px", background: "transparent", color: t.danger, fontSize: 16 }}
+                    disabled={isSubmitted}
+                    style={{ ...buttonBase, padding: "2px 8px", background: "transparent", color: t.danger, fontSize: 16, ...(isSubmitted ? { opacity: 0.3 } : {}) }}
                   >
                     ×
                   </button>
@@ -2776,12 +2787,14 @@ ${volunteerInfo}
             ))}
           </tbody>
         </table>
-        <button
-          onClick={addBudgetRow}
-          style={{ ...buttonBase, background: "#fff", border: `1px dashed ${t.border}`, color: t.textSub, padding: "6px 14px", fontSize: 13 }}
-        >
-          + 항목 추가
-        </button>
+        {!isSubmitted && (
+          <button
+            onClick={addBudgetRow}
+            style={{ ...buttonBase, background: "#fff", border: `1px dashed ${t.border}`, color: t.textSub, padding: "6px 14px", fontSize: 13 }}
+          >
+            + 항목 추가
+          </button>
+        )}
 
         {/* 상태 표시 + 저장/제출 */}
         {form.planStatus === "submitted" ? (
