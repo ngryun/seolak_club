@@ -2923,52 +2923,46 @@ function ApplicantsDialog({
 
   const statusLabel = (s) => s === "approved" ? "승인" : s === "rejected" ? "반려" : s === "cancelled" ? "취소" : "대기";
 
+  const approvedOnly = rows.filter((r) => r.status === "approved");
+
   const handleExcelDownload = async () => {
+    if (approvedOnly.length === 0) { alert("승인된 학생이 없습니다."); return; }
     try {
       const XLSX = await import("xlsx");
-      const data = rows.map((r) => ({
+      const data = approvedOnly.map((r, i) => ({
+        "번호": i + 1,
         "학번": r.studentNo || "-",
         "이름": r.studentName || "-",
-        "지망": `${r.preferenceRank}지망`,
-        "상태": statusLabel(r.status),
-        "진로희망": r.careerGoal || "",
-        "신청사유": r.applyReason || "",
-        "활동계획": r.wantedActivity || "",
       }));
       const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "신청 명단");
-      ws["!cols"] = [{ wch: 10 }, { wch: 8 }, { wch: 8 }, { wch: 8 }, { wch: 20 }, { wch: 24 }, { wch: 24 }];
-      XLSX.writeFile(wb, `${club?.clubName || "동아리"}_신청명단.xlsx`);
+      XLSX.utils.book_append_sheet(wb, ws, "승인 명단");
+      ws["!cols"] = [{ wch: 6 }, { wch: 10 }, { wch: 8 }];
+      XLSX.writeFile(wb, `${club?.clubName || "동아리"}_승인명단.xlsx`);
     } catch (err) {
       alert("엑셀 다운로드에 실패했습니다: " + err.message);
     }
   };
 
   const handlePrint = () => {
-    const approvedRows = rows.filter((r) => r.status === "approved");
-    const otherRows = rows.filter((r) => r.status !== "approved");
-    const renderSection = (title, list) => {
-      if (list.length === 0) return "";
-      const rowsHtml = list.map((r, i) =>
-        `<tr><td>${i + 1}</td><td>${r.studentNo || "-"}</td><td>${r.studentName || "-"}</td><td>${r.preferenceRank}지망</td><td>${statusLabel(r.status)}</td><td>${r.careerGoal || "-"}</td><td>${r.applyReason || "-"}</td><td>${r.wantedActivity || "-"}</td></tr>`
-      ).join("");
-      return `<h3 style="margin:16px 0 6px;font-size:14px;">${title} (${list.length}명)</h3>
-        <table><thead><tr><th>번호</th><th>학번</th><th>이름</th><th>지망</th><th>상태</th><th>진로희망</th><th>신청사유</th><th>활동계획</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
-    };
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${club?.clubName || "동아리"} 신청 명단</title>
-      <style>@media print{@page{size:landscape;margin:10mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
-      body{font-family:'Pretendard',sans-serif;color:#1a1a1a;padding:16px;}
-      h2{text-align:center;margin-bottom:4px;}
-      table{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:12px;}
-      th,td{border:1px solid #aaa;padding:5px 7px;text-align:left;word-break:break-word;}
-      th{background:#f0f0f0;font-size:11px;white-space:nowrap;}
-      td:nth-child(1){width:36px;text-align:center;}td:nth-child(2){width:60px;}td:nth-child(3){width:52px;}td:nth-child(4){width:50px;}td:nth-child(5){width:42px;}
+    if (approvedOnly.length === 0) { alert("승인된 학생이 없습니다."); return; }
+    const rowsHtml = approvedOnly.map((r, i) =>
+      `<tr><td>${i + 1}</td><td>${r.studentNo || "-"}</td><td>${r.studentName || "-"}</td></tr>`
+    ).join("");
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${club?.clubName || "동아리"} 승인 명단</title>
+      <style>
+      @media print{@page{size:portrait;margin:10mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+      html,body{margin:0;padding:16px;font-family:'Pretendard',sans-serif;color:#1a1a1a;}
+      h2{text-align:center;margin:0 0 2px;font-size:17px;}
+      p.sub{text-align:center;font-size:11px;color:#666;margin:0 0 10px;}
+      table{width:auto;margin:0 auto;border-collapse:collapse;font-size:13px;page-break-inside:avoid;}
+      th,td{border:1px solid #999;padding:5px 14px;text-align:center;}
+      th{background:#f0f0f0;font-size:12px;}
       </style></head><body>
-      <h2>${club?.clubName || "동아리"} 신청 명단</h2>
-      <p style="text-align:center;font-size:12px;color:#666;margin-bottom:12px;">총 ${rows.length}명 · 출력일 ${new Date().toLocaleDateString("ko-KR")}</p>
-      ${renderSection("승인된 학생", approvedRows)}
-      ${renderSection("대기 / 기타", otherRows)}
+      <h2>${club?.clubName || "동아리"} 승인 명단</h2>
+      <p class="sub">${approvedOnly.length}명 · ${new Date().toLocaleDateString("ko-KR")}</p>
+      <table><thead><tr><th>번호</th><th>학번</th><th>이름</th></tr></thead>
+      <tbody>${rowsHtml}</tbody></table>
       </body></html>`;
     const printWin = window.open("", "_blank");
     if (!printWin) { alert("팝업이 차단되었습니다. 팝업 차단을 해제해 주세요."); return; }
