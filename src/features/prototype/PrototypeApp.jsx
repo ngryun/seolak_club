@@ -3322,7 +3322,56 @@ function InterviewSelectDialog({
               현재 선발 {club?.memberCount || 0}명 / 정원 {club?.maxMembers || 0}명
             </div>
           </div>
-          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>닫기</button>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              onClick={async () => {
+                if (memberRows.length === 0) { alert("선발된 학생이 없습니다."); return; }
+                try {
+                  const XLSX = await import("xlsx");
+                  const data = memberRows.map((m, i) => ({ "번호": i + 1, "학번": m.studentNo || "-", "이름": m.name || "-" }));
+                  const ws = XLSX.utils.json_to_sheet(data);
+                  const wb = XLSX.utils.book_new();
+                  XLSX.utils.book_append_sheet(wb, ws, "선발 명단");
+                  ws["!cols"] = [{ wch: 6 }, { wch: 10 }, { wch: 8 }];
+                  XLSX.writeFile(wb, `${club?.clubName || "동아리"}_선발명단.xlsx`);
+                } catch (err) { alert("엑셀 다운로드에 실패했습니다: " + err.message); }
+              }}
+              style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, padding: "6px 10px", fontSize: 12 }}
+            >
+              엑셀 다운로드
+            </button>
+            <button
+              onClick={() => {
+                if (memberRows.length === 0) { alert("선발된 학생이 없습니다."); return; }
+                const rowsHtml = memberRows.map((m, i) =>
+                  `<tr><td>${i + 1}</td><td>${m.studentNo || "-"}</td><td>${m.name || "-"}</td></tr>`
+                ).join("");
+                const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${club?.clubName || "동아리"} 선발 명단</title>
+                  <style>
+                  @media print{@page{size:portrait;margin:10mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+                  html,body{margin:0;padding:16px;font-family:'Pretendard',sans-serif;color:#1a1a1a;}
+                  h2{text-align:center;margin:0 0 2px;font-size:17px;}
+                  p.sub{text-align:center;font-size:11px;color:#666;margin:0 0 10px;}
+                  table{width:auto;margin:0 auto;border-collapse:collapse;font-size:13px;page-break-inside:avoid;}
+                  th,td{border:1px solid #999;padding:5px 14px;text-align:center;}
+                  th{background:#f0f0f0;font-size:12px;}
+                  </style></head><body>
+                  <h2>${club?.clubName || "동아리"} 선발 명단</h2>
+                  <p class="sub">${memberRows.length}명 · ${new Date().toLocaleDateString("ko-KR")}</p>
+                  <table><thead><tr><th>번호</th><th>학번</th><th>이름</th></tr></thead>
+                  <tbody>${rowsHtml}</tbody></table>
+                  </body></html>`;
+                const pw = window.open("", "_blank");
+                if (!pw) { alert("팝업이 차단되었습니다."); return; }
+                pw.document.write(html); pw.document.close();
+                pw.onload = () => { pw.print(); };
+              }}
+              style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, padding: "6px 10px", fontSize: 12 }}
+            >
+              인쇄
+            </button>
+            <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>닫기</button>
+          </div>
         </div>
 
         <div style={{ display: "grid", gap: 12 }}>
