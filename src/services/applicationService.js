@@ -2208,6 +2208,7 @@ async function directAssignMemberInternal(payload, options = {}) {
   const skipPermissionCheck = options?.skipPermissionCheck === true
   const ignoreStudentEligibility = options?.ignoreStudentEligibility === true
   const overrideApproved = options?.overrideApproved === true
+  const ignoreCapacity = options?.ignoreCapacity === true
   const overrideRejectReason = String(options?.overrideRejectReason || REJECT_REASON.HIGHER_CHOICE)
   const decisionNote = String(options?.decisionNote ?? payload?.decisionNote ?? '').trim()
 
@@ -2255,7 +2256,7 @@ async function directAssignMemberInternal(payload, options = {}) {
 
   const existingMembers = await listClubMembers(club.id)
   const memberExists = existingMembers.some((row) => row.studentUid === studentUid)
-  if (!memberExists && club.memberCount >= club.maxMembers) {
+  if (!memberExists && !ignoreCapacity && club.memberCount >= club.maxMembers) {
     throw new Error('동아리 정원이 가득 찼습니다.')
   }
 
@@ -2384,7 +2385,7 @@ async function directAssignMemberInternal(payload, options = {}) {
 
     const count = Number(clubLive.memberCount || 0)
     const max = Number(clubLive.maxMembers || 0)
-    if (!targetMemberExists && count >= max) {
+    if (!targetMemberExists && !ignoreCapacity && count >= max) {
       throw new Error('동아리 정원이 가득 찼습니다.')
     }
     const assignmentRef = doc(db, ASSIGNMENTS, buildAssignmentDocId(cycle.id, student.uid))
@@ -2574,6 +2575,7 @@ export async function adminForceAssignStudentToClub(payload) {
     overrideApproved: true,
     overrideRejectReason: REJECT_REASON.ADMIN_FORCE_ASSIGNED,
     decisionNote: reason,
+    ignoreCapacity: true,
   })
 }
 
