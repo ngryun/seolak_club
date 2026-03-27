@@ -4976,23 +4976,47 @@ function RequestCardUserSection({
   onViewApplicants,
 }) {
   const isTeacherOrAdmin = user?.role === "admin" || user?.role === "teacher";
+  const [listMode, setListMode] = useState("all");
   const [subTab, setSubTab] = useState(isTeacherOrAdmin ? "teacher" : "student");
   const [showArchivedCards, setShowArchivedCards] = useState(false);
   const appMap = useMemo(
     () => new Map((myApplications || []).map((row) => [row.cardId, row])),
     [myApplications],
   );
+  const myCardIdSet = useMemo(
+    () => new Set((myApplications || []).map((row) => row.cardId).filter(Boolean)),
+    [myApplications],
+  );
 
-  const groupedCards = (() => {
+  const viewableCards = useMemo(
+    () => (cards || []).filter((card) => {
+      if (!card?.targetRole) return false;
+      if (isTeacherOrAdmin) {
+        return card.targetRole === "teacher" || card.targetRole === "student";
+      }
+      return card.targetRole === "student";
+    }),
+    [cards, isTeacherOrAdmin],
+  );
+
+  const browseCards = useMemo(
+    () => viewableCards.filter((card) => (isTeacherOrAdmin ? card.targetRole === subTab : card.targetRole === "student")),
+    [isTeacherOrAdmin, subTab, viewableCards],
+  );
+
+  const myCards = useMemo(
+    () => viewableCards.filter((card) => myCardIdSet.has(card.id)),
+    [myCardIdSet, viewableCards],
+  );
+
+  const activeCards = listMode === "mine" ? myCards : browseCards;
+
+  const groupedCards = useMemo(() => {
     const groupRank = { current: 0, pending: 1, archived: 2 };
     const phaseRank = { open: 0, before: 1, unconfigured: 2, closed: 0, drawn: 0, selection_cancelled: 1, cancelled: 2 };
     const initialGroups = { current: [], pending: [], archived: [] };
 
-    const sortedRows = (cards || [])
-      .filter((card) => {
-        if (!card?.targetRole) return false;
-        return card.targetRole === subTab;
-      })
+    const sortedRows = activeCards
       .map((card) => {
         const state = getRequestCardState(card);
         return {
@@ -5016,12 +5040,18 @@ function RequestCardUserSection({
       acc[row.groupKey].push(row);
       return acc;
     }, initialGroups);
-  })();
+  }, [activeCards]);
 
   const currentRows = groupedCards.current;
   const pendingRows = groupedCards.pending;
   const archivedRows = groupedCards.archived;
   const visibleCardsCount = currentRows.length + pendingRows.length + archivedRows.length;
+  const allCardsCount = viewableCards.length;
+  const myCardsCount = myCards.length;
+  const viewTabs = [
+    { key: "all", label: "전체 카드", count: allCardsCount },
+    { key: "mine", label: "내가 신청한 카드", count: myCardsCount },
+  ];
   const countBadgeStyle = {
     display: "inline-flex",
     alignItems: "center",
@@ -5220,7 +5250,7 @@ function RequestCardUserSection({
                   신청 취소
                 </button>
               ) : null}
-              {isTeacherOrAdmin && subTab === "student" && onViewApplicants ? (
+              {listMode === "all" && isTeacherOrAdmin && subTab === "student" && onViewApplicants ? (
                 <button
                   onClick={() => onViewApplicants(card)}
                   disabled={loading}
@@ -5244,19 +5274,22 @@ function RequestCardUserSection({
   const subTabs = isTeacherOrAdmin
     ? [{ key: "teacher", label: "교사 대상" }, { key: "student", label: "학생 대상" }]
     : [{ key: "student", label: "학생 대상" }];
+  const description = listMode === "mine"
+    ? "내가 신청한 카드만 모아서 보여줍니다. 진행 상태와 선정 결과를 여기서 다시 확인할 수 있습니다."
+    : isTeacherOrAdmin && subTab === "student"
+      ? "학생 대상 신청 카드를 조회합니다. 신청현황 보기로 누가 신청했는지 확인할 수 있습니다."
+      : isTeacherOrAdmin
+        ? "각종 신청 항목을 여기서 신청하고 선정 결과를 확인할 수 있으며, 학생들은 이 탭을 볼 수 없습니다."
+        : "각종 신청 항목을 여기서 신청하고 선정 결과를 확인할 수 있습니다.";
 
   return (
     <section style={cardStyle}>
       <div style={{ borderTop: `2px dashed ${t.border}`, paddingTop: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
           <div>
-            <h2 style={{ fontSize: 17 }}>기타 신청 현황</h2>
+            <h2 style={{ fontSize: 17 }}>신청 카드</h2>
             <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
-              {isTeacherOrAdmin && subTab === "student"
-                ? "학생 대상 신청 카드를 조회합니다. 신청현황 보기로 누가 신청했는지 확인할 수 있습니다."
-                : isTeacherOrAdmin
-                  ? "각종 신청 항목을 여기서 신청하고 선정 결과를 확인할 수 있으며, 학생들은 이 탭을 볼 수 없습니다."
-                  : "각종 신청 항목을 여기서 신청하고 선정 결과를 확인할 수 있습니다."}
+              {description}
             </div>
           </div>
           <button
@@ -5268,11 +5301,37 @@ function RequestCardUserSection({
           </button>
         </div>
 
-        {subTabs.length > 1 ? (
+        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+          {viewTabs.map((item) => {
+            const active = listMode === item.key;
+            return (
+              <button
+                key={item.key}
+                onClick={() => {
+                  setListMode(item.key);
+                  setShowArchivedCards(false);
+                }}
+                style={{
+                  ...buttonBase,
+                  background: active ? t.accent : "#fff",
+                  color: active ? "#fff" : t.text,
+                  border: `1px solid ${active ? t.accent : t.border}`,
+                  fontWeight: 700,
+                  padding: "10px 16px",
+                  minHeight: 44,
+                }}
+              >
+                {item.label} <span style={{ marginLeft: 4, opacity: 0.75 }}>({item.count})</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {listMode === "all" && subTabs.length > 1 ? (
           <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
             {subTabs.map((st) => {
               const active = subTab === st.key;
-              const count = (cards || []).filter((c) => c.targetRole === st.key).length;
+              const count = viewableCards.filter((card) => card.targetRole === st.key).length;
               return (
                 <button
                   key={st.key}
@@ -5295,17 +5354,23 @@ function RequestCardUserSection({
         ) : null}
 
         {visibleCardsCount === 0 ? (
-          <div style={{ fontSize: 13, color: t.textSub }}>현재 신청 가능한 추가 카드가 없습니다.</div>
+          <div style={{ fontSize: 13, color: t.textSub }}>
+            {listMode === "mine" ? "아직 신청한 카드가 없습니다." : "현재 신청 가능한 추가 카드가 없습니다."}
+          </div>
         ) : (
           <div style={{ display: "grid", gap: 12 }}>
             {currentRows.length > 0 ? (
               <div style={{ display: "grid", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <h3 style={{ fontSize: 15, fontWeight: 800 }}>지금 신청/확인할 카드</h3>
+                  <h3 style={{ fontSize: 15, fontWeight: 800 }}>
+                    {listMode === "mine" ? "지금 확인할 내 카드" : "지금 신청/확인할 카드"}
+                  </h3>
                   <span style={countBadgeStyle}>{currentRows.length}</span>
                 </div>
                 <div style={{ fontSize: 12, color: t.textSub }}>
-                  신청 가능 또는 시작 전 상태의 카드만 먼저 보여줍니다.
+                  {listMode === "mine"
+                    ? "신청한 카드 중 진행 중이거나 시작 전 상태인 카드만 먼저 보여줍니다."
+                    : "신청 가능 또는 시작 전 상태의 카드만 먼저 보여줍니다."}
                 </div>
                 {renderCardRows(currentRows)}
               </div>
@@ -5318,7 +5383,9 @@ function RequestCardUserSection({
                   <span style={countBadgeStyle}>{pendingRows.length}</span>
                 </div>
                 <div style={{ fontSize: 12, color: t.textSub }}>
-                  신청은 마감되었고 선정 결과 발표를 기다리는 카드입니다.
+                  {listMode === "mine"
+                    ? "내가 신청했고 선정 결과 발표를 기다리는 카드입니다."
+                    : "신청은 마감되었고 선정 결과 발표를 기다리는 카드입니다."}
                 </div>
                 {renderCardRows(pendingRows)}
               </div>
@@ -5326,7 +5393,9 @@ function RequestCardUserSection({
 
             {currentRows.length === 0 && pendingRows.length === 0 ? (
               <div style={{ fontSize: 13, color: t.textSub }}>
-                지금 진행 중이거나 결과를 기다리는 카드는 없습니다.
+                {listMode === "mine"
+                  ? "지금 진행 중이거나 결과를 기다리는 내 신청 카드는 없습니다."
+                  : "지금 진행 중이거나 결과를 기다리는 카드는 없습니다."}
               </div>
             ) : null}
 
@@ -5334,7 +5403,9 @@ function RequestCardUserSection({
               <div style={{ display: "grid", gap: 10, paddingTop: 4 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <h3 style={{ fontSize: 15, fontWeight: 800 }}>지난 카드</h3>
+                    <h3 style={{ fontSize: 15, fontWeight: 800 }}>
+                      {listMode === "mine" ? "지난 신청 카드" : "지난 카드"}
+                    </h3>
                     <span style={countBadgeStyle}>{archivedRows.length}</span>
                   </div>
                   <button
@@ -5347,7 +5418,9 @@ function RequestCardUserSection({
                   </button>
                 </div>
                 <div style={{ fontSize: 12, color: t.textSub }}>
-                  결과가 확정되었거나 운영 사정으로 종료된 카드는 기본적으로 접어 둡니다.
+                  {listMode === "mine"
+                    ? "결과가 확정되었거나 운영 사정으로 종료된 내가 신청한 카드는 기본적으로 접어 둡니다."
+                    : "결과가 확정되었거나 운영 사정으로 종료된 카드는 기본적으로 접어 둡니다."}
                 </div>
                 {showArchivedCards ? renderCardRows(archivedRows) : null}
               </div>
