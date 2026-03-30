@@ -944,6 +944,357 @@ function getDefaultRoomName(rooms) {
   return first ? String(first.name).trim() : "미정";
 }
 
+let xlsxModulePromise = null;
+
+async function getXlsx() {
+  if (!xlsxModulePromise) {
+    xlsxModulePromise = import("xlsx");
+  }
+  const mod = await xlsxModulePromise;
+  if (mod && mod.utils) return mod;
+  return mod.default;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatClubTeacherPrintLabel(club) {
+  const labels = (Array.isArray(club?.teacherNames) ? club.teacherNames : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  if (labels.length > 0) return labels.join(", ");
+  return String(club?.teacherName || "").trim() || "-";
+}
+
+function normalizePlanActivities(plan) {
+  const rawActivities = Array.isArray(plan?.activities) ? plan.activities : [];
+  const lessonCount = Math.max(1, Math.trunc(Number(plan?.lessonCount) || rawActivities.length || 1));
+  return Array.from({ length: lessonCount }, (_, index) => ({
+    lesson: index + 1,
+    content: String(rawActivities[index]?.content || "").trim(),
+  }));
+}
+
+function buildClubPlanSectionHtml({ club, plan, year, addPageBreak = false }) {
+  const grades = (Array.isArray(club?.targetGrades) ? club.targetGrades : []).join("·");
+  const teacherLabel = formatClubTeacherPrintLabel(club);
+  const memberCount = Math.max(0, Math.trunc(Number(club?.memberCount) || 0));
+  const activities = normalizePlanActivities(plan);
+  const budgetItems = Array.isArray(plan?.budgetItems) ? plan.budgetItems : [];
+  const activitiesRows = activities.map((act) => `
+      <tr>
+        <td style="border:1px solid #999;padding:6px 10px;text-align:center;width:50px;font-size:13px;">${act.lesson}</td>
+        <td style="border:1px solid #999;padding:6px 10px;font-size:13px;">${escapeHtml(act.content) || "&nbsp;"}</td>
+      </tr>
+    `).join("");
+  const budgetRows = budgetItems
+    .filter((row) => String(row?.item || "").trim())
+    .map((row) => {
+      const item = String(row?.item || "").trim();
+      const unitPrice = Math.max(0, Math.trunc(Number(row?.unitPrice) || 0));
+      const total = unitPrice * memberCount;
+      return `
+        <tr>
+          <td style="border:1px solid #999;padding:6px 10px;font-size:13px;">${escapeHtml(item)}</td>
+          <td style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:13px;">${unitPrice.toLocaleString()}</td>
+          <td style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:13px;">${memberCount}명</td>
+          <td style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:13px;font-weight:600;">${total.toLocaleString()}</td>
+        </tr>
+      `;
+    })
+    .join("");
+  const budgetTotal = budgetItems.reduce(
+    (sum, row) => sum + Math.max(0, Math.trunc(Number(row?.unitPrice) || 0)) * memberCount,
+    0,
+  );
+  const budgetTableRows = budgetRows || `
+    <tr>
+      <td colspan="4" style="border:1px solid #999;padding:8px 10px;text-align:center;font-size:13px;color:#666;">등록된 예산 항목이 없습니다.</td>
+    </tr>
+  `;
+  const volunteerInfo = plan?.hasVolunteer
+    ? `<p style="margin:4px 0;font-size:13px;">봉사활동 연계: <strong>O</strong> (${Math.max(0, Math.trunc(Number(plan?.volunteerHours) || 0))}시간)</p>`
+    : `<p style="margin:4px 0;font-size:13px;">봉사활동 연계: <strong>X</strong></p>`;
+
+  return `
+    <section class="plan-page${addPageBreak ? " plan-page-break" : ""}">
+      <h1>${year}학년도 설악고등학교 창체 동아리 활동 계획</h1>
+      <p class="plan-meta">
+        대상: ${grades ? `${grades}학년` : "-"} | 동아리명: <strong>${escapeHtml(club?.clubName || "-")}</strong> | ${activities.length}차시 | 지도교사: ${escapeHtml(teacherLabel)}
+      </p>
+      <h3>동아리 개요</h3>
+      <p class="plan-text">${escapeHtml(plan?.overview || "-")}</p>
+      <h3>차시별 활동내용</h3>
+      <table>
+        <thead>
+          <tr>
+            <th style="border:1px solid #999;padding:6px 10px;width:50px;font-size:12px;">차시</th>
+            <th style="border:1px solid #999;padding:6px 10px;text-align:left;font-size:12px;">활동내용</th>
+          </tr>
+        </thead>
+        <tbody>${activitiesRows}</tbody>
+      </table>
+      ${volunteerInfo}
+      <h3 style="margin-top:20px;">예산활용 내역</h3>
+      <table>
+        <thead>
+          <tr>
+            <th style="border:1px solid #999;padding:6px 10px;text-align:left;font-size:12px;">항목</th>
+            <th style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:12px;width:100px;">단가(원)</th>
+            <th style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:12px;width:70px;">인원</th>
+            <th style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:12px;width:110px;">계(원)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${budgetTableRows}
+          <tr style="background:#f0f0f0;">
+            <td colspan="3" style="border:1px solid #999;padding:6px 10px;text-align:right;font-weight:700;font-size:13px;">합계</td>
+            <td style="border:1px solid #999;padding:6px 10px;text-align:right;font-weight:700;font-size:13px;">${budgetTotal.toLocaleString()}원</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  `;
+}
+
+function buildClubPlansPrintHtml(entries, title) {
+  const year = new Date().getFullYear();
+  const sections = entries.map((entry, index) => buildClubPlanSectionHtml({
+    club: entry.club,
+    plan: entry.plan,
+    year,
+    addPageBreak: index < entries.length - 1,
+  })).join("");
+
+  return `<!DOCTYPE html>
+  <html>
+    <head>
+      <meta charset="utf-8">
+      <title>${escapeHtml(title)}</title>
+      <style>
+        @media print {
+          @page { margin: 15mm 12mm; }
+          body {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+        }
+
+        body {
+          font-family: 'Pretendard', sans-serif;
+          color: #1a1a1a;
+          line-height: 1.6;
+          margin: 0;
+          padding: 20px;
+          background: #ffffff;
+        }
+
+        .plan-page {
+          max-width: 800px;
+          margin: 0 auto;
+        }
+
+        .plan-page-break {
+          page-break-after: always;
+          break-after: page;
+        }
+
+        h1 {
+          text-align: center;
+          font-size: 20px;
+          margin: 0 0 4px;
+        }
+
+        h3 {
+          font-size: 15px;
+          border-bottom: 2px solid #333;
+          padding-bottom: 4px;
+          margin: 0 0 10px;
+        }
+
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-bottom: 16px;
+        }
+
+        th {
+          background: #f0f0f0;
+        }
+
+        .plan-meta {
+          text-align: center;
+          font-size: 13px;
+          color: #555;
+          margin: 0 0 20px;
+        }
+
+        .plan-text {
+          font-size: 13px;
+          white-space: pre-wrap;
+          margin: 0 0 20px;
+        }
+      </style>
+    </head>
+    <body>${sections}</body>
+  </html>`;
+}
+
+function openClubPlansPrintWindow(entries, options = {}) {
+  const normalizedEntries = (Array.isArray(entries) ? entries : [])
+    .map((entry) => ({
+      club: entry?.club || null,
+      plan: entry?.plan || entry?.club?.plan || null,
+    }))
+    .filter((entry) => entry.club && entry.plan);
+
+  if (normalizedEntries.length === 0) {
+    throw new Error("출력할 동아리 계획서가 없습니다.");
+  }
+
+  const defaultTitle = normalizedEntries.length === 1
+    ? `${new Date().getFullYear()}학년도_${normalizedEntries[0].club.clubName || "동아리"}_창체동아리활동계획`
+    : `${new Date().getFullYear()}학년도_동아리계획서_${normalizedEntries.length}건`;
+  const title = String(options?.title || defaultTitle).trim() || defaultTitle;
+
+  const printWin = window.open("", "_blank");
+  if (!printWin) {
+    throw new Error("팝업이 차단되었습니다. 팝업 차단을 해제해 주세요.");
+  }
+
+  printWin.document.write(buildClubPlansPrintHtml(normalizedEntries, title));
+  printWin.document.close();
+  printWin.onload = () => {
+    printWin.focus();
+    printWin.print();
+  };
+
+  return normalizedEntries.length;
+}
+
+function buildTimestampForFilename() {
+  const now = new Date();
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+  ].join("");
+}
+
+function sanitizeFilenameFragment(value, fallback = "내보내기") {
+  const sanitized = String(value || "")
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "_");
+  return sanitized || fallback;
+}
+
+function formatBudgetItemExportValue(row) {
+  const item = String(row?.item || "").trim();
+  const unitPrice = Math.max(0, Math.trunc(Number(row?.unitPrice) || 0));
+  if (!item) return "";
+  return unitPrice > 0 ? `${item} (${unitPrice.toLocaleString()}원)` : item;
+}
+
+async function exportClubPlanBudgetSummaryToExcel(clubs) {
+  const rows = (Array.isArray(clubs) ? clubs : [])
+    .filter((club) => !club?.legacy)
+    .sort((left, right) => String(left?.clubName || "").localeCompare(String(right?.clubName || ""), "ko"));
+
+  if (rows.length === 0) {
+    throw new Error("내보낼 동아리가 없습니다.");
+  }
+
+  const maxBudgetItemCount = rows.reduce((maxCount, club) => {
+    const count = (Array.isArray(club?.plan?.budgetItems) ? club.plan.budgetItems : [])
+      .filter((item) => String(item?.item || "").trim())
+      .length;
+    return Math.max(maxCount, count);
+  }, 0);
+
+  const budgetHeaders = Array.from({ length: maxBudgetItemCount }, (_, index) => `예산항목${index + 1}`);
+  const headers = ["동아리명", "인원수", "창체봉사활동 연계 유무", "봉사활동 시간", ...budgetHeaders];
+  const dataRows = rows.map((club) => {
+    const plan = club?.plan || null;
+    const budgetValues = (Array.isArray(plan?.budgetItems) ? plan.budgetItems : [])
+      .filter((item) => String(item?.item || "").trim())
+      .map((item) => formatBudgetItemExportValue(item));
+
+    return [
+      String(club?.clubName || "").trim(),
+      Math.max(0, Math.trunc(Number(club?.memberCount) || 0)),
+      plan ? (plan.hasVolunteer ? "O" : "X") : "",
+      plan?.hasVolunteer ? Math.max(0, Math.trunc(Number(plan?.volunteerHours) || 0)) : "",
+      ...Array.from({ length: maxBudgetItemCount }, (_, index) => budgetValues[index] || ""),
+    ];
+  });
+
+  const XLSX = await getXlsx();
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
+  ws["!cols"] = [
+    { wch: 20 },
+    { wch: 10 },
+    { wch: 18 },
+    { wch: 12 },
+    ...budgetHeaders.map(() => ({ wch: 24 })),
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "봉사예산현황");
+  XLSX.writeFile(wb, `동아리_봉사예산현황_${buildTimestampForFilename()}.xlsx`);
+
+  return rows.length;
+}
+
+async function exportRequestCardApplicationsToExcel(card, rows) {
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  if (!card?.id) {
+    throw new Error("신청 카드를 찾을 수 없습니다.");
+  }
+  if (normalizedRows.length === 0) {
+    throw new Error("신청 내역이 없습니다.");
+  }
+
+  const state = getRequestCardState(card);
+  const headers = ["신청자", "아이디", "학번", "역할", "상태", "신청시각"];
+  const dataRows = normalizedRows.map((row) => {
+    const resultMeta = requestCardResultMeta(row.status, state);
+    return [
+      String(row.applicantName || "").trim() || "-",
+      String(row.applicantLoginId || "").trim() || "-",
+      String(row.applicantStudentNo || "").trim() || "-",
+      roleLabel(row.applicantRole),
+      resultMeta.label,
+      formatTime(row.createdAt),
+    ];
+  });
+
+  const XLSX = await getXlsx();
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
+  ws["!cols"] = [
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 10 },
+    { wch: 10 },
+    { wch: 14 },
+    { wch: 20 },
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "신청현황");
+  const fileName = `${sanitizeFilenameFragment(card.title, "신청카드")}_신청현황_${buildTimestampForFilename()}.xlsx`;
+  XLSX.writeFile(wb, fileName);
+
+  return normalizedRows.length;
+}
+
 function StudentSearchCombobox({
   students,
   value,
@@ -2011,6 +2362,8 @@ function ClubTable({
   onOpenApplicants,
   onOpenInterviewSelect,
   onOpenPlan,
+  onDownloadSubmittedPlans,
+  onDownloadPlanBudgetXlsx,
   showCapacity = true,
   showRoundStatus = true,
   showActions = true,
@@ -2025,6 +2378,9 @@ function ClubTable({
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  const activeClubs = clubs.filter((club) => !club.legacy);
+  const submittedPlanCount = activeClubs.filter((club) => club.plan?.planStatus === "submitted").length;
+
   const headers = ["동아리명", "담당교사", "동아리장", "대상학년", "동아리실"];
   if (showCapacity) headers.push("정원");
   headers.push("면접");
@@ -2037,8 +2393,7 @@ function ClubTable({
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <h2 style={{ fontSize: 17, margin: 0 }}>동아리 목록</h2>
           {showActions ? (() => {
-            const activeClubs = clubs.filter((c) => !c.legacy);
-            const submitted = activeClubs.filter((c) => c.plan?.planStatus === "submitted").length;
+            const submitted = submittedPlanCount;
             const draft = activeClubs.filter((c) => c.plan?.planStatus === "draft").length;
             const none = activeClubs.length - submitted - draft;
             return (
@@ -2050,14 +2405,44 @@ function ClubTable({
             );
           })() : null}
         </div>
-        {canCreate ? (
-          <button
-            onClick={onCreate}
-            style={{ ...buttonBase, background: t.accent, color: "#fff", fontWeight: 700 }}
-          >
-            생성 (+)
-          </button>
-        ) : null}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {onDownloadSubmittedPlans ? (
+            <button
+              onClick={onDownloadSubmittedPlans}
+              disabled={submittedPlanCount === 0}
+              style={{
+                ...buttonBase,
+                background: submittedPlanCount === 0 ? "#cfd8e3" : "#eef7ee",
+                color: submittedPlanCount === 0 ? "#6b7280" : t.ok,
+                fontWeight: 700,
+              }}
+            >
+              계획완료 PDF 일괄 저장 ({submittedPlanCount})
+            </button>
+          ) : null}
+          {onDownloadPlanBudgetXlsx ? (
+            <button
+              onClick={onDownloadPlanBudgetXlsx}
+              disabled={activeClubs.length === 0}
+              style={{
+                ...buttonBase,
+                background: activeClubs.length === 0 ? "#cfd8e3" : "#edf4ff",
+                color: activeClubs.length === 0 ? "#6b7280" : t.accent,
+                fontWeight: 700,
+              }}
+            >
+              봉사·예산 XLSX 저장
+            </button>
+          ) : null}
+          {canCreate ? (
+            <button
+              onClick={onCreate}
+              style={{ ...buttonBase, background: t.accent, color: "#fff", fontWeight: 700 }}
+            >
+              생성 (+)
+            </button>
+          ) : null}
+        </div>
       </div>
       <div style={{ fontSize: 12, color: t.textSub, marginBottom: 8 }}>
         동아리명을 클릭하면 동아리 상세 내용을 확인할 수 있습니다.
@@ -2447,45 +2832,16 @@ function ClubPlanDialog({ open, club, form, onChange, onSave, onSubmit, onUnsubm
   const AI_CONFIRM_MSG = "AI로 생성된 내용은 참고용이며,\n반드시 교사가 직접 확인·수정 후 사용해 주세요.\n\n기존 입력 내용이 덮어씌워집니다.\n계속 진행하시겠습니까?";
 
   const handlePrintPdf = () => {
-    const year = new Date().getFullYear();
-    const grades = (club.targetGrades || []).join("·");
-    const teacherLabel = String(club.teacherName || "").trim() || "-";
-    const memberCount = Number(club.memberCount) || 0;
-
-    const activitiesRows = (form.activities || []).map((act) =>
-      `<tr><td style="border:1px solid #999;padding:6px 10px;text-align:center;width:50px;font-size:13px;">${act.lesson}</td><td style="border:1px solid #999;padding:6px 10px;font-size:13px;">${act.content || ""}</td></tr>`
-    ).join("");
-
-    const budgetRows = (form.budgetItems || []).map((row) => {
-      const price = Number(row.unitPrice) || 0;
-      const total = price * memberCount;
-      return `<tr><td style="border:1px solid #999;padding:6px 10px;font-size:13px;">${row.item || ""}</td><td style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:13px;">${price.toLocaleString()}</td><td style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:13px;">${memberCount}명</td><td style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:13px;font-weight:600;">${total.toLocaleString()}</td></tr>`;
-    }).join("");
-    const budgetTotal = (form.budgetItems || []).reduce((sum, r) => sum + (Number(r.unitPrice) || 0) * memberCount, 0);
-
-    const volunteerInfo = form.hasVolunteer
-      ? `<p style="margin:4px 0;font-size:13px;">봉사활동 연계: <strong>O</strong> (${form.volunteerHours || 0}시간)</p>`
-      : `<p style="margin:4px 0;font-size:13px;">봉사활동 연계: <strong>X</strong></p>`;
-
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${year}학년도_${club.clubName || "동아리"}_창체동아리활동계획</title><style>@media print{@page{margin:15mm 12mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}body{font-family:'Pretendard',sans-serif;color:#1a1a1a;line-height:1.6;max-width:800px;margin:0 auto;padding:20px;}h1{text-align:center;font-size:20px;margin-bottom:4px;}table{width:100%;border-collapse:collapse;margin-bottom:16px;}th{background:#f0f0f0;}</style></head><body>
-<h1>${year}학년도 설악고등학교 창체 동아리 활동 계획</h1>
-<p style="text-align:center;font-size:13px;color:#555;margin-bottom:20px;">
-대상: ${grades ? grades + "학년" : "-"} | 동아리명: <strong>${club.clubName || "-"}</strong> | ${form.lessonCount || 0}차시 | 지도교사: ${teacherLabel}
-</p>
-<h3 style="font-size:15px;border-bottom:2px solid #333;padding-bottom:4px;">동아리 개요</h3>
-<p style="font-size:13px;white-space:pre-wrap;margin-bottom:20px;">${form.overview || "-"}</p>
-<h3 style="font-size:15px;border-bottom:2px solid #333;padding-bottom:4px;">차시별 활동내용</h3>
-<table><thead><tr><th style="border:1px solid #999;padding:6px 10px;width:50px;font-size:12px;">차시</th><th style="border:1px solid #999;padding:6px 10px;text-align:left;font-size:12px;">활동내용</th></tr></thead><tbody>${activitiesRows}</tbody></table>
-${volunteerInfo}
-<h3 style="font-size:15px;border-bottom:2px solid #333;padding-bottom:4px;margin-top:20px;">예산활용 내역</h3>
-<table><thead><tr><th style="border:1px solid #999;padding:6px 10px;text-align:left;font-size:12px;">항목</th><th style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:12px;width:100px;">단가(원)</th><th style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:12px;width:70px;">인원</th><th style="border:1px solid #999;padding:6px 10px;text-align:right;font-size:12px;width:110px;">계(원)</th></tr></thead><tbody>${budgetRows}<tr style="background:#f0f0f0;"><td colspan="3" style="border:1px solid #999;padding:6px 10px;text-align:right;font-weight:700;font-size:13px;">합계</td><td style="border:1px solid #999;padding:6px 10px;text-align:right;font-weight:700;font-size:13px;">${budgetTotal.toLocaleString()}원</td></tr></tbody></table>
-</body></html>`;
-
-    const printWin = window.open("", "_blank");
-    if (!printWin) { alert("팝업이 차단되었습니다. 팝업 차단을 해제해 주세요."); return; }
-    printWin.document.write(html);
-    printWin.document.close();
-    printWin.onload = () => { printWin.print(); };
+    try {
+      openClubPlansPrintWindow([
+        {
+          club,
+          plan: form,
+        },
+      ]);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "PDF 저장 창을 열지 못했습니다.");
+    }
   };
 
   const handleAiOverview = async () => {
@@ -4736,6 +5092,7 @@ function RequestCardAdminPanel({
   onDelete,
   onDraw,
   onOpenApplications,
+  onExportApplications,
   onChangeStatus,
 }) {
   const isAdmin = user?.role === "admin" || user?.loginId === "admin";
@@ -4897,6 +5254,13 @@ function RequestCardAdminPanel({
                         style={{ ...buttonBase, padding: "5px 8px", background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
                       >
                         신청현황
+                      </button>
+                      <button
+                        onClick={() => onExportApplications(card)}
+                        disabled={loading || Number(card.applicantCount || 0) === 0}
+                        style={{ ...buttonBase, padding: "5px 8px", background: (loading || Number(card.applicantCount || 0) === 0) ? "#cfd8e3" : "#edf4ff", color: (loading || Number(card.applicantCount || 0) === 0) ? "#6b7280" : t.accent, fontWeight: 700 }}
+                      >
+                        현황 엑셀
                       </button>
                       {canManageCard(card) ? (
                         <>
@@ -6502,6 +6866,21 @@ export default function PrototypeApp({ studentOnly = false }) {
     await reloadRequestCardDialog(card);
   }
 
+  async function handleExportRequestCardApplications(card) {
+    if (!card?.id) return;
+
+    try {
+      setRequestCardLoading(true);
+      const rows = await listRequestCardApplicationsByCard(card.id);
+      const exportedCount = await exportRequestCardApplicationsToExcel(card, rows);
+      setMessage({ type: "ok", text: `'${card.title || "신청 카드"}' 신청현황 ${exportedCount}건을 XLSX로 다운로드했습니다.` });
+    } catch (error) {
+      withMessageError(error, "신청현황 엑셀 다운로드에 실패했습니다.");
+    } finally {
+      setRequestCardLoading(false);
+    }
+  }
+
   async function handleSaveClub() {
     setSavingClub(true);
     try {
@@ -6853,6 +7232,36 @@ export default function PrototypeApp({ studentOnly = false }) {
       withMessageError(error, "동아리 계획 저장에 실패했습니다.");
     } finally {
       setSavingPlan(false);
+    }
+  }
+
+  function handleDownloadSubmittedPlansPdf() {
+    try {
+      const submittedClubs = clubs
+        .filter((club) => !club.legacy && club.plan?.planStatus === "submitted")
+        .sort((left, right) => String(left.clubName || "").localeCompare(String(right.clubName || ""), "ko"));
+
+      if (submittedClubs.length === 0) {
+        setMessage({ type: "warn", text: "계획완료된 동아리가 없습니다." });
+        return;
+      }
+
+      const openedCount = openClubPlansPrintWindow(
+        submittedClubs.map((club) => ({ club, plan: club.plan })),
+        { title: `${new Date().getFullYear()}학년도_동아리계획서_일괄출력` },
+      );
+      setMessage({ type: "ok", text: `계획완료된 동아리 계획서 ${openedCount}건을 PDF 저장용 문서로 열었습니다.` });
+    } catch (error) {
+      withMessageError(error, "계획서 PDF 일괄 저장을 시작하지 못했습니다.");
+    }
+  }
+
+  async function handleDownloadPlanBudgetXlsx() {
+    try {
+      const exportedCount = await exportClubPlanBudgetSummaryToExcel(clubs);
+      setMessage({ type: "ok", text: `동아리 ${exportedCount}개의 봉사·예산 현황을 XLSX로 다운로드했습니다.` });
+    } catch (error) {
+      withMessageError(error, "봉사·예산 XLSX 다운로드에 실패했습니다.");
     }
   }
 
@@ -7740,6 +8149,8 @@ export default function PrototypeApp({ studentOnly = false }) {
               onOpenApplicants={openApplicantDialog}
               onOpenInterviewSelect={openInterviewDialog}
               onOpenPlan={handleOpenPlanDialog}
+              onDownloadSubmittedPlans={user.role === "admin" ? handleDownloadSubmittedPlansPdf : undefined}
+              onDownloadPlanBudgetXlsx={user.role === "admin" ? handleDownloadPlanBudgetXlsx : undefined}
             />
           </div>
         ) : null
@@ -7789,6 +8200,7 @@ export default function PrototypeApp({ studentOnly = false }) {
           onDelete={handleDeleteRequestCard}
           onDraw={handleDrawRequestCard}
           onOpenApplications={openRequestCardDialog}
+          onExportApplications={handleExportRequestCardApplications}
           onChangeStatus={handleChangeRequestCardStatus}
         />
       ) : null}
