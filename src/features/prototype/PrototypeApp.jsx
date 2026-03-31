@@ -5005,6 +5005,7 @@ function RequestCardApplicationsDialog({
   card,
   rows,
   loading,
+  onExport,
   onClose,
 }) {
   if (!open) return null;
@@ -5021,7 +5022,16 @@ function RequestCardApplicationsDialog({
               {requestCardTargetLabel(card?.targetRole)} · 모집인원 {card?.capacity || 0}명 · 현재 신청인원 {card?.applicantCount || 0}명
             </div>
           </div>
-          <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>닫기</button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              onClick={onExport}
+              disabled={loading || rows.length === 0}
+              style={{ ...buttonBase, background: (loading || rows.length === 0) ? "#cfd8e3" : "#edf4ff", color: (loading || rows.length === 0) ? "#6b7280" : t.accent, fontWeight: 700 }}
+            >
+              현황 엑셀
+            </button>
+            <button onClick={onClose} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>닫기</button>
+          </div>
         </div>
 
         <div style={{ overflowX: "auto" }}>
@@ -5092,7 +5102,6 @@ function RequestCardAdminPanel({
   onDelete,
   onDraw,
   onOpenApplications,
-  onExportApplications,
   onChangeStatus,
 }) {
   const isAdmin = user?.role === "admin" || user?.loginId === "admin";
@@ -5254,13 +5263,6 @@ function RequestCardAdminPanel({
                         style={{ ...buttonBase, padding: "5px 8px", background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
                       >
                         신청현황
-                      </button>
-                      <button
-                        onClick={() => onExportApplications(card)}
-                        disabled={loading || Number(card.applicantCount || 0) === 0}
-                        style={{ ...buttonBase, padding: "5px 8px", background: (loading || Number(card.applicantCount || 0) === 0) ? "#cfd8e3" : "#edf4ff", color: (loading || Number(card.applicantCount || 0) === 0) ? "#6b7280" : t.accent, fontWeight: 700 }}
-                      >
-                        현황 엑셀
                       </button>
                       {canManageCard(card) ? (
                         <>
@@ -6866,12 +6868,14 @@ export default function PrototypeApp({ studentOnly = false }) {
     await reloadRequestCardDialog(card);
   }
 
-  async function handleExportRequestCardApplications(card) {
+  async function handleExportRequestCardApplications(card, preloadedRows = null) {
     if (!card?.id) return;
 
     try {
       setRequestCardLoading(true);
-      const rows = await listRequestCardApplicationsByCard(card.id);
+      const rows = Array.isArray(preloadedRows)
+        ? preloadedRows
+        : await listRequestCardApplicationsByCard(card.id);
       const exportedCount = await exportRequestCardApplicationsToExcel(card, rows);
       setMessage({ type: "ok", text: `'${card.title || "신청 카드"}' 신청현황 ${exportedCount}건을 XLSX로 다운로드했습니다.` });
     } catch (error) {
@@ -8200,7 +8204,6 @@ export default function PrototypeApp({ studentOnly = false }) {
           onDelete={handleDeleteRequestCard}
           onDraw={handleDrawRequestCard}
           onOpenApplications={openRequestCardDialog}
-          onExportApplications={handleExportRequestCardApplications}
           onChangeStatus={handleChangeRequestCardStatus}
         />
       ) : null}
@@ -8486,6 +8489,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         card={requestCardDialog.card}
         rows={requestCardDialog.rows}
         loading={requestCardDialog.loading}
+        onExport={() => handleExportRequestCardApplications(requestCardDialog.card, requestCardDialog.rows)}
         onClose={() => setRequestCardDialog({ open: false, card: null, rows: [], loading: false })}
       />
 
