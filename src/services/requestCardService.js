@@ -17,6 +17,22 @@ const REQUEST_CARDS = 'requestCards'
 const REQUEST_CARD_APPLICATIONS = 'requestCardApplications'
 const TARGET_ROLES = new Set(['student', 'teacher'])
 
+export const REQUEST_CARD_TYPE = {
+  LOTTERY: 'lottery',
+  FCFS: 'fcfs',
+  SURVEY: 'survey',
+  FREE: 'free',
+}
+
+export const REQUEST_CARD_TYPE_META = {
+  lottery: { label: '추첨', description: '모집 후 랜덤 추첨으로 선정' },
+  fcfs: { label: '선착순', description: '정원 도달 시 자동 마감' },
+  survey: { label: '의견조사', description: '선택지 중 하나를 투표' },
+  free: { label: '자유신청', description: '정원 없이 참여 의사 수집' },
+}
+
+const REQUEST_CARD_TYPES = new Set(Object.values(REQUEST_CARD_TYPE))
+
 export const REQUEST_CARD_RESULT = {
   APPLIED: 'applied',
   SELECTED: 'selected',
@@ -116,10 +132,28 @@ function normalizeRequestCardAdminStatus(value) {
   return status
 }
 
+function normalizeCardType(value) {
+  const raw = String(value || '').trim()
+  return REQUEST_CARD_TYPES.has(raw) ? raw : REQUEST_CARD_TYPE.LOTTERY
+}
+
+function normalizeSurveyChoices(value) {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item) => ({
+      key: String(item?.key || '').trim() || `choice-${Math.random().toString(36).slice(2, 6)}`,
+      label: String(item?.label || '').trim(),
+      count: Math.max(0, toPositiveInteger(item?.count, 0)),
+    }))
+    .filter((item) => item.label)
+}
+
 function normalizeRequestCard(id, data) {
+  const cardType = normalizeCardType(data?.cardType)
   return {
     id,
     title: String(data?.title || '').trim(),
+    cardType,
     targetRole: String(data?.targetRole || '').trim(),
     capacity: Math.max(1, toPositiveInteger(data?.capacity, 1)),
     description: String(data?.description || '').trim(),
@@ -133,6 +167,7 @@ function normalizeRequestCard(id, data) {
     createdByUid: String(data?.createdByUid || '').trim(),
     createdAt: toIsoString(data?.createdAt) || data?.createdAt || null,
     updatedAt: toIsoString(data?.updatedAt) || data?.updatedAt || null,
+    surveyChoices: cardType === 'survey' ? normalizeSurveyChoices(data?.surveyChoices) : [],
   }
 }
 
@@ -146,6 +181,7 @@ function normalizeRequestCardApplication(id, data) {
     applicantLoginId: String(data?.applicantLoginId || '').trim(),
     applicantStudentNo: String(data?.applicantStudentNo || '').trim(),
     status: String(data?.status || REQUEST_CARD_RESULT.APPLIED).trim() || REQUEST_CARD_RESULT.APPLIED,
+    choiceKey: String(data?.choiceKey || '').trim(),
     createdAt: toIsoString(data?.createdAt) || data?.createdAt || null,
     updatedAt: toIsoString(data?.updatedAt) || data?.updatedAt || null,
     drawnAt: toIsoString(data?.drawnAt) || data?.drawnAt || null,
@@ -180,6 +216,7 @@ function assertRequestCardPayload(payload) {
   const title = String(payload?.title || '').trim()
   const description = String(payload?.description || '').trim()
   const targetRole = normalizeTargetRole(payload?.targetRole)
+  const cardType = normalizeCardType(payload?.cardType)
   const capacity = Math.max(1, toPositiveInteger(payload?.capacity, 0))
   const startAt = toIsoString(payload?.startAt)
   const endAt = toIsoString(payload?.endAt)
@@ -197,14 +234,25 @@ function assertRequestCardPayload(payload) {
     throw new Error('신청 종료 일시는 시작 일시보다 뒤여야 합니다.')
   }
 
-  return {
+  const result = {
     title,
     description,
     targetRole,
+    cardType,
     capacity,
     startAt,
     endAt,
   }
+
+  if (cardType === 'survey') {
+    const choices = normalizeSurveyChoices(payload?.surveyChoices)
+    if (choices.length < 2) {
+      throw new Error('의견조사는 선택지를 2개 이상 입력해주세요.')
+    }
+    result.surveyChoices = choices.map((c) => ({ key: c.key, label: c.label, count: 0 }))
+  }
+
+  return result
 }
 
 function ensureAdmin(actor) {
@@ -318,15 +366,19 @@ export function getRequestCardState(card, nowValue = new Date()) {
   }
 
   if (now.getTime() <= endAt.getTime()) {
+    const cardType = normalizeCardType(card?.cardType)
+    const isFcfsFull = cardType === 'fcfs'
+      && toPositiveInteger(card?.applicantCount, 0) >= Math.max(1, toPositiveInteger(card?.capacity, 1))
     return {
       configured: true,
-      phase: 'open',
+      phase: isFcfsFull ? 'closed' : 'open',
       startAt,
       endAt,
       drawExecutedAt: null,
-      canApply: true,
-      canDraw: false,
+      canApply: !isFcfsFull,
+      canDraw: isFcfsFull && cardType === 'fcfs',
       adminStatus,
+      fcfsFull: isFcfsFull,
     }
   }
 
@@ -370,27 +422,7 @@ export async function createRequestCard(payload, options = {}) {
   const actor = ensureAdminOrTeacher(options?.actor)
   const data = assertRequestCardPayload(payload)
 
-  if (!isFirebaseEnabled()) {
-    const id = `local-request-card-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const now = nowIso()
-    const next = {
-      id,
-      ...data,
-      applicantCount: 0,
-      selectedCount: 0,
-      drawExecutedAt: null,
-      drawByUid: '',
-      adminStatus: REQUEST_CARD_ADMIN_STATUS.NORMAL,
-      createdByUid: actor.uid,
-      createdAt: now,
-      updatedAt: now,
-    }
-    localRequestCards = sortRequestCards([...localRequestCards, next])
-    return normalizeRequestCard(id, next)
-  }
-
-  const created = doc(collection(db, REQUEST_CARDS))
-  await setDoc(created, {
+  const baseFields = {
     ...data,
     applicantCount: 0,
     selectedCount: 0,
@@ -398,6 +430,20 @@ export async function createRequestCard(payload, options = {}) {
     drawByUid: '',
     adminStatus: REQUEST_CARD_ADMIN_STATUS.NORMAL,
     createdByUid: actor.uid,
+    surveyChoices: data.surveyChoices || [],
+  }
+
+  if (!isFirebaseEnabled()) {
+    const id = `local-request-card-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const now = nowIso()
+    const next = { id, ...baseFields, createdAt: now, updatedAt: now }
+    localRequestCards = sortRequestCards([...localRequestCards, next])
+    return normalizeRequestCard(id, next)
+  }
+
+  const created = doc(collection(db, REQUEST_CARDS))
+  await setDoc(created, {
+    ...baseFields,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   })
@@ -580,7 +626,23 @@ export async function applyToRequestCard(payload) {
     throw new Error('현재는 신청할 수 없는 카드입니다.')
   }
 
+  const choiceKey = String(payload?.choiceKey || '').trim()
+  if (existingCard.cardType === 'survey' && !choiceKey) {
+    throw new Error('선택지를 골라주세요.')
+  }
+
   const applicationId = buildRequestCardApplicationId(targetCardId, actor.uid)
+  const appBase = {
+    cardId: targetCardId,
+    applicantUid: actor.uid,
+    applicantRole: actor.role,
+    applicantName: actor.name || actor.loginId || '신청자',
+    applicantLoginId: actor.loginId,
+    applicantStudentNo: actor.studentNo,
+    status: REQUEST_CARD_RESULT.APPLIED,
+    choiceKey,
+    drawnAt: null,
+  }
 
   if (!isFirebaseEnabled()) {
     const duplicated = localRequestCardApplications.some((row) => row.id === applicationId)
@@ -588,30 +650,36 @@ export async function applyToRequestCard(payload) {
       throw new Error('이미 신청했습니다.')
     }
 
+    if (existingCard.cardType === 'fcfs') {
+      const currentCount = toPositiveInteger(existingCard.applicantCount, 0)
+      if (currentCount >= Math.max(1, toPositiveInteger(existingCard.capacity, 1))) {
+        throw new Error('정원이 마감되었습니다.')
+      }
+    }
+
     const now = nowIso()
     localRequestCardApplications = [
       ...localRequestCardApplications,
-      {
-        id: applicationId,
-        cardId: targetCardId,
-        applicantUid: actor.uid,
-        applicantRole: actor.role,
-        applicantName: actor.name || actor.loginId || '신청자',
-        applicantLoginId: actor.loginId,
-        applicantStudentNo: actor.studentNo,
-        status: REQUEST_CARD_RESULT.APPLIED,
-        createdAt: now,
-        updatedAt: now,
-        drawnAt: null,
-      },
+      { id: applicationId, ...appBase, createdAt: now, updatedAt: now },
     ]
     localRequestCards = localRequestCards.map((row) => {
       if (row.id !== targetCardId) return row
-      return {
-        ...row,
+      const updates = {
         applicantCount: Math.max(0, toPositiveInteger(row.applicantCount, 0)) + 1,
         updatedAt: now,
       }
+      if (row.cardType === 'survey' && choiceKey && Array.isArray(row.surveyChoices)) {
+        updates.surveyChoices = row.surveyChoices.map((c) =>
+          c.key === choiceKey ? { ...c, count: (c.count || 0) + 1 } : c)
+      }
+      if (row.cardType === 'fcfs') {
+        const newCount = updates.applicantCount
+        const cap = Math.max(1, toPositiveInteger(row.capacity, 1))
+        if (newCount >= cap) {
+          updates.selectedCount = cap
+        }
+      }
+      return { ...row, ...updates }
     })
     const created = localRequestCardApplications.find((row) => row.id === applicationId)
     return normalizeRequestCardApplication(applicationId, created)
@@ -636,22 +704,28 @@ export async function applyToRequestCard(payload) {
       throw new Error('현재는 신청할 수 없는 카드입니다.')
     }
 
-    tx.set(appRef, {
-      cardId: targetCardId,
-      applicantUid: actor.uid,
-      applicantRole: actor.role,
-      applicantName: actor.name || actor.loginId || '신청자',
-      applicantLoginId: actor.loginId,
-      applicantStudentNo: actor.studentNo,
-      status: REQUEST_CARD_RESULT.APPLIED,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      drawnAt: null,
-    })
-    tx.update(cardRef, {
+    if (card.cardType === 'fcfs') {
+      const currentCount = toPositiveInteger(card.applicantCount, 0)
+      if (currentCount >= Math.max(1, toPositiveInteger(card.capacity, 1))) {
+        throw new Error('정원이 마감되었습니다.')
+      }
+    }
+
+    const cardUpdates = {
       applicantCount: Math.max(0, toPositiveInteger(card.applicantCount, 0)) + 1,
       updatedAt: serverTimestamp(),
+    }
+    if (card.cardType === 'survey' && choiceKey && Array.isArray(card.surveyChoices)) {
+      cardUpdates.surveyChoices = card.surveyChoices.map((c) =>
+        c.key === choiceKey ? { ...c, count: (c.count || 0) + 1 } : c)
+    }
+
+    tx.set(appRef, {
+      ...appBase,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     })
+    tx.update(cardRef, cardUpdates)
   })
 
   const created = await getDoc(doc(db, REQUEST_CARD_APPLICATIONS, applicationId))
@@ -685,11 +759,15 @@ export async function cancelRequestCardApplication(payload) {
     localRequestCardApplications = localRequestCardApplications.filter((row) => row.id !== applicationId)
     localRequestCards = localRequestCards.map((row) => {
       if (row.id !== targetCardId) return row
-      return {
-        ...row,
+      const updates = {
         applicantCount: Math.max(0, toPositiveInteger(row.applicantCount, 0) - 1),
         updatedAt: nowIso(),
       }
+      if (row.cardType === 'survey' && existing.choiceKey && Array.isArray(row.surveyChoices)) {
+        updates.surveyChoices = row.surveyChoices.map((c) =>
+          c.key === existing.choiceKey ? { ...c, count: Math.max(0, (c.count || 0) - 1) } : c)
+      }
+      return { ...row, ...updates }
     })
     return { ok: true }
   }
@@ -719,11 +797,17 @@ export async function cancelRequestCardApplication(payload) {
       throw new Error('이미 추첨이 진행되어 취소할 수 없습니다.')
     }
 
-    tx.delete(appRef)
-    tx.update(cardRef, {
+    const cardUpdates = {
       applicantCount: Math.max(0, toPositiveInteger(card.applicantCount, 0) - 1),
       updatedAt: serverTimestamp(),
-    })
+    }
+    if (card.cardType === 'survey' && application.choiceKey && Array.isArray(card.surveyChoices)) {
+      cardUpdates.surveyChoices = card.surveyChoices.map((c) =>
+        c.key === application.choiceKey ? { ...c, count: Math.max(0, (c.count || 0) - 1) } : c)
+    }
+
+    tx.delete(appRef)
+    tx.update(cardRef, cardUpdates)
   })
 
   return { ok: true }

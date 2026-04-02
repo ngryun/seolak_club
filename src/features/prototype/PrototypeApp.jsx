@@ -49,6 +49,8 @@ import {
   listRequestCards,
   updateRequestCard,
   setRequestCardAdminStatus,
+  REQUEST_CARD_TYPE,
+  REQUEST_CARD_TYPE_META,
 } from "../../services/requestCardService";
 import {
   backfillScheduleDisplayFields,
@@ -338,7 +340,18 @@ function requestCardTargetLabel(value) {
   return "-";
 }
 
-function requestCardPhaseMeta(state) {
+function requestCardTypeLabel(value) {
+  return REQUEST_CARD_TYPE_META[value]?.label || "추첨";
+}
+
+function requestCardTypeColor(value) {
+  if (value === "fcfs") return { bg: "#eef7ee", border: "#cbe6cd", color: t.ok };
+  if (value === "survey") return { bg: "#f3eeff", border: "#d6c8f5", color: "#7c3aed" };
+  if (value === "free") return { bg: "#fff8e1", border: "#f3dfb9", color: t.warn };
+  return { bg: "#edf4ff", border: "#c8dcff", color: t.accent };
+}
+
+function requestCardPhaseMeta(state, card) {
   if (state?.phase === "open") {
     return { label: "신청 중", bg: "#eef7ee", border: "#cbe6cd", color: t.ok };
   }
@@ -346,6 +359,9 @@ function requestCardPhaseMeta(state) {
     return { label: "시작 전", bg: "#fff8e1", border: "#f3dfb9", color: t.warn };
   }
   if (state?.phase === "closed") {
+    if (state?.fcfsFull) {
+      return { label: "정원 마감", bg: "#ffebee", border: "#f2b8be", color: t.danger };
+    }
     return { label: "결과 대기", bg: "#edf4ff", border: "#c8dcff", color: t.accent };
   }
   if (state?.phase === "drawn") {
@@ -383,6 +399,10 @@ function getRequestCardStatusText(card, state, application) {
   const startAt = state?.startAt || card?.startAt || null;
   const endAt = state?.endAt || card?.endAt || null;
   const drawExecutedAt = state?.drawExecutedAt || card?.drawExecutedAt || null;
+  const cardType = card?.cardType || "lottery";
+  const isSurvey = cardType === "survey";
+  const isFree = cardType === "free";
+  const isFcfs = cardType === "fcfs";
 
   if (state?.phase === "cancelled") {
     return {
@@ -410,8 +430,8 @@ function getRequestCardStatusText(card, state, application) {
 
   if (application?.status === "selected") {
     return {
-      label: "선정",
-      description: "최종 선정되었습니다. 일정과 장소를 확인해 주세요.",
+      label: isFcfs ? "신청 확정" : "선정",
+      description: isFcfs ? "선착순 신청이 확정되었습니다." : "최종 선정되었습니다. 일정과 장소를 확인해 주세요.",
       note: drawExecutedAt ? `결과 안내: ${formatTime(drawExecutedAt)}` : null,
     };
   }
@@ -423,14 +443,35 @@ function getRequestCardStatusText(card, state, application) {
     };
   }
   if (application?.status === "applied") {
+    if (isSurvey) {
+      return {
+        label: "투표 완료",
+        description: "의견이 제출되었습니다.",
+        note: endAt ? `마감: ${formatTime(endAt)}` : null,
+      };
+    }
+    if (isFree) {
+      return {
+        label: "참여 완료",
+        description: "참여 의사가 등록되었습니다.",
+        note: endAt ? `마감: ${formatTime(endAt)}` : null,
+      };
+    }
     if (state.phase === "open") {
       return {
         label: "신청 완료",
-        description: "신청이 완료되었습니다.",
+        description: isFcfs ? "선착순 신청이 접수되었습니다." : "신청이 완료되었습니다.",
         note: endAt ? `신청 마감: ${formatTime(endAt)}` : null,
       };
     }
     if (state.phase === "closed") {
+      if (isFcfs && state?.fcfsFull) {
+        return {
+          label: "정원 마감",
+          description: "정원이 마감되었습니다. 결과 확정을 기다려 주세요.",
+          note: null,
+        };
+      }
       return {
         label: "결과 대기",
         description: "신청 기간이 종료되었습니다. 최종 선정 결과를 기다리는 중입니다.",
@@ -457,18 +498,26 @@ function getRequestCardStatusText(card, state, application) {
   if (state.phase === "before") {
     return {
       label: "시작 전",
-      description: "신청 시작 전입니다.",
-      note: startAt ? `신청 시작: ${formatTime(startAt)}` : null,
+      description: isSurvey ? "투표 시작 전입니다." : "신청 시작 전입니다.",
+      note: startAt ? `시작: ${formatTime(startAt)}` : null,
     };
   }
   if (state.phase === "open") {
-    return {
-      label: "신청 가능",
-      description: "현재 신청할 수 있습니다.",
-      note: endAt ? `신청 마감: ${formatTime(endAt)}` : null,
-    };
+    if (isSurvey) return { label: "투표 가능", description: "지금 투표할 수 있습니다.", note: endAt ? `마감: ${formatTime(endAt)}` : null };
+    if (isFree) return { label: "참여 가능", description: "지금 참여 의사를 등록할 수 있습니다.", note: endAt ? `마감: ${formatTime(endAt)}` : null };
+    if (isFcfs) {
+      const remaining = Math.max(0, (card?.capacity || 0) - (card?.applicantCount || 0));
+      return { label: "선착순 접수 중", description: `남은 자리 ${remaining}명`, note: endAt ? `마감: ${formatTime(endAt)}` : null };
+    }
+    return { label: "신청 가능", description: "현재 신청할 수 있습니다.", note: endAt ? `신청 마감: ${formatTime(endAt)}` : null };
   }
   if (state.phase === "closed") {
+    if (isSurvey || isFree) {
+      return { label: "마감", description: isSurvey ? "투표가 마감되었습니다." : "참여 접수가 마감되었습니다.", note: null };
+    }
+    if (isFcfs && state?.fcfsFull) {
+      return { label: "정원 마감", description: "정원이 마감되었습니다.", note: null };
+    }
     return {
       label: "결과 대기",
       description: "신청 기간이 종료되었습니다. 최종 선정 결과를 기다리는 중입니다.",
@@ -478,6 +527,8 @@ function getRequestCardStatusText(card, state, application) {
     };
   }
   if (state.phase === "drawn") {
+    if (isSurvey) return { label: "결과 공개", description: "투표 결과가 공개되었습니다.", note: drawExecutedAt ? `결과 안내: ${formatTime(drawExecutedAt)}` : null };
+    if (isFree) return { label: "마감", description: "참여 접수가 마감되었습니다.", note: null };
     return {
       label: "결과 확정",
       description: "선정 결과 안내가 완료되었습니다.",
@@ -5088,6 +5139,55 @@ function RequestCardApplicationsDialog({
   );
 }
 
+function AdminCardContextMenu({ card, state, loading, canManage, onAction }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+  const resultLocked = Boolean(card.drawExecutedAt);
+  const canResetStatus = state.adminStatus && state.adminStatus !== "normal";
+  const isLotteryOrFcfs = card.cardType === "lottery" || card.cardType === "fcfs";
+  const items = [];
+  items.push({ key: "view", label: "신청현황", action: () => onAction("view", card) });
+  if (canManage) {
+    if (isLotteryOrFcfs && state.canDraw) items.push({ key: "draw", label: card.cardType === "fcfs" ? "결과 확정" : "랜덤 추첨", action: () => onAction("draw", card), accent: t.warn });
+    items.push({ key: "edit", label: "수정", action: () => onAction("edit", card), accent: t.accent });
+    if (!resultLocked && state.phase !== "cancelled") items.push({ key: "cancel", label: "폐강", action: () => onAction("status", card, "cancelled") });
+    if (state.phase !== "selection_cancelled") items.push({ key: "selcancel", label: "선정취소", action: () => onAction("status", card, "selection_cancelled"), accent: t.warn });
+    if (canResetStatus) items.push({ key: "reset", label: "상태 해제", action: () => onAction("status", card, "normal"), accent: t.ok });
+    if (!resultLocked) items.push({ key: "delete", label: "삭제", action: () => onAction("delete", card), accent: t.danger });
+  }
+  return (
+    <div ref={menuRef} style={{ position: "relative", display: "inline-block" }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        disabled={loading}
+        style={{ ...buttonBase, padding: "4px 10px", background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontSize: 16, lineHeight: 1 }}
+      >
+        &#8942;
+      </button>
+      {open ? (
+        <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 4, background: "#fff", border: `1px solid ${t.border}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 100, minWidth: 140, padding: "4px 0" }}>
+          {items.map((item) => (
+            <button
+              key={item.key}
+              onClick={() => { setOpen(false); item.action(); }}
+              disabled={loading}
+              style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "8px 14px", fontSize: 13, fontWeight: 600, color: item.accent || t.text, cursor: "pointer" }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function RequestCardAdminPanel({
   cards,
   form,
@@ -5107,13 +5207,24 @@ function RequestCardAdminPanel({
   const isAdmin = user?.role === "admin" || user?.loginId === "admin";
   const canManageCard = (card) => isAdmin || card?.createdByUid === user?.uid;
   const visibleCards = isAdmin ? cards : cards.filter((card) => card.createdByUid === user?.uid);
+  const needsCapacity = form.cardType === "lottery" || form.cardType === "fcfs";
+  const needsSurveyChoices = form.cardType === "survey";
+
+  const handleContextAction = (action, card, extra) => {
+    if (action === "view") onOpenApplications(card);
+    else if (action === "draw") onDraw(card);
+    else if (action === "edit") onStartEdit(card);
+    else if (action === "delete") onDelete(card);
+    else if (action === "status") onChangeStatus(card, extra);
+  };
+
   return (
     <section style={cardStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
         <div>
           <h2 style={{ fontSize: 17 }}>공통 신청 카드 관리</h2>
           <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
-            학생 또는 교사를 대상으로 별도 신청 카드, 랜덤 추첨, 예외 상태를 관리합니다.
+            추첨, 선착순, 의견조사, 자유신청 등 다양한 유형의 카드를 생성하고 관리합니다.
           </div>
         </div>
         <button
@@ -5130,13 +5241,40 @@ function RequestCardAdminPanel({
           {editingId ? "신청 카드 수정" : "신청 카드 생성"}
         </div>
         <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.2fr) minmax(0,0.8fr) minmax(0,0.6fr)", gap: 10 }}>
+          <div style={{ display: "grid", gap: 6, marginBottom: 4 }}>
+            <div style={{ fontSize: 13, color: t.textSub, fontWeight: 600 }}>카드 유형</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {Object.entries(REQUEST_CARD_TYPE_META).map(([key, meta]) => {
+                const active = form.cardType === key;
+                const typeColor = requestCardTypeColor(key);
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setForm((prev) => ({ ...prev, cardType: key }))}
+                    style={{
+                      ...buttonBase,
+                      padding: "8px 14px",
+                      background: active ? typeColor.bg : "#fff",
+                      border: `1.5px solid ${active ? typeColor.border : t.border}`,
+                      color: active ? typeColor.color : t.textSub,
+                      fontWeight: active ? 800 : 600,
+                    }}
+                  >
+                    {meta.label}
+                    <span style={{ display: "block", fontSize: 11, fontWeight: 400, opacity: 0.8, marginTop: 2 }}>{meta.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: needsCapacity ? "minmax(0,1.2fr) minmax(0,0.8fr) minmax(0,0.6fr)" : "minmax(0,1.5fr) minmax(0,1fr)", gap: 10 }}>
             <Field label="카드 제목">
               <input
                 value={form.title}
                 onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
                 style={inputBase}
-                placeholder="예: 체육대회 진행요원 신청"
+                placeholder={needsSurveyChoices ? "예: 급식 메뉴 투표" : "예: 체육대회 진행요원 신청"}
               />
             </Field>
             <Field label="대상">
@@ -5148,15 +5286,17 @@ function RequestCardAdminPanel({
                 <option value="teacher">교사 대상</option>
               </Select>
             </Field>
-            <Field label="모집인원">
-              <input
-                type="number"
-                min={1}
-                value={form.capacity}
-                onChange={(e) => setForm((prev) => ({ ...prev, capacity: e.target.value }))}
-                style={inputBase}
-              />
-            </Field>
+            {needsCapacity ? (
+              <Field label="모집인원">
+                <input
+                  type="number"
+                  min={1}
+                  value={form.capacity}
+                  onChange={(e) => setForm((prev) => ({ ...prev, capacity: e.target.value }))}
+                  style={inputBase}
+                />
+              </Field>
+            ) : null}
           </div>
 
           <Field label="내용">
@@ -5164,9 +5304,50 @@ function RequestCardAdminPanel({
               value={form.description}
               onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
               style={{ ...inputBase, minHeight: 88, resize: "vertical" }}
-              placeholder="신청 대상에게 보여줄 안내 내용을 입력하세요."
+              placeholder={needsSurveyChoices ? "투표 안내 내용을 입력하세요." : "신청 대상에게 보여줄 안내 내용을 입력하세요."}
             />
           </Field>
+
+          {needsSurveyChoices ? (
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 13, color: t.textSub, fontWeight: 600 }}>선택지 (2개 이상)</div>
+              {form.surveyChoices.map((choice, idx) => (
+                <div key={choice.key} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: t.textSub, minWidth: 20 }}>{idx + 1}.</span>
+                  <input
+                    value={choice.label}
+                    onChange={(e) => {
+                      const next = [...form.surveyChoices];
+                      next[idx] = { ...next[idx], label: e.target.value };
+                      setForm((prev) => ({ ...prev, surveyChoices: next }));
+                    }}
+                    style={{ ...inputBase, flex: 1 }}
+                    placeholder={`선택지 ${idx + 1}`}
+                  />
+                  {form.surveyChoices.length > 2 ? (
+                    <button
+                      onClick={() => {
+                        const next = form.surveyChoices.filter((_, i) => i !== idx);
+                        setForm((prev) => ({ ...prev, surveyChoices: next }));
+                      }}
+                      style={{ ...buttonBase, padding: "6px 10px", background: "#ffebee", color: t.danger, fontSize: 12 }}
+                    >
+                      삭제
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+              <button
+                onClick={() => {
+                  const key = `c${Date.now()}`;
+                  setForm((prev) => ({ ...prev, surveyChoices: [...prev.surveyChoices, { key, label: "" }] }));
+                }}
+                style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.accent, fontWeight: 700, width: "fit-content" }}
+              >
+                + 선택지 추가
+              </button>
+            </div>
+          ) : null}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 10 }}>
             <Field label="신청 시작 일시">
@@ -5208,126 +5389,147 @@ function RequestCardAdminPanel({
         </div>
       </div>
 
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1120 }}>
-          <thead>
-            <tr>
-              {["제목", "대상", "상태", "신청 시작", "신청 마감", "모집인원", "현재 신청", "선정인원", "작업"].map((head) => (
-                <th
-                  key={head}
-                  style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
-                >
-                  {head}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {visibleCards.map((card) => {
-              const state = getRequestCardState(card);
-              const phaseMeta = requestCardPhaseMeta(state);
-              const drawDisabled = loading || !state.canDraw;
-              const resultLocked = Boolean(card.drawExecutedAt);
-              const canResetStatus = state.adminStatus && state.adminStatus !== "normal";
-              const selectedCountText = state.phase === "selection_cancelled"
-                ? `${card.selectedCount || 0}명(취소)`
-                : `${card.selectedCount || 0}명`;
-              return (
-                <tr key={card.id}>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13, fontWeight: 700 }}>
-                    {card.title}
-                    {card.createdByUid === user?.uid ? (
-                      <span style={{ marginLeft: 6, fontSize: 11, color: t.accent, fontWeight: 600 }}>내 카드</span>
-                    ) : null}
-                  </td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{requestCardTargetLabel(card.targetRole)}</td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}>
-                    <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, border: `1px solid ${phaseMeta.border}`, color: phaseMeta.color }}>
+      <div style={{ display: "grid", gap: 10 }}>
+        {visibleCards.map((card) => {
+          const state = getRequestCardState(card);
+          const phaseMeta = requestCardPhaseMeta(state, card);
+          const typeColor = requestCardTypeColor(card.cardType);
+          const capacity = Math.max(0, Number(card.capacity || 0));
+          const applicantCount = Math.max(0, Number(card.applicantCount || 0));
+          const fillRatio = capacity > 0 ? Math.min(applicantCount / capacity, 1) : 0;
+          const isLotteryOrFcfs = card.cardType === "lottery" || card.cardType === "fcfs";
+          return (
+            <div key={card.id} style={{ ...cardStyle, padding: "14px 16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
+                    <span style={{ fontSize: 15, fontWeight: 800 }}>{card.title}</span>
+                    <span style={{ display: "inline-flex", borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 700, background: typeColor.bg, border: `1px solid ${typeColor.border}`, color: typeColor.color }}>
+                      {requestCardTypeLabel(card.cardType)}
+                    </span>
+                    <span style={{ display: "inline-flex", borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 700, background: phaseMeta.bg, border: `1px solid ${phaseMeta.border}`, color: phaseMeta.color }}>
                       {phaseMeta.label}
                     </span>
-                  </td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, color: t.textSub }}>
-                    {formatTime(card.startAt)}
-                  </td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 12, color: t.textSub }}>
-                    {formatTime(card.endAt)}
-                  </td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{card.capacity}명</td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{card.applicantCount || 0}명</td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px", fontSize: 13 }}>{selectedCountText}</td>
-                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "9px 6px" }}>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      <button
-                        onClick={() => onOpenApplications(card)}
-                        disabled={loading}
-                        style={{ ...buttonBase, padding: "5px 8px", background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
-                      >
-                        신청현황
-                      </button>
-                      {canManageCard(card) ? (
-                        <>
-                          <button
-                            onClick={() => onDraw(card)}
-                            disabled={drawDisabled}
-                            style={{ ...buttonBase, padding: "5px 8px", background: drawDisabled ? "#cfd8e3" : "#fff3e0", color: drawDisabled ? "#6b7280" : t.warn, fontWeight: 700 }}
-                          >
-                            랜덤 추첨
-                          </button>
-                          <button
-                            onClick={() => onChangeStatus(card, "cancelled")}
-                            disabled={loading || resultLocked || state.phase === "cancelled"}
-                            style={{ ...buttonBase, padding: "5px 8px", background: (resultLocked || state.phase === "cancelled") ? "#cfd8e3" : "#f3f4f6", color: (resultLocked || state.phase === "cancelled") ? "#6b7280" : t.textSub, fontWeight: 700 }}
-                          >
-                            폐강
-                          </button>
-                          <button
-                            onClick={() => onChangeStatus(card, "selection_cancelled")}
-                            disabled={loading || state.phase === "selection_cancelled"}
-                            style={{ ...buttonBase, padding: "5px 8px", background: state.phase === "selection_cancelled" ? "#cfd8e3" : "#fff4e5", color: state.phase === "selection_cancelled" ? "#6b7280" : t.warn, fontWeight: 700 }}
-                          >
-                            선정취소
-                          </button>
-                          {canResetStatus ? (
-                            <button
-                              onClick={() => onChangeStatus(card, "normal")}
-                              disabled={loading}
-                              style={{ ...buttonBase, padding: "5px 8px", background: "#eef7ee", color: t.ok, fontWeight: 700 }}
-                            >
-                              상태 해제
-                            </button>
-                          ) : null}
-                          <button
-                            onClick={() => onStartEdit(card)}
-                            disabled={loading}
-                            style={{ ...buttonBase, padding: "5px 8px", background: "#edf4ff", color: t.accent, fontWeight: 700 }}
-                          >
-                            수정
-                          </button>
-                          <button
-                            onClick={() => onDelete(card)}
-                            disabled={loading || resultLocked}
-                            style={{ ...buttonBase, padding: "5px 8px", background: "#ffebee", color: t.danger, fontWeight: 700 }}
-                          >
-                            삭제
-                          </button>
-                        </>
-                      ) : null}
+                    {card.createdByUid === user?.uid ? (
+                      <span style={{ fontSize: 11, color: t.accent, fontWeight: 600 }}>내 카드</span>
+                    ) : null}
+                  </div>
+                  <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: t.textSub }}>
+                    <span>{requestCardTargetLabel(card.targetRole)}</span>
+                    <span>{formatTime(card.startAt)} ~ {formatTime(card.endAt)}</span>
+                    {isLotteryOrFcfs ? (
+                      <span>
+                        신청 <b style={{ color: t.text }}>{applicantCount}</b>/{capacity}명
+                        {card.selectedCount > 0 ? (
+                          <span style={{ marginLeft: 4 }}>
+                            · 선정 <b style={{ color: t.ok }}>{card.selectedCount}</b>명
+                            {state.phase === "selection_cancelled" ? <span style={{ color: t.warn }}>(취소)</span> : null}
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      <span>참여 <b style={{ color: t.text }}>{applicantCount}</b>명</span>
+                    )}
+                  </div>
+                  {isLotteryOrFcfs && capacity > 0 ? (
+                    <div style={{ marginTop: 6, height: 4, borderRadius: 999, background: "#e7edf6", overflow: "hidden", maxWidth: 200 }}>
+                      <div style={{ width: `${Math.round(fillRatio * 100)}%`, height: "100%", borderRadius: 999, background: fillRatio >= 1 ? t.warn : t.accent, transition: "width 0.3s" }} />
                     </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {visibleCards.length === 0 ? (
-              <tr>
-                <td colSpan={9} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
-                  {isAdmin ? "아직 생성된 신청 카드가 없습니다." : "내가 만든 신청 카드가 없습니다."}
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
+                  ) : null}
+                </div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+                  <button
+                    onClick={() => onOpenApplications(card)}
+                    disabled={loading}
+                    style={{ ...buttonBase, padding: "6px 12px", background: "#edf4ff", color: t.accent, fontWeight: 700, fontSize: 12 }}
+                  >
+                    현황
+                  </button>
+                  {canManageCard(card) && isLotteryOrFcfs && state.canDraw ? (
+                    <button
+                      onClick={() => onDraw(card)}
+                      disabled={loading}
+                      style={{ ...buttonBase, padding: "6px 12px", background: "#fff3e0", color: t.warn, fontWeight: 700, fontSize: 12 }}
+                    >
+                      {card.cardType === "fcfs" ? "확정" : "추첨"}
+                    </button>
+                  ) : null}
+                  <AdminCardContextMenu
+                    card={card}
+                    state={state}
+                    loading={loading}
+                    canManage={canManageCard(card)}
+                    onAction={handleContextAction}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {visibleCards.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 24, fontSize: 13, color: t.textSub }}>
+            {isAdmin ? "아직 생성된 신청 카드가 없습니다." : "내가 만든 신청 카드가 없습니다."}
+          </div>
+        ) : null}
       </div>
     </section>
+  );
+}
+
+function RequestCardTimeline({ phase }) {
+  const steps = [
+    { key: "before", label: "시작 전" },
+    { key: "open", label: "접수 중" },
+    { key: "closed", label: "마감" },
+    { key: "drawn", label: "결과" },
+  ];
+  const phaseIndex = { before: 0, open: 1, closed: 2, drawn: 3, cancelled: 3, selection_cancelled: 3 };
+  const current = phaseIndex[phase] ?? -1;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 0, margin: "6px 0 2px" }}>
+      {steps.map((step, idx) => {
+        const done = idx < current;
+        const active = idx === current;
+        const color = done ? t.ok : active ? t.accent : "#cfd8e3";
+        return (
+          <Fragment key={step.key}>
+            {idx > 0 ? (
+              <div style={{ flex: 1, height: 2, background: done || active ? t.ok : "#e7edf6", minWidth: 12, maxWidth: 40 }} />
+            ) : null}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+              <div style={{ width: active ? 12 : 8, height: active ? 12 : 8, borderRadius: 999, background: color, border: active ? `2px solid ${t.accent}` : "none", transition: "all 0.2s" }} />
+              <span style={{ fontSize: 10, color: active ? t.accent : done ? t.ok : t.textSub, fontWeight: active ? 700 : 400, whiteSpace: "nowrap" }}>{step.label}</span>
+            </div>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function SurveyResultBar({ choices, totalCount }) {
+  if (!Array.isArray(choices) || choices.length === 0) return null;
+  const maxCount = Math.max(...choices.map((c) => c.count || 0), 1);
+  const colors = ["#1f6feb", "#7c3aed", "#2e7d32", "#c77700", "#c62828", "#0d9488"];
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      {choices.map((choice, idx) => {
+        const count = choice.count || 0;
+        const pct = totalCount > 0 ? Math.round((count / totalCount) * 100) : 0;
+        const barColor = colors[idx % colors.length];
+        return (
+          <div key={choice.key}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 3 }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{choice.label}</span>
+              <span style={{ fontSize: 12, color: t.textSub }}>{count}표 ({pct}%)</span>
+            </div>
+            <div style={{ height: 8, borderRadius: 999, background: "#e7edf6", overflow: "hidden" }}>
+              <div style={{ width: totalCount > 0 ? `${(count / maxCount) * 100}%` : "0%", height: "100%", borderRadius: 999, background: barColor, transition: "width 0.3s" }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -5345,6 +5547,8 @@ function RequestCardUserSection({
   const [listMode, setListMode] = useState("all");
   const [subTab, setSubTab] = useState(isTeacherOrAdmin ? "teacher" : "student");
   const [showArchivedCards, setShowArchivedCards] = useState(false);
+  const [expandedCardId, setExpandedCardId] = useState(null);
+  const [surveySelection, setSurveySelection] = useState({});
   const appMap = useMemo(
     () => new Map((myApplications || []).map((row) => [row.cardId, row])),
     [myApplications],
@@ -5376,6 +5580,31 @@ function RequestCardUserSection({
   );
 
   const activeCards = listMode === "mine" ? myCards : browseCards;
+
+  // My dashboard stats
+  const myDashboard = useMemo(() => {
+    const applied = [];
+    const pending = [];
+    const selected = [];
+    const notSelected = [];
+    (myApplications || []).forEach((app) => {
+      const card = (cards || []).find((c) => c.id === app.cardId);
+      if (!card) return;
+      const state = getRequestCardState(card);
+      if (app.status === "selected" && state.phase !== "cancelled" && state.phase !== "selection_cancelled") {
+        selected.push({ app, card, state });
+      } else if (app.status === "not_selected") {
+        notSelected.push({ app, card, state });
+      } else if (app.status === "applied" && state.phase === "closed") {
+        pending.push({ app, card, state });
+      } else if (app.status === "applied" && state.phase === "open") {
+        applied.push({ app, card, state });
+      }
+    });
+    return { applied, pending, selected, notSelected };
+  }, [myApplications, cards]);
+
+  const hasMyActivity = myDashboard.applied.length + myDashboard.pending.length + myDashboard.selected.length + myDashboard.notSelected.length > 0;
 
   const groupedCards = useMemo(() => {
     const groupRank = { current: 0, pending: 1, archived: 2 };
@@ -5416,7 +5645,7 @@ function RequestCardUserSection({
   const myCardsCount = myCards.length;
   const viewTabs = [
     { key: "all", label: "전체 카드", count: allCardsCount },
-    { key: "mine", label: "내가 신청한 카드", count: myCardsCount },
+    { key: "mine", label: "내 신청", count: myCardsCount },
   ];
   const countBadgeStyle = {
     display: "inline-flex",
@@ -5432,205 +5661,228 @@ function RequestCardUserSection({
   };
 
   const renderCardRows = (rows) => (
-    <div style={{ display: "grid", gap: 12 }}>
+    <div style={{ display: "grid", gap: 8 }}>
       {rows.map(({ card, state }) => {
-        const phaseMeta = requestCardPhaseMeta(state);
+        const phaseMeta = requestCardPhaseMeta(state, card);
+        const typeColor = requestCardTypeColor(card.cardType);
         const myApplication = appMap.get(card.id) || null;
         const resultMeta = requestCardResultMeta(myApplication?.status, state);
         const statusText = getRequestCardStatusText(card, state, myApplication);
         const canApply = !myApplication && state.phase === "open";
         const canCancel = myApplication?.status === "applied" && state.phase === "open";
-        const useCompactActionStatus = state.phase === "open" && (canApply || canCancel);
-        const startAt = state?.startAt || card?.startAt || null;
-        const endAt = state?.endAt || card?.endAt || null;
         const capacity = Math.max(0, Number(card?.capacity || 0));
         const applicantCount = Math.max(0, Number(card?.applicantCount || 0));
-        const fillRatioRaw = capacity > 0 ? applicantCount / capacity : 0;
-        const fillBarWidth = capacity > 0 ? `${Math.min(fillRatioRaw * 100, 100)}%` : "0%";
-        const fillPercent = capacity > 0 ? Math.round(fillRatioRaw * 100) : 0;
-        const isOverCapacity = capacity > 0 && applicantCount > capacity;
-        const applicantTone = isOverCapacity
-          ? { bg: "#fff1f1", border: "#f3c7c7", color: t.danger }
-          : fillRatioRaw >= 1
-            ? { bg: "#fff8e1", border: "#f3dfb9", color: t.warn }
-            : { bg: "#edf4ff", border: "#c8dcff", color: t.accent };
-        const applicantDetail = capacity <= 0
-          ? "모집 인원을 확인해 주세요."
-          : isOverCapacity
-            ? `정원보다 ${applicantCount - capacity}명 많습니다.`
-            : applicantCount === 0
-              ? "아직 신청자가 없습니다."
-              : `충원율 ${fillPercent}%`;
-        const statusNote = statusText.note && !/^신청 (시작|마감):/.test(statusText.note)
-          ? statusText.note
-          : null;
-        const summaryItems = [
-          {
-            key: "startAt",
-            label: "신청 시작",
-            value: formatTime(startAt),
-            detail: startAt ? "접수가 열리는 시각입니다." : "아직 신청 일정이 없습니다.",
-            bg: "#f8fafc",
-            border: t.border,
-            color: t.text,
-            accent: t.textSub,
-          },
-          {
-            key: "endAt",
-            label: "신청 마감",
-            value: formatTime(endAt),
-            detail: endAt ? "이 시각 이후에는 신청이 잠깁니다." : "아직 마감 시각이 없습니다.",
-            bg: "#fff8e1",
-            border: "#f3dfb9",
-            color: t.warn,
-            accent: t.warn,
-          },
-          {
-            key: "capacity",
-            label: "모집인원",
-            value: `${capacity}명`,
-            detail: "선정 예정 인원입니다.",
-            bg: "#eef7ee",
-            border: "#cbe6cd",
-            color: t.ok,
-            accent: t.ok,
-          },
-          {
-            key: "applicantCount",
-            label: "현재 신청인원",
-            value: `${applicantCount}명`,
-            detail: applicantDetail,
-            bg: applicantTone.bg,
-            border: applicantTone.border,
-            color: applicantTone.color,
-            accent: applicantTone.color,
-          },
-        ];
+        const isLotteryOrFcfs = card.cardType === "lottery" || card.cardType === "fcfs";
+        const isSurvey = card.cardType === "survey";
+        const isFree = card.cardType === "free";
+        const isFcfs = card.cardType === "fcfs";
+        const isExpanded = expandedCardId === card.id;
+        const fillRatio = capacity > 0 ? Math.min(applicantCount / capacity, 1) : 0;
+        const remaining = isFcfs ? Math.max(0, capacity - applicantCount) : 0;
+
+        // D-day calc
+        const endAt = state?.endAt || card?.endAt;
+        let dDayText = "";
+        if (endAt && (state.phase === "open" || state.phase === "before")) {
+          const diff = Math.ceil((new Date(endAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+          if (diff > 0) dDayText = `D-${diff}`;
+          else if (diff === 0) dDayText = "D-Day";
+        }
+
+        // Collapsed card (summary)
         return (
-          <div key={card.id} style={{ ...cardStyle, background: "linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)", border: "1px solid #d9e4f5" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
-                  <div style={{ fontSize: 16, fontWeight: 800 }}>{card.title}</div>
-                  <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: phaseMeta.bg, border: `1px solid ${phaseMeta.border}`, color: phaseMeta.color }}>
+          <div
+            key={card.id}
+            style={{
+              ...cardStyle,
+              background: isExpanded ? "linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)" : "#fff",
+              border: `1px solid ${isExpanded ? "#c8d8f0" : "#e2e8f0"}`,
+              cursor: isExpanded ? "default" : "pointer",
+              transition: "all 0.15s ease",
+            }}
+          >
+            {/* Collapsed summary - always visible */}
+            <div
+              onClick={() => setExpandedCardId(isExpanded ? null : card.id)}
+              style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 15, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{card.title}</span>
+                  <span style={{ display: "inline-flex", borderRadius: 999, padding: "2px 7px", fontSize: 11, fontWeight: 700, background: typeColor.bg, border: `1px solid ${typeColor.border}`, color: typeColor.color }}>
+                    {requestCardTypeLabel(card.cardType)}
+                  </span>
+                  <span style={{ display: "inline-flex", borderRadius: 999, padding: "2px 7px", fontSize: 11, fontWeight: 700, background: phaseMeta.bg, border: `1px solid ${phaseMeta.border}`, color: phaseMeta.color }}>
                     {phaseMeta.label}
                   </span>
                   {myApplication ? (
-                    <span style={{ display: "inline-flex", borderRadius: 999, padding: "3px 8px", fontSize: 12, fontWeight: 700, background: resultMeta.bg, color: resultMeta.color }}>
+                    <span style={{ display: "inline-flex", borderRadius: 999, padding: "2px 7px", fontSize: 11, fontWeight: 700, background: resultMeta.bg, color: resultMeta.color }}>
                       {resultMeta.label}
                     </span>
                   ) : null}
                 </div>
-              </div>
-              <div style={{ display: "grid", gap: 4, minWidth: 132 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: t.textSub, textAlign: "right" }}>현재 신청 현황</div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: applicantTone.color, textAlign: "right", lineHeight: 1 }}>
-                  {applicantCount}
-                  <span style={{ fontSize: 13, marginLeft: 4 }}>명</span>
-                </div>
-                <div style={{ fontSize: 11, color: t.textSub, textAlign: "right" }}>
-                  모집 {capacity}명 기준
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(165px, 1fr))", gap: 10, marginBottom: 12 }}>
-              {summaryItems.map((item) => (
-                <div
-                  key={item.key}
-                  style={{
-                    borderRadius: 14,
-                    border: `1px solid ${item.border}`,
-                    background: item.bg,
-                    padding: "12px 13px",
-                    minHeight: 94,
-                    display: "grid",
-                    alignContent: "start",
-                    gap: 6,
-                  }}
-                >
-                  <div style={{ fontSize: 11, fontWeight: 700, color: t.textSub, letterSpacing: "0.02em" }}>{item.label}</div>
-                  <div style={{ fontSize: item.key === "startAt" || item.key === "endAt" ? 14 : 24, fontWeight: 800, color: item.color, lineHeight: 1.35 }}>
-                    {item.value}
-                  </div>
-                  <div style={{ fontSize: 12, color: item.key === "applicantCount" ? item.accent : t.textSub, lineHeight: 1.5 }}>
-                    {item.detail}
-                  </div>
-                  {item.key === "applicantCount" && capacity > 0 ? (
-                    <div style={{ marginTop: 2 }}>
-                      <div style={{ height: 6, borderRadius: 999, background: "#e7edf6", overflow: "hidden" }}>
-                        <div style={{ width: fillBarWidth, height: "100%", borderRadius: 999, background: item.accent }} />
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-
-            {!useCompactActionStatus ? (
-              <div
-                style={{
-                  borderRadius: 14,
-                  border: `1px solid ${phaseMeta.border}`,
-                  background: phaseMeta.bg,
-                  padding: "12px 14px",
-                  marginBottom: 12,
-                }}
-              >
-                <div style={{ fontSize: 11, fontWeight: 700, color: phaseMeta.color, marginBottom: 4 }}>
-                  {statusText.label}
-                </div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: t.text, lineHeight: 1.5 }}>
-                  {statusText.description}
-                </div>
-                {statusNote ? (
-                  <div style={{ fontSize: 12, color: t.textSub, marginTop: 4, lineHeight: 1.5 }}>
-                    {statusNote}
+                {!isExpanded ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4, fontSize: 12, color: t.textSub }}>
+                    {isLotteryOrFcfs ? (
+                      <>
+                        <span>모집 {capacity}명 중 <b style={{ color: t.text }}>{applicantCount}</b>명 신청</span>
+                        {capacity > 0 ? (
+                          <div style={{ width: 60, height: 4, borderRadius: 999, background: "#e7edf6", overflow: "hidden" }}>
+                            <div style={{ width: `${Math.round(fillRatio * 100)}%`, height: "100%", borderRadius: 999, background: fillRatio >= 1 ? t.warn : t.accent }} />
+                          </div>
+                        ) : null}
+                      </>
+                    ) : isSurvey ? (
+                      <span>{applicantCount}명 투표</span>
+                    ) : (
+                      <span>{applicantCount}명 참여</span>
+                    )}
+                    {isFcfs && state.phase === "open" ? (
+                      <span style={{ fontWeight: 700, color: remaining > 0 ? t.ok : t.danger }}>남은 자리 {remaining}명</span>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
-            ) : null}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                {dDayText ? (
+                  <span style={{ fontSize: 13, fontWeight: 800, color: dDayText === "D-Day" ? t.danger : t.accent }}>{dDayText}</span>
+                ) : null}
+                {!isExpanded && canApply && !isSurvey ? (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onApply(card.id); }}
+                    disabled={loading}
+                    style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700, padding: "8px 14px", fontSize: 13 }}
+                  >
+                    {isFcfs ? "선착순 신청" : isFree ? "참여" : "신청"}
+                  </button>
+                ) : null}
+                <span style={{ fontSize: 16, color: t.textSub, transition: "transform 0.15s", transform: isExpanded ? "rotate(180deg)" : "none" }}>&#9662;</span>
+              </div>
+            </div>
 
-            {card.description ? (
-              <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6, marginBottom: 10 }}>
-                {card.description}
+            {/* Expanded detail */}
+            {isExpanded ? (
+              <div style={{ marginTop: 14, borderTop: `1px solid ${t.border}`, paddingTop: 14 }}>
+                {/* Timeline */}
+                <RequestCardTimeline phase={state.phase} />
+
+                {/* Status box */}
+                <div
+                  style={{
+                    borderRadius: 10,
+                    border: `1px solid ${phaseMeta.border}`,
+                    background: phaseMeta.bg,
+                    padding: "10px 12px",
+                    margin: "10px 0",
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{statusText.description}</div>
+                  {statusText.note ? (
+                    <div style={{ fontSize: 12, color: t.textSub, marginTop: 2 }}>{statusText.note}</div>
+                  ) : null}
+                </div>
+
+                {/* Info row */}
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: t.textSub, marginBottom: 10 }}>
+                  <span>시작: <b style={{ color: t.text }}>{formatTime(state?.startAt || card?.startAt)}</b></span>
+                  <span>마감: <b style={{ color: t.text }}>{formatTime(state?.endAt || card?.endAt)}</b></span>
+                  {isLotteryOrFcfs ? (
+                    <span>모집: <b style={{ color: t.text }}>{capacity}명</b> · 신청: <b style={{ color: t.text }}>{applicantCount}명</b></span>
+                  ) : (
+                    <span>참여: <b style={{ color: t.text }}>{applicantCount}명</b></span>
+                  )}
+                </div>
+
+                {/* Progress bar for lottery/fcfs */}
+                {isLotteryOrFcfs && capacity > 0 ? (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: t.textSub, marginBottom: 3 }}>
+                      <span>충원율</span>
+                      <span>{Math.round(fillRatio * 100)}%</span>
+                    </div>
+                    <div style={{ height: 6, borderRadius: 999, background: "#e7edf6", overflow: "hidden" }}>
+                      <div style={{ width: `${Math.round(fillRatio * 100)}%`, height: "100%", borderRadius: 999, background: fillRatio >= 1 ? t.warn : t.accent, transition: "width 0.3s" }} />
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* Survey results */}
+                {isSurvey && Array.isArray(card.surveyChoices) && card.surveyChoices.length > 0 ? (
+                  <div style={{ marginBottom: 10 }}>
+                    {(state.phase === "drawn" || myApplication) ? (
+                      <SurveyResultBar choices={card.surveyChoices} totalCount={applicantCount} />
+                    ) : canApply ? (
+                      <div style={{ display: "grid", gap: 6 }}>
+                        {card.surveyChoices.map((choice) => {
+                          const isSelected = surveySelection[card.id] === choice.key;
+                          return (
+                            <button
+                              key={choice.key}
+                              onClick={() => setSurveySelection((prev) => ({ ...prev, [card.id]: choice.key }))}
+                              style={{
+                                ...buttonBase,
+                                textAlign: "left",
+                                padding: "10px 14px",
+                                background: isSelected ? "#edf4ff" : "#fff",
+                                border: `1.5px solid ${isSelected ? t.accent : t.border}`,
+                                color: isSelected ? t.accent : t.text,
+                                fontWeight: isSelected ? 700 : 400,
+                              }}
+                            >
+                              {choice.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {/* Description */}
+                {card.description ? (
+                  <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6, marginBottom: 10, color: t.textSub }}>
+                    {card.description}
+                  </div>
+                ) : null}
+
+                {/* Action buttons */}
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {canApply ? (
+                    <button
+                      onClick={() => {
+                        if (isSurvey) {
+                          onApply(card.id, surveySelection[card.id] || "");
+                        } else {
+                          onApply(card.id);
+                        }
+                      }}
+                      disabled={loading || (isSurvey && !surveySelection[card.id])}
+                      style={{ ...buttonBase, background: (loading || (isSurvey && !surveySelection[card.id])) ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700, padding: "10px 18px" }}
+                    >
+                      {isSurvey ? "투표하기" : isFcfs ? "선착순 신청" : isFree ? "참여하기" : "신청하기"}
+                    </button>
+                  ) : null}
+                  {canCancel ? (
+                    <button
+                      onClick={() => onCancel(card.id)}
+                      disabled={loading}
+                      style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700, padding: "10px 18px" }}
+                    >
+                      {isSurvey ? "투표 취소" : "신청 취소"}
+                    </button>
+                  ) : null}
+                  {isTeacherOrAdmin && onViewApplicants ? (
+                    <button
+                      onClick={() => onViewApplicants(card)}
+                      disabled={loading}
+                      style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.accent, fontWeight: 700, padding: "10px 18px" }}
+                    >
+                      현황 보기
+                    </button>
+                  ) : null}
+                </div>
               </div>
             ) : null}
-
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              {canApply ? (
-                <button
-                  onClick={() => onApply(card.id)}
-                  disabled={loading}
-                  style={{ ...buttonBase, background: loading ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700, minHeight: 44, padding: "10px 16px" }}
-                >
-                  신청
-                </button>
-              ) : null}
-              {canCancel ? (
-                <button
-                  onClick={() => onCancel(card.id)}
-                  disabled={loading}
-                  style={{ ...buttonBase, background: loading ? "#cfd8e3" : "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700, minHeight: 44, padding: "10px 16px" }}
-                >
-                  신청 취소
-                </button>
-              ) : null}
-              {listMode === "all" && isTeacherOrAdmin && subTab === "student" && onViewApplicants ? (
-                <button
-                  onClick={() => onViewApplicants(card)}
-                  disabled={loading}
-                  style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.accent, fontWeight: 700, minHeight: 44, padding: "10px 16px" }}
-                >
-                  신청현황 보기
-                </button>
-              ) : null}
-              {useCompactActionStatus ? (
-                <div style={{ fontSize: 13, fontWeight: 700, color: t.accent }}>
-                  {statusText.description}
-                </div>
-              ) : null}
-            </div>
           </div>
         );
       })}
@@ -5641,12 +5893,12 @@ function RequestCardUserSection({
     ? [{ key: "teacher", label: "교사 대상" }, { key: "student", label: "학생 대상" }]
     : [{ key: "student", label: "학생 대상" }];
   const description = listMode === "mine"
-    ? "내가 신청한 카드만 모아서 보여줍니다. 진행 상태와 선정 결과를 여기서 다시 확인할 수 있습니다."
+    ? "내가 신청한 카드만 모아서 보여줍니다."
     : isTeacherOrAdmin && subTab === "student"
-      ? "학생 대상 신청 카드를 조회합니다. 신청현황 보기로 누가 신청했는지 확인할 수 있습니다."
+      ? "학생 대상 신청 카드를 조회합니다."
       : isTeacherOrAdmin
-        ? "각종 신청 항목을 여기서 신청하고 선정 결과를 확인할 수 있으며, 학생들은 이 탭을 볼 수 없습니다."
-        : "각종 신청 항목을 여기서 신청하고 선정 결과를 확인할 수 있습니다.";
+        ? "교사 대상 신청/투표/참여 카드입니다."
+        : "각종 신청, 투표, 참여 카드를 확인하세요.";
 
   return (
     <section style={cardStyle}>
@@ -5654,9 +5906,7 @@ function RequestCardUserSection({
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
           <div>
             <h2 style={{ fontSize: 17 }}>신청 카드</h2>
-            <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
-              {description}
-            </div>
+            <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>{description}</div>
           </div>
           <button
             onClick={onRefresh}
@@ -5666,6 +5916,65 @@ function RequestCardUserSection({
             새로고침
           </button>
         </div>
+
+        {/* My Dashboard */}
+        {hasMyActivity ? (
+          <div style={{ ...cardStyle, background: "linear-gradient(135deg, #f0f4ff 0%, #fdf4ff 100%)", border: "1px solid #d6c8f5", marginBottom: 14, padding: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>내 신청 현황</div>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              {myDashboard.applied.length > 0 ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
+                  <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: t.accent }} />
+                  <span>신청중 <b>{myDashboard.applied.length}</b>건</span>
+                </div>
+              ) : null}
+              {myDashboard.pending.length > 0 ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
+                  <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: t.warn }} />
+                  <span>결과대기 <b>{myDashboard.pending.length}</b>건</span>
+                </div>
+              ) : null}
+              {myDashboard.selected.length > 0 ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
+                  <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: t.ok }} />
+                  <span>선정 <b>{myDashboard.selected.length}</b>건</span>
+                </div>
+              ) : null}
+              {myDashboard.notSelected.length > 0 ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
+                  <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: t.danger }} />
+                  <span>미선정 <b>{myDashboard.notSelected.length}</b>건</span>
+                </div>
+              ) : null}
+            </div>
+            {myDashboard.selected.length > 0 ? (
+              <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
+                {myDashboard.selected.map(({ card }) => (
+                  <div
+                    key={card.id}
+                    onClick={() => { setListMode("mine"); setExpandedCardId(card.id); }}
+                    style={{ fontSize: 12, color: t.ok, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    &bull; &ldquo;{card.title}&rdquo; 선정!
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {myDashboard.pending.length > 0 ? (
+              <div style={{ marginTop: 4, display: "grid", gap: 4 }}>
+                {myDashboard.pending.map(({ card }) => (
+                  <div
+                    key={card.id}
+                    onClick={() => { setListMode("mine"); setExpandedCardId(card.id); }}
+                    style={{ fontSize: 12, color: t.warn, cursor: "pointer" }}
+                  >
+                    &bull; &ldquo;{card.title}&rdquo; 결과 대기중
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
           {viewTabs.map((item) => {
@@ -5683,8 +5992,7 @@ function RequestCardUserSection({
                   color: active ? "#fff" : t.text,
                   border: `1px solid ${active ? t.accent : t.border}`,
                   fontWeight: 700,
-                  padding: "10px 16px",
-                  minHeight: 44,
+                  padding: "8px 14px",
                 }}
               >
                 {item.label} <span style={{ marginLeft: 4, opacity: 0.75 }}>({item.count})</span>
@@ -5708,8 +6016,7 @@ function RequestCardUserSection({
                     color: active ? "#fff" : t.text,
                     border: `1px solid ${active ? t.accent : t.border}`,
                     fontWeight: 700,
-                    padding: "10px 16px",
-                    minHeight: 44,
+                    padding: "8px 14px",
                   }}
                 >
                   {st.label} <span style={{ marginLeft: 4, opacity: 0.75 }}>({count})</span>
@@ -5721,37 +6028,27 @@ function RequestCardUserSection({
 
         {visibleCardsCount === 0 ? (
           <div style={{ fontSize: 13, color: t.textSub }}>
-            {listMode === "mine" ? "아직 신청한 카드가 없습니다." : "현재 신청 가능한 추가 카드가 없습니다."}
+            {listMode === "mine" ? "아직 신청한 카드가 없습니다." : "현재 신청 가능한 카드가 없습니다."}
           </div>
         ) : (
           <div style={{ display: "grid", gap: 12 }}>
             {currentRows.length > 0 ? (
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <h3 style={{ fontSize: 15, fontWeight: 800 }}>
-                    {listMode === "mine" ? "지금 확인할 내 카드" : "지금 신청/확인할 카드"}
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 800 }}>
+                    {listMode === "mine" ? "진행 중" : "진행 중 / 시작 전"}
                   </h3>
                   <span style={countBadgeStyle}>{currentRows.length}</span>
-                </div>
-                <div style={{ fontSize: 12, color: t.textSub }}>
-                  {listMode === "mine"
-                    ? "신청한 카드 중 진행 중이거나 시작 전 상태인 카드만 먼저 보여줍니다."
-                    : "신청 가능 또는 시작 전 상태의 카드만 먼저 보여줍니다."}
                 </div>
                 {renderCardRows(currentRows)}
               </div>
             ) : null}
 
             {pendingRows.length > 0 ? (
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <h3 style={{ fontSize: 15, fontWeight: 800 }}>결과 대기</h3>
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 800 }}>결과 대기</h3>
                   <span style={countBadgeStyle}>{pendingRows.length}</span>
-                </div>
-                <div style={{ fontSize: 12, color: t.textSub }}>
-                  {listMode === "mine"
-                    ? "내가 신청했고 선정 결과 발표를 기다리는 카드입니다."
-                    : "신청은 마감되었고 선정 결과 발표를 기다리는 카드입니다."}
                 </div>
                 {renderCardRows(pendingRows)}
               </div>
@@ -5766,11 +6063,11 @@ function RequestCardUserSection({
             ) : null}
 
             {archivedRows.length > 0 ? (
-              <div style={{ display: "grid", gap: 10, paddingTop: 4 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <h3 style={{ fontSize: 15, fontWeight: 800 }}>
-                      {listMode === "mine" ? "지난 신청 카드" : "지난 카드"}
+              <div style={{ display: "grid", gap: 8, paddingTop: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <h3 style={{ fontSize: 14, fontWeight: 800 }}>
+                      {listMode === "mine" ? "지난 신청" : "지난 카드"}
                     </h3>
                     <span style={countBadgeStyle}>{archivedRows.length}</span>
                   </div>
@@ -5778,15 +6075,10 @@ function RequestCardUserSection({
                     onClick={() => setShowArchivedCards((prev) => !prev)}
                     type="button"
                     aria-expanded={showArchivedCards}
-                    style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
+                    style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700, fontSize: 12 }}
                   >
-                    {showArchivedCards ? "지난 카드 접기" : "지난 카드 보기"}
+                    {showArchivedCards ? "접기" : "보기"}
                   </button>
-                </div>
-                <div style={{ fontSize: 12, color: t.textSub }}>
-                  {listMode === "mine"
-                    ? "결과가 확정되었거나 운영 사정으로 종료된 내가 신청한 카드는 기본적으로 접어 둡니다."
-                    : "결과가 확정되었거나 운영 사정으로 종료된 카드는 기본적으로 접어 둡니다."}
                 </div>
                 {showArchivedCards ? renderCardRows(archivedRows) : null}
               </div>
@@ -6415,11 +6707,13 @@ function BackupPanel({ onBackup, loading }) {
 function newRequestCardForm() {
   return {
     title: "",
+    cardType: "lottery",
     targetRole: "student",
     capacity: 1,
     description: "",
     startAt: "",
     endAt: "",
+    surveyChoices: [{ key: "c1", label: "" }, { key: "c2", label: "" }],
   };
 }
 
@@ -7008,11 +7302,13 @@ export default function PrototypeApp({ studentOnly = false }) {
     try {
       const payload = {
         title: String(requestCardForm.title || "").trim(),
+        cardType: String(requestCardForm.cardType || "lottery").trim(),
         targetRole: String(requestCardForm.targetRole || "student").trim(),
         capacity: Number(requestCardForm.capacity || 0),
         description: String(requestCardForm.description || "").trim(),
         startAt: requestCardForm.startAt,
         endAt: requestCardForm.endAt,
+        surveyChoices: requestCardForm.cardType === "survey" ? requestCardForm.surveyChoices : [],
       };
 
       if (editingRequestCardId) {
@@ -7050,11 +7346,15 @@ export default function PrototypeApp({ studentOnly = false }) {
     setEditingRequestCardId(card.id);
     setRequestCardForm({
       title: card.title || "",
+      cardType: card.cardType || "lottery",
       targetRole: card.targetRole || "student",
       capacity: card.capacity || 1,
       description: card.description || "",
       startAt: toDatetimeLocalValue(card.startAt),
       endAt: toDatetimeLocalValue(card.endAt),
+      surveyChoices: Array.isArray(card.surveyChoices) && card.surveyChoices.length > 0
+        ? card.surveyChoices.map((c) => ({ key: c.key, label: c.label }))
+        : [{ key: "c1", label: "" }, { key: "c2", label: "" }],
     });
   }
 
@@ -7154,10 +7454,10 @@ export default function PrototypeApp({ studentOnly = false }) {
     }
   }
 
-  async function handleApplyRequestCard(cardId) {
+  async function handleApplyRequestCard(cardId, choiceKey) {
     setRequestCardLoading(true);
     try {
-      await applyToRequestCard({ cardId, actor: user });
+      await applyToRequestCard({ cardId, actor: user, choiceKey: choiceKey || "" });
       setMessage({ type: "ok", text: "신청했습니다." });
       await Promise.all([refreshRequestCards(), refreshMyRequestCardApplications()]);
     } catch (error) {
