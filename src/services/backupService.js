@@ -1,6 +1,7 @@
 import { listSchedules } from './scheduleService'
 import { listUsers } from './userService'
 import { listClubMembers, listCurrentCycleApplications } from './applicationService'
+import { listPrograms } from './programService'
 
 let xlsxModulePromise = null
 
@@ -37,16 +38,44 @@ function toStatusLabel(status) {
 export async function exportFullBackup() {
   const XLSX = await getXlsx()
 
-  const [clubs, users, applications] = await Promise.all([
+  const [clubs, users, programs] = await Promise.all([
     listSchedules({ includeLegacy: true }),
     listUsers(),
-    listCurrentCycleApplications(),
+    listPrograms({ includeArchived: true }),
   ])
 
+  // 프로그램별 현재 사이클 신청 내역을 모두 수집
+  const applications = []
+  for (const program of programs) {
+    try {
+      const rows = await listCurrentCycleApplications({ program })
+      rows.forEach((row) => applications.push({ ...row, programName: program.name }))
+    } catch {
+      // 개별 프로그램 조회 실패 시 건너뜀
+    }
+  }
+
   const userMap = new Map(users.map((u) => [u.uid, u]))
+  const programMap = new Map(programs.map((p) => [p.id, p]))
+
+  // 0. 프로그램 목록 시트
+  const programRows = programs.map((p) => [
+    p.name,
+    p.unitLabel,
+    p.preferenceCount,
+    p.features?.leader ? 'O' : '',
+    p.features?.plan ? 'O' : '',
+    p.features?.room ? 'O' : '',
+    p.features?.interview ? 'O' : '',
+    p.status === 'archived' ? '보관' : '운영중',
+    p.cycleId,
+    p.id,
+  ])
+  const programHeaders = ['프로그램명', '개설단위', '지망수', '대표학생', '계획서', '장소', '면접', '상태', '사이클ID', 'ID']
 
   // 1. 동아리 목록 시트
   const clubRows = clubs.map((c) => [
+    programMap.get(c.programId)?.name || c.programId || '',
     c.clubName,
     c.teacherNames?.join(', ') || c.teacherName || '',
     (c.targetGrades || []).join(', '),
@@ -57,13 +86,14 @@ export async function exportFullBackup() {
     c.description || '',
     c.id,
   ])
-  const clubHeaders = ['동아리명', '담당교사', '대상학년', '동아리실', '정원', '확정인원', '면접선발', '설명', 'ID']
+  const clubHeaders = ['프로그램', '동아리명', '담당교사', '대상학년', '동아리실', '정원', '확정인원', '면접선발', '설명', 'ID']
 
   // 2. 신청 내역 시트
   const appRows = applications.map((a) => {
     const club = clubs.find((c) => c.id === a.clubId)
     const student = userMap.get(a.studentUid)
     return [
+      a.programName || '',
       student?.name || a.studentName || '',
       student?.studentNo || a.studentNo || '',
       student?.loginId || '',
@@ -78,7 +108,7 @@ export async function exportFullBackup() {
       a.id,
     ]
   })
-  const appHeaders = ['학생명', '학번', '아이디', '동아리명', '지망순위', '상태', '탈락사유', '진로희망', '지원동기', '희망활동', '신청일시', 'ID']
+  const appHeaders = ['프로그램', '학생명', '학번', '아이디', '동아리명', '지망순위', '상태', '탈락사유', '진로희망', '지원동기', '희망활동', '신청일시', 'ID']
 
   // 3. 확정 부원 시트 (동아리별 members)
   const memberRows = []
@@ -119,6 +149,10 @@ export async function exportFullBackup() {
 
   // 워크북 생성
   const wb = XLSX.utils.book_new()
+
+  const wsPrograms = XLSX.utils.aoa_to_sheet([programHeaders, ...programRows])
+  wsPrograms['!cols'] = programHeaders.map(() => ({ wch: 16 }))
+  XLSX.utils.book_append_sheet(wb, wsPrograms, '프로그램목록')
 
   const wsClubs = XLSX.utils.aoa_to_sheet([clubHeaders, ...clubRows])
   wsClubs['!cols'] = clubHeaders.map(() => ({ wch: 16 }))

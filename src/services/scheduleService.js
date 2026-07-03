@@ -7,6 +7,7 @@ import {
   getDocs,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
   writeBatch,
@@ -14,6 +15,7 @@ import {
 import { db, isFirebaseEnabled } from '../lib/firebase'
 import { mockSchedules } from './mockData'
 import { getUserProfile } from './userService'
+import { DEFAULT_PROGRAM_ID } from './programService'
 
 const COLLECTION_NAME = 'schedules'
 const ROOMS_COLLECTION_NAME = 'clubRooms'
@@ -105,6 +107,8 @@ function normalizeClub(id, data) {
 
   return {
     id,
+    // 프로그램 개념 도입 전 문서는 기본 동아리 프로그램 소속으로 간주합니다.
+    programId: String(data?.programId || '').trim() || DEFAULT_PROGRAM_ID,
     teacherUid: teacherUids[0] || '',
     teacherUids,
     teacherName: String(teacherNames[0] || data?.teacherName || '').trim(),
@@ -261,6 +265,7 @@ function assertClubPayload(payload, { requireTeacherUid = false } = {}) {
   }
 
   return {
+    programId: String(payload?.programId || '').trim() || DEFAULT_PROGRAM_ID,
     clubName,
     targetGrades,
     description,
@@ -556,6 +561,50 @@ export async function updateSchedule(scheduleId, payload, options = {}) {
   })
 
   return getScheduleById(scheduleId)
+}
+
+// 프로그램 개념 도입 전 문서에 programId를 일괄 기록합니다. (멱등, 관리자 전용)
+export async function backfillProgramIds(options = {}) {
+  const actor = assertActor(options?.actor)
+  if (actor.role !== 'admin' && actor.loginId !== 'admin') {
+    throw new Error('프로그램 정보 일괄 기록은 관리자만 가능합니다.')
+  }
+
+  if (!isFirebaseEnabled()) {
+    let updatedCount = 0
+    scheduleStore = scheduleStore.map((item) => {
+      if (String(item?.programId || '').trim()) return item
+      updatedCount += 1
+      return { ...item, programId: DEFAULT_PROGRAM_ID, updatedAt: new Date().toISOString() }
+    })
+    return { updatedCount }
+  }
+
+  const snapshot = await getDocs(collection(db, COLLECTION_NAME))
+  const targets = snapshot.docs.filter((row) => !String(row.data()?.programId || '').trim())
+
+  let updatedCount = 0
+  for (let index = 0; index < targets.length; index += 400) {
+    const batch = writeBatch(db)
+    targets.slice(index, index + 400).forEach((row) => {
+      batch.update(row.ref, {
+        programId: DEFAULT_PROGRAM_ID,
+        updatedAt: serverTimestamp(),
+      })
+      updatedCount += 1
+    })
+    await batch.commit()
+  }
+
+  // 기존 단일 사이클 문서에도 기본 프로그램 소속을 기록
+  await setDoc(
+    doc(db, 'recruitmentCycles', 'current'),
+    { programId: DEFAULT_PROGRAM_ID },
+    { merge: true },
+  )
+
+  invalidateScheduleCache()
+  return { updatedCount }
 }
 
 export async function backfillScheduleDisplayFields(options = {}) {

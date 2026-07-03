@@ -23,11 +23,21 @@ import {
   updateScheduleMemberCount,
 } from './scheduleService'
 import { getUserProfile } from './userService'
+import {
+  DEFAULT_CYCLE_ID,
+  DEFAULT_PROGRAM_ID,
+  MAX_PREFERENCE_COUNT,
+  getProgramById,
+  listPrograms,
+  normalizeProgram,
+  setProgramCycleId,
+} from './programService'
 
 const APPLICATIONS = 'applications'
 const DRAFTS = 'applicationDrafts'
 const CYCLES = 'recruitmentCycles'
-const CYCLE_DOC_ID = 'current'
+// 프로그램 개념 도입 전의 단일 사이클 문서 ID. 기본 동아리 프로그램이 계속 사용합니다.
+const CYCLE_DOC_ID = DEFAULT_CYCLE_ID
 const MEMBERS_SUBCOLLECTION = 'members'
 const ASSIGNMENTS = 'recruitmentAssignments'
 const LEADER_AUTO_SOURCE = 'leader_auto'
@@ -54,33 +64,57 @@ const REJECT_REASON = {
 
 let localApplications = []
 let localDrafts = new Map()
-let localCycle = {
-  id: CYCLE_DOC_ID,
-  currentRound: 1,
-  status: 'open',
-  preAssignmentStartAt: null,
-  preAssignmentEndAt: null,
-  submissionStartAt: null,
-  submissionEndAt: null,
-  submissionFinalizedAt: null,
-  updatedAt: new Date().toISOString(),
-}
+// 프로그램별 사이클 저장소 (cycleId 키). 데모 모드용.
+const localCycles = new Map()
 const localMembersByClub = new Map()
-let cycleCache = null
-let cyclePromise = null
+// Firebase 모드 사이클 캐시 (cycleId 키)
+const cycleCacheById = new Map()
+const cyclePromiseById = new Map()
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function buildEmptyCycle(cycleId, programId = '') {
+  return {
+    id: cycleId,
+    programId: String(programId || '').trim(),
+    currentRound: 1,
+    status: 'open',
+    preAssignmentStartAt: null,
+    preAssignmentEndAt: null,
+    submissionStartAt: null,
+    submissionEndAt: null,
+    submissionFinalizedAt: null,
+    updatedAt: null,
+  }
+}
+
+function getLocalCycle(cycleId) {
+  if (!localCycles.has(cycleId)) {
+    localCycles.set(cycleId, { ...buildEmptyCycle(cycleId), updatedAt: nowIso() })
+  }
+  return localCycles.get(cycleId)
+}
+
+function patchLocalCycle(cycleId, patch) {
+  const next = { ...getLocalCycle(cycleId), ...patch, updatedAt: nowIso() }
+  localCycles.set(cycleId, next)
+  return { ...next }
 }
 
 function cloneCycle(cycle) {
   return cycle ? { ...cycle } : null
 }
 
-function setCycleCache(nextCycle) {
-  cycleCache = nextCycle ? { ...nextCycle } : null
-  cyclePromise = null
-  return cloneCycle(cycleCache)
+function setCycleCache(cycleId, nextCycle) {
+  if (nextCycle) {
+    cycleCacheById.set(cycleId, { ...nextCycle })
+  } else {
+    cycleCacheById.delete(cycleId)
+  }
+  cyclePromiseById.delete(cycleId)
+  return cloneCycle(cycleCacheById.get(cycleId) || null)
 }
 
 function readProfileFromCache(profilesByUid, uid) {
@@ -91,10 +125,61 @@ function readProfileFromCache(profilesByUid, uid) {
   return profilesByUid[uid] || null
 }
 
-function toRound(value, fallback = 1) {
+function toRound(value, fallback = 1, max = MAX_PREFERENCE_COUNT) {
   const parsed = Number(value)
-  if (parsed === 1 || parsed === 2 || parsed === 3) return parsed
+  if (Number.isInteger(parsed) && parsed >= 1 && parsed <= max) return parsed
   return fallback
+}
+
+// 프로그램 문서가 아직 없어도 기존(동아리) 데이터가 그대로 동작하도록 하는 안전망
+function buildFallbackProgram() {
+  return normalizeProgram(DEFAULT_PROGRAM_ID, {})
+}
+
+function toPreferenceCountOf(program) {
+  const parsed = Math.trunc(Number(program?.preferenceCount))
+  if (parsed >= 1 && parsed <= MAX_PREFERENCE_COUNT) return parsed
+  return MAX_PREFERENCE_COUNT
+}
+
+// program 객체 | programId 문자열 | 미지정(→ 기본 동아리 프로그램)을 program 객체로 해석.
+// 기본 프로그램 외에는 조회 실패 시 조용히 fallback하지 않고 오류를 냅니다.
+// (다른 프로그램의 신청이 기본 프로그램 사이클로 잘못 검증되는 것을 방지)
+async function resolveProgram(programInput) {
+  if (programInput && typeof programInput === 'object') {
+    if (programInput.cycleId && programInput.preferenceCount) return programInput
+    return normalizeProgram(String(programInput.id || DEFAULT_PROGRAM_ID), programInput)
+  }
+
+  const programId = String(programInput || '').trim() || DEFAULT_PROGRAM_ID
+  if (programId === DEFAULT_PROGRAM_ID) {
+    try {
+      const program = await getProgramById(programId)
+      if (program) return program
+    } catch {
+      // 기본 프로그램은 문서가 없어도 기존(동아리) 동작을 유지 (하위호환)
+    }
+    return buildFallbackProgram()
+  }
+
+  const program = await getProgramById(programId)
+  if (!program) {
+    throw new Error('프로그램 정보를 찾을 수 없습니다. 화면을 새로고침한 뒤 다시 시도해주세요.')
+  }
+  return program
+}
+
+// cycleId로 소속 프로그램을 역해석 (application 문서에서 프로그램 컨텍스트 복원용)
+async function resolveProgramByCycleId(cycleId) {
+  const target = String(cycleId || '').trim() || DEFAULT_CYCLE_ID
+  if (target === DEFAULT_CYCLE_ID) return resolveProgram(DEFAULT_PROGRAM_ID)
+
+  const programs = await listPrograms({ includeArchived: true })
+  const matched = programs.find((row) => row.cycleId === target)
+  if (!matched) {
+    throw new Error('이 신청이 속한 프로그램 정보를 찾을 수 없습니다. 화면을 새로고침한 뒤 다시 시도해주세요.')
+  }
+  return matched
 }
 
 function toIsoString(value) {
@@ -127,9 +212,10 @@ function toDateValue(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
-function normalizeCycle(data) {
+function normalizeCycle(data, cycleId = CYCLE_DOC_ID) {
   return {
-    id: CYCLE_DOC_ID,
+    id: String(cycleId || CYCLE_DOC_ID),
+    programId: String(data?.programId || '').trim(),
     currentRound: toRound(data?.currentRound, 1),
     status: data?.status === 'closed' ? 'closed' : 'open',
     preAssignmentStartAt: toIsoString(data?.preAssignmentStartAt),
@@ -459,24 +545,44 @@ async function getApplicationsByCycle(cycleId) {
   return snapshot.docs.map((item) => normalizeApplication(item.id, item.data()))
 }
 
-async function getApplicationsByStudent(studentUid) {
+async function getApplicationsByStudent(studentUid, programInput) {
   if (!isFirebaseEnabled()) {
     return localApplications.filter((row) => row.studentUid === studentUid)
   }
 
-  // 캐시된 전체 applications에서 필터링 (별도 Firestore 쿼리 방지)
-  const allApps = await listCurrentCycleApplications()
+  // 캐시된 해당 프로그램 사이클 applications에서 필터링 (별도 Firestore 쿼리 방지)
+  const allApps = await listCurrentCycleApplications({ program: programInput })
   return allApps.filter((row) => row.studentUid === studentUid)
 }
 
-async function getApplicationsByClub(clubId) {
+async function getApplicationsByClub(clubId, programInput) {
   if (!isFirebaseEnabled()) {
     return localApplications.filter((row) => row.clubId === clubId)
   }
 
-  // 캐시된 전체 applications에서 필터링 (별도 Firestore 쿼리 방지)
-  const allApps = await listCurrentCycleApplications()
+  // 캐시된 해당 프로그램 사이클 applications에서 필터링 (별도 Firestore 쿼리 방지)
+  const allApps = await listCurrentCycleApplications({ program: programInput })
   return allApps.filter((row) => row.clubId === clubId)
+}
+
+async function getApplicationById(applicationId) {
+  const targetId = String(applicationId || '').trim()
+  if (!targetId) return null
+
+  if (!isFirebaseEnabled()) {
+    return localApplications.find((row) => row.id === targetId) || null
+  }
+
+  const snapshot = await getDoc(doc(db, APPLICATIONS, targetId))
+  if (!snapshot.exists()) return null
+  return normalizeApplication(snapshot.id, snapshot.data())
+}
+
+// application 문서에서 소속 프로그램을 복원 (승인/반려 등 app 단위 작업용)
+async function resolveProgramForApplication(applicationId) {
+  const app = await getApplicationById(applicationId)
+  if (!app) return buildFallbackProgram()
+  return resolveProgramByCycleId(app.cycleId)
 }
 
 async function listDraftsByCycle(cycleId) {
@@ -520,15 +626,17 @@ function assertSubmissionWindowEditable(cycle) {
   return submission
 }
 
-async function normalizeStudentPreferences(studentNo, preferences) {
+async function normalizeStudentPreferences(studentNo, preferences, program) {
   const rows = Array.isArray(preferences) ? preferences : []
   const grade = inferGradeFromStudentNo(studentNo)
   if (!grade) {
     throw new Error('학번 첫 자리로 학년을 추정할 수 없습니다. 학번을 확인해주세요.')
   }
 
-  if (rows.length !== 3) {
-    throw new Error('1지망, 2지망, 3지망을 모두 입력해주세요. (교사 사전 배정 학생 제외 전원 필수)')
+  const requiredCount = toPreferenceCountOf(program)
+  if (rows.length !== requiredCount) {
+    const rankLabels = Array.from({ length: requiredCount }, (_, i) => `${i + 1}지망`).join(', ')
+    throw new Error(`${rankLabels}을(를) 모두 입력해주세요. (교사 사전 배정 학생 제외 전원 필수)`)
   }
 
   const uniqueClubIds = new Set()
@@ -538,7 +646,7 @@ async function normalizeStudentPreferences(studentNo, preferences) {
     const row = rows[i]
     const clubId = String(row?.clubId || '').trim()
     if (!clubId) {
-      throw new Error(`${i + 1}지망 동아리를 선택해주세요.`)
+      throw new Error(`${i + 1}지망 항목을 선택해주세요.`)
     }
     if (uniqueClubIds.has(clubId)) {
       throw new Error('동일한 동아리를 중복 지망할 수 없습니다.')
@@ -547,6 +655,9 @@ async function normalizeStudentPreferences(studentNo, preferences) {
     const club = await getScheduleById(clubId)
     if (!club || club.legacy) {
       throw new Error('유효하지 않은 동아리 선택입니다.')
+    }
+    if (program?.id && club.programId !== program.id) {
+      throw new Error('다른 프로그램의 항목은 선택할 수 없습니다.')
     }
     if (club.isInterviewSelection) {
       throw new Error('자체면접 동아리는 학생 신청으로 선택할 수 없습니다.')
@@ -597,7 +708,8 @@ function buildApplicationsFromDraft(cycle, draft) {
 
 async function ensureSelectionPhaseReady(options = {}) {
   const allowPreAssignment = options?.allowPreAssignment === true
-  const cycle = await getCurrentRecruitmentCycle()
+  const program = await resolveProgram(options?.program)
+  const cycle = await getRecruitmentCycle(program)
   const submission = getSubmissionWindowState(cycle)
   const preAssignment = getTeacherPreAssignmentWindowState(cycle)
 
@@ -629,8 +741,8 @@ async function ensureSelectionPhaseReady(options = {}) {
   }
 
   if (submission.needsFinalization) {
-    await finalizeCurrentCycleDraftsIfNeeded()
-    return getCurrentRecruitmentCycle()
+    await finalizeCurrentCycleDraftsIfNeeded(program)
+    return getRecruitmentCycle(program, { force: true })
   }
 
   return cycle
@@ -738,25 +850,29 @@ export function inferStudentGrade(studentNo) {
   return inferGradeFromStudentNo(studentNo)
 }
 
-export async function getCurrentRecruitmentCycle(options = {}) {
+export async function getRecruitmentCycle(programInput, options = {}) {
+  const program = await resolveProgram(programInput)
+  const cycleId = program.cycleId
+
   if (!isFirebaseEnabled()) {
-    return { ...localCycle }
+    return { ...getLocalCycle(cycleId) }
   }
 
   const force = options?.force === true
-  if (!force && cycleCache) {
-    return cloneCycle(cycleCache)
+  if (!force && cycleCacheById.has(cycleId)) {
+    return cloneCycle(cycleCacheById.get(cycleId))
   }
 
-  if (!force && cyclePromise) {
-    return cloneCycle(await cyclePromise)
+  if (!force && cyclePromiseById.has(cycleId)) {
+    return cloneCycle(await cyclePromiseById.get(cycleId))
   }
 
-  cyclePromise = (async () => {
-    const ref = doc(db, CYCLES, CYCLE_DOC_ID)
+  const promise = (async () => {
+    const ref = doc(db, CYCLES, cycleId)
     const snapshot = await getDoc(ref)
     if (!snapshot.exists()) {
       await setDoc(ref, {
+        programId: program.id,
         currentRound: 1,
         status: 'open',
         preAssignmentStartAt: null,
@@ -766,34 +882,29 @@ export async function getCurrentRecruitmentCycle(options = {}) {
         submissionFinalizedAt: null,
         updatedAt: serverTimestamp(),
       })
-      return {
-        id: CYCLE_DOC_ID,
-        currentRound: 1,
-        status: 'open',
-        preAssignmentStartAt: null,
-        preAssignmentEndAt: null,
-        submissionStartAt: null,
-        submissionEndAt: null,
-        submissionFinalizedAt: null,
-        updatedAt: null,
-      }
+      return buildEmptyCycle(cycleId, program.id)
     }
 
-    return normalizeCycle(snapshot.data())
+    return normalizeCycle(snapshot.data(), cycleId)
   })()
+  cyclePromiseById.set(cycleId, promise)
 
   try {
-    return setCycleCache(await cyclePromise)
+    return setCycleCache(cycleId, await promise)
   } catch (error) {
-    cyclePromise = null
+    cyclePromiseById.delete(cycleId)
     throw error
   }
 }
 
-export async function getStudentPreferenceDraft(studentUid) {
+export async function getCurrentRecruitmentCycle(options = {}) {
+  return getRecruitmentCycle(options?.program, options)
+}
+
+export async function getStudentPreferenceDraft(studentUid, programInput) {
   const targetStudentUid = String(studentUid || '').trim()
   if (!targetStudentUid) return null
-  const cycle = await getCurrentRecruitmentCycle()
+  const cycle = await getRecruitmentCycle(programInput)
   return getStudentDraftByCycle(cycle.id, targetStudentUid)
 }
 
@@ -803,7 +914,8 @@ export async function updateRecruitmentSubmissionWindow(payload) {
     throw new Error('신청 기간 설정은 관리자만 가능합니다.')
   }
 
-  const cycle = await getCurrentRecruitmentCycle()
+  const program = await resolveProgram(payload?.program)
+  const cycle = await getRecruitmentCycle(program)
   if (cycle.status === 'closed') {
     throw new Error('종료된 모집 사이클의 신청 기간은 변경할 수 없습니다.')
   }
@@ -834,19 +946,17 @@ export async function updateRecruitmentSubmissionWindow(payload) {
   const nextFinalizedAt = keepFinalized ? cycle.submissionFinalizedAt : null
 
   if (!isFirebaseEnabled()) {
-    localCycle = {
-      ...localCycle,
+    return patchLocalCycle(cycle.id, {
       submissionStartAt: startAt,
       submissionEndAt: endAt,
       submissionFinalizedAt: nextFinalizedAt,
-      updatedAt: nowIso(),
-    }
-    return { ...localCycle }
+    })
   }
 
   await setDoc(
-    doc(db, CYCLES, CYCLE_DOC_ID),
+    doc(db, CYCLES, cycle.id),
     {
+      programId: program.id,
       currentRound: cycle.currentRound,
       status: cycle.status,
       preAssignmentStartAt: cycle.preAssignmentStartAt || null,
@@ -859,7 +969,7 @@ export async function updateRecruitmentSubmissionWindow(payload) {
     { merge: true },
   )
 
-  return getCurrentRecruitmentCycle()
+  return getRecruitmentCycle(program, { force: true })
 }
 
 export async function updateRecruitmentPreAssignmentWindow(payload) {
@@ -868,7 +978,8 @@ export async function updateRecruitmentPreAssignmentWindow(payload) {
     throw new Error('교사 사전 학생 배정 기간 설정은 관리자만 가능합니다.')
   }
 
-  const cycle = await getCurrentRecruitmentCycle()
+  const program = await resolveProgram(payload?.program)
+  const cycle = await getRecruitmentCycle(program)
   if (cycle.status === 'closed') {
     throw new Error('종료된 모집 사이클의 교사 사전 학생 배정 기간은 변경할 수 없습니다.')
   }
@@ -886,18 +997,16 @@ export async function updateRecruitmentPreAssignmentWindow(payload) {
   }
 
   if (!isFirebaseEnabled()) {
-    localCycle = {
-      ...localCycle,
+    return patchLocalCycle(cycle.id, {
       preAssignmentStartAt: startAt,
       preAssignmentEndAt: endAt,
-      updatedAt: nowIso(),
-    }
-    return { ...localCycle }
+    })
   }
 
   await setDoc(
-    doc(db, CYCLES, CYCLE_DOC_ID),
+    doc(db, CYCLES, cycle.id),
     {
+      programId: program.id,
       currentRound: cycle.currentRound,
       status: cycle.status,
       preAssignmentStartAt: startAt,
@@ -910,7 +1019,7 @@ export async function updateRecruitmentPreAssignmentWindow(payload) {
     { merge: true },
   )
 
-  return getCurrentRecruitmentCycle()
+  return getRecruitmentCycle(program, { force: true })
 }
 
 export async function saveStudentPreferenceDraft(payload) {
@@ -929,16 +1038,17 @@ export async function saveStudentPreferenceDraft(payload) {
     throw new Error('학생 이름이 필요합니다.')
   }
 
-  const cycle = await getCurrentRecruitmentCycle()
+  const program = await resolveProgram(payload?.program)
+  const cycle = await getRecruitmentCycle(program)
   assertSubmissionWindowEditable(cycle)
 
-  const existingApps = await getApplicationsByStudent(studentUid)
+  const existingApps = await getApplicationsByStudent(studentUid, program)
   const alreadyFinalized = existingApps.some((row) => row.cycleId === cycle.id)
   if (alreadyFinalized) {
     throw new Error('이미 신청이 확정되어 더 이상 수정할 수 없습니다.')
   }
 
-  const normalizedPreferences = await normalizeStudentPreferences(studentNo, preferences)
+  const normalizedPreferences = await normalizeStudentPreferences(studentNo, preferences, program)
   const draftId = buildDraftDocId(cycle.id, studentUid)
   const existingDraft = await getStudentDraftByCycle(cycle.id, studentUid)
   const draft = normalizeDraft(draftId, {
@@ -981,7 +1091,7 @@ export async function cancelStudentPreferenceDraft(payload) {
     throw new Error('학생 계정 정보가 필요합니다.')
   }
 
-  const cycle = await getCurrentRecruitmentCycle()
+  const cycle = await getRecruitmentCycle(payload?.program)
   assertSubmissionWindowEditable(cycle)
 
   const draftId = buildDraftDocId(cycle.id, studentUid)
@@ -994,8 +1104,9 @@ export async function cancelStudentPreferenceDraft(payload) {
   return { ok: true }
 }
 
-export async function finalizeCurrentCycleDraftsIfNeeded() {
-  const cycle = await getCurrentRecruitmentCycle()
+export async function finalizeCurrentCycleDraftsIfNeeded(programInput) {
+  const program = await resolveProgram(programInput)
+  const cycle = await getRecruitmentCycle(program)
   const submission = getSubmissionWindowState(cycle)
 
   // 신청 기간 종료 전이면 finalize 불필요
@@ -1027,6 +1138,7 @@ export async function finalizeCurrentCycleDraftsIfNeeded() {
       try {
         const club = await getScheduleById(pref.clubId)
         if (!club || club.legacy || club.isInterviewSelection) continue
+        if (program?.id && club.programId !== program.id) continue
         if (!isStudentEligibleForClub(club, draft.studentNo)) continue
         const careerGoal = String(pref.careerGoal || '').trim()
         const applyReason = String(pref.applyReason || '').trim()
@@ -1073,11 +1185,7 @@ export async function finalizeCurrentCycleDraftsIfNeeded() {
     })
     localApplications = Array.from(nextMap.values())
     draftIds.forEach((id) => localDrafts.delete(id))
-    localCycle = {
-      ...localCycle,
-      submissionFinalizedAt: now,
-      updatedAt: now,
-    }
+    patchLocalCycle(cycle.id, { submissionFinalizedAt: now })
     return { finalized: true, created: appRows.length, skipped }
   }
 
@@ -1125,10 +1233,11 @@ export async function finalizeCurrentCycleDraftsIfNeeded() {
     await batch.commit()
   }
 
-  await updateDoc(doc(db, CYCLES, CYCLE_DOC_ID), {
+  await updateDoc(doc(db, CYCLES, cycle.id), {
     submissionFinalizedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   })
+  cycleCacheById.delete(cycle.id)
 
   return { finalized: true, created: appRows.length, skipped }
 }
@@ -1137,35 +1246,32 @@ export async function submitStudentPreferences(payload) {
   return saveStudentPreferenceDraft(payload)
 }
 
-const _cycleAppsCache = { data: null, cycleId: null, ts: 0 }
-const CYCLE_APPS_TTL = Infinity // 명시적 새로고침/데이터 변경 시만 무효화
+// 사이클(=프로그램)별 applications 캐시. 명시적 새로고침/데이터 변경 시만 무효화.
+const _cycleAppsCacheById = new Map()
 
-export async function listCurrentCycleApplications({ forceRefresh = false } = {}) {
-  const cycle = await getCurrentRecruitmentCycle()
-  const now = Date.now()
-  if (!forceRefresh && _cycleAppsCache.data && _cycleAppsCache.cycleId === cycle.id && now - _cycleAppsCache.ts < CYCLE_APPS_TTL) {
-    return _cycleAppsCache.data
+export async function listCurrentCycleApplications({ forceRefresh = false, program } = {}) {
+  const cycle = await getRecruitmentCycle(program)
+  if (!forceRefresh && _cycleAppsCacheById.has(cycle.id)) {
+    return _cycleAppsCacheById.get(cycle.id)
   }
   const rows = await getApplicationsByCycle(cycle.id)
-  _cycleAppsCache.data = rows
-  _cycleAppsCache.cycleId = cycle.id
-  _cycleAppsCache.ts = now
+  _cycleAppsCacheById.set(cycle.id, rows)
   return rows
 }
 
 export function invalidateApplicationCache() {
-  _cycleAppsCache.data = null
-  _cycleAppsCache.ts = 0
+  _cycleAppsCacheById.clear()
 }
 
-export async function listCurrentCycleDrafts() {
-  const cycle = await getCurrentRecruitmentCycle()
+export async function listCurrentCycleDrafts(programInput) {
+  const cycle = await getRecruitmentCycle(programInput)
   return listDraftsByCycle(cycle.id)
 }
 
 export async function listStudentApplications(studentUid, options = {}) {
-  const cycle = options?.cycle || await getCurrentRecruitmentCycle()
-  const rows = await getApplicationsByStudent(studentUid)
+  const program = await resolveProgram(options?.program)
+  const cycle = options?.cycle || await getRecruitmentCycle(program)
+  const rows = await getApplicationsByStudent(studentUid, program)
   const filtered = options?.allCycles
     ? rows
     : rows.filter((item) => item.cycleId === cycle.id)
@@ -1203,6 +1309,7 @@ export async function listStudentApplications(studentUid, options = {}) {
     .map((item, index) => ({
       ...item,
       club: clubs[index],
+      programId: clubs[index]?.programId || program.id,
     }))
     .sort((a, b) => {
       const leftRank = Number(a.preferenceRank || 0)
@@ -1213,8 +1320,10 @@ export async function listStudentApplications(studentUid, options = {}) {
 }
 
 export async function listApplicationsBySchedule(clubId, options = {}) {
-  const cycle = options?.cycle || await getCurrentRecruitmentCycle()
-  const rows = (await getApplicationsByClub(clubId)).filter((item) => item.cycleId === cycle.id)
+  const club = await getScheduleById(clubId)
+  const program = await resolveProgram(options?.program || club?.programId)
+  const cycle = options?.cycle || await getRecruitmentCycle(program)
+  const rows = (await getApplicationsByClub(clubId, program)).filter((item) => item.cycleId === cycle.id)
   const profilesByUid = options?.profilesByUid
 
   // draft가 남아있으면 항상 포함 (신청 기간 중, finalize 대기 중, 또는 검증 실패로 잔류)
@@ -1306,11 +1415,12 @@ export async function getRoundStatsByClubIds(clubIds, options = {}) {
     return stats
   }
 
-  const cycle = options?.cycle || await getCurrentRecruitmentCycle()
+  const program = await resolveProgram(options?.program)
+  const cycle = options?.cycle || await getRecruitmentCycle(program)
   const currentRound = Number(cycle?.currentRound || 1)
 
   // 캐시된 applications 재사용 (별도 Firestore 쿼리 방지)
-  const rows = await listCurrentCycleApplications()
+  const rows = await listCurrentCycleApplications({ program })
 
   // draft가 남아있으면 항상 통계에 포함 (검증 실패로 finalize되지 못한 draft 포함)
   const draftStudentClubs = new Set()
@@ -1356,9 +1466,12 @@ export async function getRoundStatsByClubIds(clubIds, options = {}) {
   return stats
 }
 
-async function approveApplicationInternal({ applicationId, actor, source = 'approval' }) {
+async function approveApplicationInternal({ applicationId, actor, source = 'approval', program }) {
   const user = assertActor(actor)
-  const cycle = await ensureSelectionPhaseReady()
+  const resolvedProgram = program
+    ? await resolveProgram(program)
+    : await resolveProgramForApplication(applicationId)
+  const cycle = await ensureSelectionPhaseReady({ program: resolvedProgram })
   assertOpenCycle(cycle)
 
   if (!isFirebaseEnabled()) {
@@ -1444,7 +1557,7 @@ async function approveApplicationInternal({ applicationId, actor, source = 'appr
   }
 
   const appRef = doc(db, APPLICATIONS, applicationId)
-  const cycleRef = doc(db, CYCLES, CYCLE_DOC_ID)
+  const cycleRef = doc(db, CYCLES, cycle.id)
 
   await runTransaction(db, async (tx) => {
     const appSnap = await tx.get(appRef)
@@ -1459,8 +1572,8 @@ async function approveApplicationInternal({ applicationId, actor, source = 'appr
 
     const cycleSnap = await tx.get(cycleRef)
     const cycleData = cycleSnap.exists()
-      ? normalizeCycle(cycleSnap.data())
-      : { id: CYCLE_DOC_ID, currentRound: 1, status: 'open' }
+      ? normalizeCycle(cycleSnap.data(), cycle.id)
+      : buildEmptyCycle(cycle.id)
 
     if (cycleData.status !== 'open') {
       throw new Error('현재 모집 사이클이 닫혀 있습니다.')
@@ -1575,6 +1688,7 @@ export async function approveApplication(payload) {
     applicationId: String(payload?.applicationId || ''),
     actor: payload?.actor,
     source: payload?.source || 'approval',
+    program: payload?.program,
   })
 }
 
@@ -1582,7 +1696,10 @@ export async function rejectApplication(payload) {
   const applicationId = String(payload?.applicationId || '')
   const reason = String(payload?.reason || REJECT_REASON.MANUAL)
   const user = assertActor(payload?.actor)
-  const cycle = await ensureSelectionPhaseReady()
+  const program = payload?.program
+    ? await resolveProgram(payload.program)
+    : await resolveProgramForApplication(applicationId)
+  const cycle = await ensureSelectionPhaseReady({ program })
   assertOpenCycle(cycle)
 
   if (!applicationId) {
@@ -1661,9 +1778,12 @@ export async function revokeApprovedApplication(payload) {
 
   const allowClosedCycle = payload?.allowClosedCycle === true
   const allowPreAssignment = payload?.allowPreAssignment === true
+  const program = payload?.program
+    ? await resolveProgram(payload.program)
+    : await resolveProgramForApplication(applicationId)
   const cycle = allowClosedCycle
-    ? await getCurrentRecruitmentCycle()
-    : await ensureSelectionPhaseReady({ allowPreAssignment })
+    ? await getRecruitmentCycle(program)
+    : await ensureSelectionPhaseReady({ allowPreAssignment, program })
   const skipPermissionCheck = payload?.skipPermissionCheck === true
   if (!allowClosedCycle) {
     assertOpenCycle(cycle)
@@ -1767,15 +1887,15 @@ export async function revokeApprovedApplication(payload) {
   }
 
   const appRef = doc(db, APPLICATIONS, applicationId)
-  const cycleRef = doc(db, CYCLES, CYCLE_DOC_ID)
+  const cycleRef = doc(db, CYCLES, cycle.id)
 
   let removedStudentUid = ''
 
   await runTransaction(db, async (tx) => {
     const cycleSnap = await tx.get(cycleRef)
     const cycleData = cycleSnap.exists()
-      ? normalizeCycle(cycleSnap.data())
-      : { id: CYCLE_DOC_ID, currentRound: 1, status: 'open' }
+      ? normalizeCycle(cycleSnap.data(), cycle.id)
+      : buildEmptyCycle(cycle.id)
     if (!allowClosedCycle && cycleData.status !== 'open') {
       throw new Error('현재 모집 사이클이 닫혀 있습니다.')
     }
@@ -1889,7 +2009,10 @@ export async function revertRejectedApplication(payload) {
     throw new Error('신청 ID가 필요합니다.')
   }
 
-  const cycle = await ensureSelectionPhaseReady({ allowPreAssignment: true })
+  const program = payload?.program
+    ? await resolveProgram(payload.program)
+    : await resolveProgramForApplication(applicationId)
+  const cycle = await ensureSelectionPhaseReady({ allowPreAssignment: true, program })
   assertOpenCycle(cycle)
 
   if (!isFirebaseEnabled()) {
@@ -1922,13 +2045,13 @@ export async function revertRejectedApplication(payload) {
   }
 
   const appRef = doc(db, APPLICATIONS, applicationId)
-  const cycleRef = doc(db, CYCLES, CYCLE_DOC_ID)
+  const cycleRef = doc(db, CYCLES, cycle.id)
 
   await runTransaction(db, async (tx) => {
     const cycleSnap = await tx.get(cycleRef)
     const cycleData = cycleSnap.exists()
-      ? normalizeCycle(cycleSnap.data())
-      : { id: CYCLE_DOC_ID, currentRound: 1, status: 'open' }
+      ? normalizeCycle(cycleSnap.data(), cycle.id)
+      : buildEmptyCycle(cycle.id)
     if (cycleData.status !== 'open') throw new Error('현재 모집 사이클이 닫혀 있습니다.')
 
     const appSnap = await tx.get(appRef)
@@ -1965,13 +2088,15 @@ export async function randomSelectPending(payload) {
     throw new Error('동아리 ID가 필요합니다.')
   }
 
-  const cycle = await ensureSelectionPhaseReady()
-  assertOpenCycle(cycle)
-
   const club = await getScheduleById(clubId)
   if (!club) {
     throw new Error('동아리 정보를 찾을 수 없습니다.')
   }
+
+  const program = await resolveProgram(club.programId)
+  const cycle = await ensureSelectionPhaseReady({ program })
+  assertOpenCycle(cycle)
+
   if (!canManageSelection(club, user)) {
     throw new Error('무작위 선발 권한이 없습니다.')
   }
@@ -1979,7 +2104,7 @@ export async function randomSelectPending(payload) {
     throw new Error(`${cycle.currentRound}라운드 무작위 선발은 이미 실행되었습니다.`)
   }
 
-  const rows = (await getApplicationsByClub(clubId)).filter(
+  const rows = (await getApplicationsByClub(clubId, program)).filter(
     (row) => row.cycleId === cycle.id
       && row.preferenceRank === cycle.currentRound
       && row.status === STATUS.PENDING,
@@ -2003,6 +2128,7 @@ export async function randomSelectPending(payload) {
           applicationId: row.id,
           actor: user,
           source: 'random',
+          program,
         })
         selectedCount++
       } catch {
@@ -2011,6 +2137,7 @@ export async function randomSelectPending(payload) {
           applicationId: row.id,
           actor: user,
           reason: REJECT_REASON.RANDOM_UNSELECTED,
+          program,
         })
         rejectedCount++
       }
@@ -2019,6 +2146,7 @@ export async function randomSelectPending(payload) {
         applicationId: row.id,
         actor: user,
         reason: REJECT_REASON.RANDOM_UNSELECTED,
+        program,
       })
       rejectedCount++
     }
@@ -2044,7 +2172,8 @@ export async function advanceRecruitmentRound(payload) {
     throw new Error('라운드 전환은 관리자만 가능합니다.')
   }
 
-  const cycle = await ensureSelectionPhaseReady()
+  const program = await resolveProgram(payload?.program)
+  const cycle = await ensureSelectionPhaseReady({ program })
   assertOpenCycle(cycle)
 
   const allApps = await getApplicationsByCycle(cycle.id)
@@ -2057,9 +2186,9 @@ export async function advanceRecruitmentRound(payload) {
     throw new Error(`현재 라운드 대기 신청 ${currentPending.length}건을 먼저 처리해주세요.`)
   }
 
-  const cycleRef = isFirebaseEnabled() ? doc(db, CYCLES, CYCLE_DOC_ID) : null
+  const cycleRef = isFirebaseEnabled() ? doc(db, CYCLES, cycle.id) : null
 
-  if (cycle.currentRound >= 3) {
+  if (cycle.currentRound >= toPreferenceCountOf(program)) {
     const remainings = allApps.filter(
       (row) => row.cycleId === cycle.id
         && (row.status === STATUS.PENDING || row.status === STATUS.WAITING),
@@ -2076,18 +2205,13 @@ export async function advanceRecruitmentRound(payload) {
     await updateApplicationsStatusBulk(patches)
 
     if (!isFirebaseEnabled()) {
-      localCycle = {
-        ...localCycle,
-        status: 'closed',
-        updatedAt: nowIso(),
-      }
-      setCycleCache(localCycle)
+      patchLocalCycle(cycle.id, { status: 'closed' })
     } else {
       await updateDoc(cycleRef, {
         status: 'closed',
         updatedAt: serverTimestamp(),
       })
-      setCycleCache({
+      setCycleCache(cycle.id, {
         ...cycle,
         status: 'closed',
       })
@@ -2126,7 +2250,8 @@ export async function advanceRecruitmentRound(payload) {
     }
 
     const club = await getScheduleById(row.clubId)
-    if (!club || club.legacy || club.isInterviewSelection || !club.leaderUid || !isStudentEligibleForClub(club, row.studentNo)) {
+    const requiresLeader = program?.features?.leader !== false
+    if (!club || club.legacy || club.isInterviewSelection || (requiresLeader && !club.leaderUid) || !isStudentEligibleForClub(club, row.studentNo)) {
       patches.push({
         id: row.id,
         status: STATUS.REJECTED,
@@ -2160,18 +2285,13 @@ export async function advanceRecruitmentRound(payload) {
   await updateApplicationsStatusBulk(patches)
 
   if (!isFirebaseEnabled()) {
-    localCycle = {
-      ...localCycle,
-      currentRound: nextRound,
-      updatedAt: nowIso(),
-    }
-    setCycleCache(localCycle)
+    patchLocalCycle(cycle.id, { currentRound: nextRound })
   } else {
     await updateDoc(cycleRef, {
       currentRound: nextRound,
       updatedAt: serverTimestamp(),
     })
-    setCycleCache({
+    setCycleCache(cycle.id, {
       ...cycle,
       currentRound: nextRound,
     })
@@ -2216,21 +2336,23 @@ async function directAssignMemberInternal(payload, options = {}) {
     throw new Error('동아리와 학생을 선택해주세요.')
   }
 
-  const cycle = requireSelectionReady
-    ? await ensureSelectionPhaseReady({ allowPreAssignment })
-    : await getCurrentRecruitmentCycle()
-  if (requireOpenCycle) {
-    assertOpenCycle(cycle)
-  }
-
   const club = await getScheduleById(clubId)
   if (!club || club.legacy) {
     throw new Error('동아리 정보를 찾을 수 없습니다.')
   }
+
+  const program = await resolveProgram(club.programId)
+  const cycle = requireSelectionReady
+    ? await ensureSelectionPhaseReady({ allowPreAssignment, program })
+    : await getRecruitmentCycle(program)
+  if (requireOpenCycle) {
+    assertOpenCycle(cycle)
+  }
   if (requireInterview && !club.isInterviewSelection) {
     throw new Error('자체면접 동아리에서만 직접 선발이 가능합니다.')
   }
-  if (requireLeader && !club.leaderUid) {
+  // 학생 대표 기능을 끈 프로그램에서는 대표 지정 요건을 적용하지 않음
+  if (requireLeader && program?.features?.leader !== false && !club.leaderUid) {
     throw new Error('동아리장이 지정되지 않은 동아리는 직접 선발할 수 없습니다.')
   }
   if (!skipPermissionCheck && !canManageSelection(club, user)) {
@@ -2245,7 +2367,7 @@ async function directAssignMemberInternal(payload, options = {}) {
     throw new Error('대상학년이 아닌 학생은 선발할 수 없습니다.')
   }
 
-  const studentApps = await getApplicationsByStudent(studentUid)
+  const studentApps = await getApplicationsByStudent(studentUid, program)
   const approvedApps = studentApps.filter(
     (row) => row.cycleId === cycle.id && row.status === STATUS.APPROVED,
   )
@@ -2675,11 +2797,12 @@ export async function syncLeaderAssignmentForClub(clubInput) {
     return { changed: false }
   }
 
-  const cycle = await getCurrentRecruitmentCycle()
+  const program = await resolveProgram(club.programId)
+  const cycle = await getRecruitmentCycle(program)
   const actor = buildSystemActor(club)
   let changed = false
 
-  const clubApps = (await getApplicationsByClub(club.id)).filter((row) => row.cycleId === cycle.id)
+  const clubApps = (await getApplicationsByClub(club.id, program)).filter((row) => row.cycleId === cycle.id)
   const staleLeaderApps = clubApps.filter(
     (row) => row.selectionSource === LEADER_AUTO_SOURCE
       && row.status === STATUS.APPROVED
@@ -2706,7 +2829,7 @@ export async function syncLeaderAssignmentForClub(clubInput) {
     return { changed }
   }
 
-  const studentApps = await getApplicationsByStudent(leaderUid)
+  const studentApps = await getApplicationsByStudent(leaderUid, program)
   const approvedSameClub = studentApps.find(
     (row) => row.cycleId === cycle.id && row.clubId === club.id && row.status === STATUS.APPROVED,
   )
@@ -2763,14 +2886,20 @@ export async function syncLeaderAssignmentsForClubs(clubs, options = {}) {
   return { changed }
 }
 
+// 지정한 프로그램의 모집 데이터(개설 단위·신청·사이클)만 삭제·초기화합니다.
+// 다른 프로그램의 데이터에는 영향을 주지 않습니다.
 export async function purgeLegacyRecruitmentData(payload) {
   const user = assertActor(payload?.actor)
   if (user.role !== 'admin') {
     throw new Error('초기화는 관리자만 가능합니다.')
   }
 
+  const program = await resolveProgram(payload?.program)
+  const cycleId = program.cycleId
+
   const clubs = await listSchedules({ includeLegacy: true })
-  for (const club of clubs) {
+  const targetClubs = clubs.filter((club) => club.programId === program.id)
+  for (const club of targetClubs) {
     try {
       await deleteSchedule(club.id, { actor: user })
     } catch {
@@ -2779,46 +2908,40 @@ export async function purgeLegacyRecruitmentData(payload) {
   }
 
   if (!isFirebaseEnabled()) {
-    localApplications = []
-    localDrafts.clear()
-    localCycle = {
-      id: CYCLE_DOC_ID,
-      currentRound: 1,
-      status: 'open',
-      preAssignmentStartAt: null,
-      preAssignmentEndAt: null,
-      submissionStartAt: null,
-      submissionEndAt: null,
-      submissionFinalizedAt: null,
-      updatedAt: nowIso(),
+    localApplications = localApplications.filter((row) => row.cycleId !== cycleId)
+    for (const [draftId, draft] of Array.from(localDrafts.entries())) {
+      if (draft.cycleId === cycleId) localDrafts.delete(draftId)
     }
-    setCycleCache(localCycle)
-    localMembersByClub.clear()
+    localCycles.delete(cycleId)
+    targetClubs.forEach((club) => localMembersByClub.delete(club.id))
     return
   }
 
-  const appsSnapshot = await getDocs(collection(db, APPLICATIONS))
+  // 이 프로그램 사이클에 남은 문서만 삭제 (deleteSchedule이 못 지운 잔여분 포함)
+  const appsSnapshot = await getDocs(query(collection(db, APPLICATIONS), where('cycleId', '==', cycleId)))
   for (const rows of chunk(appsSnapshot.docs, 400)) {
     const batch = writeBatch(db)
     rows.forEach((row) => batch.delete(row.ref))
     await batch.commit()
   }
 
-  const assignmentsSnapshot = await getDocs(collection(db, ASSIGNMENTS))
+  const assignmentsSnapshot = await getDocs(query(collection(db, ASSIGNMENTS), where('cycleId', '==', cycleId)))
   for (const rows of chunk(assignmentsSnapshot.docs, 400)) {
     const batch = writeBatch(db)
     rows.forEach((row) => batch.delete(row.ref))
     await batch.commit()
   }
 
-  const draftsSnapshot = await getDocs(collection(db, DRAFTS))
+  const draftsSnapshot = await getDocs(query(collection(db, DRAFTS), where('cycleId', '==', cycleId)))
   for (const rows of chunk(draftsSnapshot.docs, 400)) {
     const batch = writeBatch(db)
     rows.forEach((row) => batch.delete(row.ref))
     await batch.commit()
   }
 
-  await setDoc(doc(db, CYCLES, CYCLE_DOC_ID), {
+  // 이 프로그램의 사이클 문서만 초기 상태로 재설정
+  await setDoc(doc(db, CYCLES, cycleId), {
+    programId: program.id,
     currentRound: 1,
     status: 'open',
     preAssignmentStartAt: null,
@@ -2828,12 +2951,72 @@ export async function purgeLegacyRecruitmentData(payload) {
     submissionFinalizedAt: null,
     updatedAt: serverTimestamp(),
   })
-  setCycleCache({
-    id: CYCLE_DOC_ID,
-    currentRound: 1,
-    status: 'open',
-    updatedAt: null,
-  })
+  cycleCacheById.delete(cycleId)
+  cyclePromiseById.delete(cycleId)
+}
+
+// 같은 프로그램에서 새 모집 사이클을 시작합니다.
+// 기존 신청 기록은 이전 사이클 ID로 보존되고, 확정 명단(부원)·정원 카운트·무작위 추첨 이력은 초기화됩니다.
+export async function startNewRecruitmentCycle(payload) {
+  const user = assertActor(payload?.actor)
+  if (user.role !== 'admin') {
+    throw new Error('새 모집 시작은 관리자만 가능합니다.')
+  }
+
+  const program = await resolveProgram(payload?.program)
+  const nextCycleId = `${program.id}__${Date.now().toString(36)}`
+
+  const clubs = await listSchedules({ includeLegacy: true })
+  const targetClubs = clubs.filter((club) => !club.legacy && club.programId === program.id)
+
+  for (const club of targetClubs) {
+    if (!isFirebaseEnabled()) {
+      localMembersByClub.delete(club.id)
+    } else {
+      const membersSnapshot = await getDocs(collection(db, 'schedules', club.id, MEMBERS_SUBCOLLECTION))
+      for (const rows of chunk(membersSnapshot.docs, 400)) {
+        const batch = writeBatch(db)
+        rows.forEach((row) => batch.delete(row.ref))
+        await batch.commit()
+      }
+    }
+    await updateScheduleMemberCount(club.id, 0)
+    if (club.randomDrawnRounds.length > 0) {
+      await updateSchedule(club.id, { randomDrawnRounds: [] }, { actor: user })
+    }
+  }
+
+  // 새 사이클 문서 생성 후 프로그램 연결을 교체 (이전 사이클 문서·신청 기록은 그대로 보존)
+  if (!isFirebaseEnabled()) {
+    localCycles.set(nextCycleId, { ...buildEmptyCycle(nextCycleId, program.id), updatedAt: nowIso() })
+  } else {
+    await setDoc(doc(db, CYCLES, nextCycleId), {
+      programId: program.id,
+      currentRound: 1,
+      status: 'open',
+      preAssignmentStartAt: null,
+      preAssignmentEndAt: null,
+      submissionStartAt: null,
+      submissionEndAt: null,
+      submissionFinalizedAt: null,
+      updatedAt: serverTimestamp(),
+    })
+  }
+
+  const updatedProgram = await setProgramCycleId(program.id, nextCycleId, { actor: user })
+  invalidateApplicationCache()
+
+  // 대표 학생이 지정된 개설 단위는 새 사이클에도 자동 배정 상태를 복원
+  for (const club of targetClubs) {
+    if (!club.leaderUid) continue
+    try {
+      await syncLeaderAssignmentForClub(club)
+    } catch {
+      // noop
+    }
+  }
+
+  return updatedProgram
 }
 
 // Backward-compatible wrapper (legacy UI compatibility)
