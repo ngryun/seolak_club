@@ -72,6 +72,8 @@ export function normalizeProgram(id, data) {
     preferenceCount: toPreferenceCount(data?.preferenceCount),
     features: normalizeFeatures(data?.features),
     status,
+    // 학생 화면 노출 여부. false면 학생에게는 스위처·신청 화면에서 숨겨짐 (관리자·교사는 계속 접근 가능)
+    studentVisible: data?.studentVisible !== false,
     sortOrder: Number.isFinite(Number(data?.sortOrder)) ? Number(data.sortOrder) : 0,
     roomLabel: String(data?.roomLabel || '').trim(),
     leaderLabel: String(data?.leaderLabel || '').trim(),
@@ -129,6 +131,7 @@ function assertProgramPayload(payload) {
     unitLabel: String(payload?.unitLabel || '').trim() || '동아리',
     preferenceCount: toPreferenceCount(payload?.preferenceCount),
     features: normalizeFeatures(payload?.features),
+    studentVisible: payload?.studentVisible !== false,
     roomLabel: String(payload?.roomLabel || '').trim(),
     leaderLabel: String(payload?.leaderLabel || '').trim(),
     sortOrder: Number.isFinite(Number(payload?.sortOrder)) ? Number(payload.sortOrder) : 0,
