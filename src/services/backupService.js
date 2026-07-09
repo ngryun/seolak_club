@@ -67,11 +67,12 @@ export async function exportFullBackup() {
     p.features?.plan ? 'O' : '',
     p.features?.room ? 'O' : '',
     p.features?.interview ? 'O' : '',
+    Array.isArray(p.targetClasses) && p.targetClasses.length > 0 ? p.targetClasses.join(', ') : '전체',
     p.status === 'archived' ? '보관' : '운영중',
     p.cycleId,
     p.id,
   ])
-  const programHeaders = ['프로그램명', '개설단위', '지망수', '대표학생', '계획서', '장소', '면접', '상태', '사이클ID', 'ID']
+  const programHeaders = ['프로그램명', '개설단위', '지망수', '대표학생', '계획서', '장소', '면접', '신청대상학급', '상태', '사이클ID', 'ID']
 
   // 1. 동아리 목록 시트
   const clubRows = clubs.map((c) => [

@@ -31,6 +31,7 @@ function buildDefaultProgramData() {
       room: true,
       interview: true,
     },
+    targetClasses: [],
     status: 'active',
     sortOrder: 0,
     createdByUid: '',
@@ -59,6 +60,41 @@ function normalizeFeatures(value, fallback = true) {
   }
 }
 
+function normalizeClassKey(value) {
+  const matched = String(value || '').trim().match(/^([1-3])-0*([1-9]\d?)$/u)
+  if (!matched) return ''
+  return `${Number(matched[1])}-${Number(matched[2])}`
+}
+
+function sortClassKeys(values) {
+  return [...values].sort((left, right) => {
+    const [leftGrade, leftClass] = left.split('-').map(Number)
+    const [rightGrade, rightClass] = right.split('-').map(Number)
+    return leftGrade - rightGrade || leftClass - rightClass
+  })
+}
+
+export function normalizeProgramTargetClasses(value) {
+  const rows = Array.isArray(value) ? value : []
+  return sortClassKeys(Array.from(new Set(rows.map(normalizeClassKey).filter(Boolean))))
+}
+
+export function getStudentClassKey(studentNo) {
+  const raw = String(studentNo || '').trim()
+  if (!/^\d{5}$/u.test(raw)) return ''
+  const grade = Number(raw[0])
+  const classNo = Number(raw.slice(1, 3))
+  if (grade < 1 || grade > 3 || classNo < 1) return ''
+  return `${grade}-${classNo}`
+}
+
+export function isStudentEligibleForProgram(program, studentNo) {
+  const targets = normalizeProgramTargetClasses(program?.targetClasses)
+  if (targets.length === 0) return true
+  const classKey = getStudentClassKey(studentNo)
+  return !!classKey && targets.includes(classKey)
+}
+
 export function normalizeProgram(id, data) {
   const status = PROGRAM_STATUS.has(String(data?.status || '').trim())
     ? String(data.status).trim()
@@ -71,6 +107,8 @@ export function normalizeProgram(id, data) {
     unitLabel: String(data?.unitLabel || '').trim() || '동아리',
     preferenceCount: toPreferenceCount(data?.preferenceCount),
     features: normalizeFeatures(data?.features),
+    // 비어 있으면 전체 학급, 값이 있으면 해당 학급 학생만 신청할 수 있습니다.
+    targetClasses: normalizeProgramTargetClasses(data?.targetClasses),
     status,
     // 학생 화면 노출 여부. false면 학생에게는 스위처·신청 화면에서 숨겨짐 (관리자·교사는 계속 접근 가능)
     studentVisible: data?.studentVisible !== false,
@@ -131,6 +169,7 @@ function assertProgramPayload(payload) {
     unitLabel: String(payload?.unitLabel || '').trim() || '동아리',
     preferenceCount: toPreferenceCount(payload?.preferenceCount),
     features: normalizeFeatures(payload?.features),
+    targetClasses: normalizeProgramTargetClasses(payload?.targetClasses),
     studentVisible: payload?.studentVisible !== false,
     roomLabel: String(payload?.roomLabel || '').trim(),
     leaderLabel: String(payload?.leaderLabel || '').trim(),

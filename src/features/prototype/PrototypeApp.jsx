@@ -95,7 +95,9 @@ import {
   createProgram,
   createProgramsBatch,
   ensureDefaultProgram,
+  getStudentClassKey,
   getProgramLabels,
+  isStudentEligibleForProgram,
   listPrograms,
   restoreProgram,
   updateProgram,
@@ -7056,11 +7058,86 @@ function newProgramForm() {
     unitLabel: "강좌",
     preferenceCount: 1,
     features: { leader: false, plan: false, room: false, interview: false },
+    targetClasses: [],
     studentVisible: true,
   };
 }
 
-function ProgramPanel({ programs, loading, onCreate, onBulkUpload, onDownloadTemplate, onUpdate, onArchive, onRestore }) {
+function compareClassKeys(left, right) {
+  const [leftGrade, leftClass] = String(left || "").split("-").map(Number);
+  const [rightGrade, rightClass] = String(right || "").split("-").map(Number);
+  return leftGrade - rightGrade || leftClass - rightClass;
+}
+
+function formatClassKey(classKey) {
+  const [grade, classNo] = String(classKey || "").split("-").map(Number);
+  return grade && classNo ? `${grade}학년 ${classNo}반` : String(classKey || "");
+}
+
+function formatTargetClasses(targetClasses) {
+  const rows = Array.isArray(targetClasses) ? [...targetClasses].sort(compareClassKeys) : [];
+  return rows.length > 0 ? rows.map(formatClassKey).join(", ") : "전체 학급";
+}
+
+function StudentVisibilitySwitch({ visible, disabled, onToggle }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={visible}
+      aria-label={visible
+        ? "학생 화면 공개 중. 클릭하면 비공개로 변경합니다."
+        : "학생 화면 비공개 중. 클릭하면 공개로 변경합니다."}
+      title={visible
+        ? "클릭하면 학생 화면에서 숨깁니다."
+        : "클릭하면 학생 화면에 공개합니다."}
+      onClick={onToggle}
+      disabled={disabled}
+      style={{
+        ...buttonBase,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 7,
+        minHeight: 32,
+        padding: "5px 9px",
+        border: `1px solid ${visible ? "#86d6a2" : t.border}`,
+        background: visible ? "#f0fdf4" : "#f8fafc",
+        color: t.text,
+        fontSize: 11,
+        fontWeight: 700,
+      }}
+    >
+      <span>학생 화면</span>
+      <span
+        aria-hidden="true"
+        style={{
+          position: "relative",
+          width: 32,
+          height: 18,
+          flex: "0 0 auto",
+          borderRadius: 999,
+          background: visible ? t.ok : "#cbd5e1",
+          transition: "background 0.15s ease",
+        }}
+      >
+        <span style={{
+          position: "absolute",
+          top: 2,
+          left: visible ? 16 : 2,
+          width: 14,
+          height: 14,
+          borderRadius: "50%",
+          background: "#fff",
+          boxShadow: "0 1px 3px rgba(15, 23, 42, 0.28)",
+          transition: "left 0.15s ease",
+        }} />
+      </span>
+      <span style={{ color: visible ? t.ok : t.textSub }}>{visible ? "공개" : "비공개"}</span>
+    </button>
+  );
+}
+
+function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUpload, onDownloadTemplate, onUpdate, onArchive, onRestore }) {
   const [editingId, setEditingId] = useState("");
   const [form, setForm] = useState(newProgramForm());
   const rows = Array.isArray(programs) ? programs : [];
@@ -7077,6 +7154,7 @@ function ProgramPanel({ programs, loading, onCreate, onBulkUpload, onDownloadTem
       unitLabel: row.unitLabel || "동아리",
       preferenceCount: row.preferenceCount || 3,
       features: { ...row.features },
+      targetClasses: Array.isArray(row.targetClasses) ? [...row.targetClasses] : [],
       studentVisible: row.studentVisible !== false,
     });
   }
@@ -7087,6 +7165,11 @@ function ProgramPanel({ programs, loading, onCreate, onBulkUpload, onDownloadTem
       : await onCreate(form);
     if (ok) resetForm();
   }
+
+  const selectableClasses = Array.from(new Set([
+    ...(Array.isArray(classOptions) ? classOptions : []),
+    ...(Array.isArray(form.targetClasses) ? form.targetClasses : []),
+  ])).sort(compareClassKeys);
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -7139,10 +7222,10 @@ function ProgramPanel({ programs, loading, onCreate, onBulkUpload, onDownloadTem
         </div>
 
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
             <thead>
               <tr>
-                {["프로그램명", "개설 단위", "지망 수", "사용 기능", "상태", "작업"].map((head) => (
+                {["프로그램명", "개설 단위", "지망 수", "사용 기능", "신청 대상", "상태", "설정 및 작업"].map((head) => (
                   <th key={head} style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}>{head}</th>
                 ))}
               </tr>
@@ -7159,32 +7242,36 @@ function ProgramPanel({ programs, loading, onCreate, onBulkUpload, onDownloadTem
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12 }}>
                     {PROGRAM_FEATURE_META.filter((meta) => row.features?.[meta.key]).map((meta) => meta.label).join(", ") || "기본 기능만"}
                   </td>
+                  <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: row.targetClasses?.length > 0 ? t.text : t.textSub }}>
+                    {formatTargetClasses(row.targetClasses)}
+                  </td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12 }}>
-                    <span style={{
-                      display: "inline-flex",
-                      borderRadius: 999,
-                      padding: "2px 10px",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      background: row.status === "archived" ? "#eceff1" : "#e8f5e9",
-                      color: row.status === "archived" ? "#4b5563" : t.ok,
-                    }}>
-                      {row.status === "archived" ? "보관" : "운영중"}
-                    </span>
-                    {row.status === "active" && row.studentVisible === false ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
                       <span style={{
                         display: "inline-flex",
                         borderRadius: 999,
                         padding: "2px 10px",
                         fontSize: 11,
                         fontWeight: 700,
-                        background: "#fff3e0",
-                        color: t.warn,
-                        marginLeft: 4,
+                        background: row.status === "archived" ? "#eceff1" : "#e8f5e9",
+                        color: row.status === "archived" ? "#4b5563" : t.ok,
                       }}>
-                        학생 비공개
+                        {row.status === "archived" ? "보관" : "운영중"}
                       </span>
-                    ) : null}
+                      {row.status === "active" ? (
+                        <span style={{
+                          display: "inline-flex",
+                          borderRadius: 999,
+                          padding: "2px 10px",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          background: row.studentVisible === false ? "#f1f5f9" : "#eefbf2",
+                          color: row.studentVisible === false ? t.textSub : t.ok,
+                        }}>
+                          {row.studentVisible === false ? "학생 비공개" : "학생 공개"}
+                        </span>
+                      ) : null}
+                    </div>
                   </td>
                   <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -7196,13 +7283,11 @@ function ProgramPanel({ programs, loading, onCreate, onBulkUpload, onDownloadTem
                         수정
                       </button>
                       {row.status === "active" ? (
-                        <button
-                          onClick={() => onUpdate(row.id, { studentVisible: row.studentVisible === false })}
+                        <StudentVisibilitySwitch
+                          visible={row.studentVisible !== false}
                           disabled={loading}
-                          style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: row.studentVisible === false ? t.ok : t.warn, padding: "6px 10px", fontSize: 12, fontWeight: 700 }}
-                        >
-                          {row.studentVisible === false ? "학생 공개" : "학생 숨김"}
-                        </button>
+                          onToggle={() => onUpdate(row.id, { studentVisible: row.studentVisible === false })}
+                        />
                       ) : null}
                       {row.id !== DEFAULT_PROGRAM_ID ? (
                         row.status === "archived" ? (
@@ -7229,7 +7314,7 @@ function ProgramPanel({ programs, loading, onCreate, onBulkUpload, onDownloadTem
               ))}
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={{ padding: 14, textAlign: "center", color: t.textSub, fontSize: 13 }}>
+                  <td colSpan={7} style={{ padding: 14, textAlign: "center", color: t.textSub, fontSize: 13 }}>
                     등록된 프로그램이 없습니다.
                   </td>
                 </tr>
@@ -7302,6 +7387,67 @@ function ProgramPanel({ programs, loading, onCreate, onBulkUpload, onDownloadTem
                 );
               })}
             </div>
+          </Field>
+
+          <Field
+            label="신청 대상 학급"
+            hint="전체 학급 또는 일부 학급을 선택합니다. 학급 목록은 회원 관리에 등록된 학생 학번을 기준으로 자동 구성됩니다."
+          >
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                aria-pressed={(form.targetClasses || []).length === 0}
+                onClick={() => setForm((prev) => ({ ...prev, targetClasses: [] }))}
+                style={{
+                  ...buttonBase,
+                  border: `1px solid ${(form.targetClasses || []).length === 0 ? t.accent : t.border}`,
+                  background: (form.targetClasses || []).length === 0 ? "#edf4ff" : "#fff",
+                  color: (form.targetClasses || []).length === 0 ? t.accent : t.textSub,
+                  padding: "7px 11px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                전체 학급
+              </button>
+              {selectableClasses.map((classKey) => {
+                const selected = (form.targetClasses || []).includes(classKey);
+                return (
+                  <button
+                    key={classKey}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setForm((prev) => {
+                      const current = Array.isArray(prev.targetClasses) ? prev.targetClasses : [];
+                      const next = selected
+                        ? current.filter((item) => item !== classKey)
+                        : [...current, classKey].sort(compareClassKeys);
+                      return { ...prev, targetClasses: next };
+                    })}
+                    style={{
+                      ...buttonBase,
+                      border: `1px solid ${selected ? t.accent : t.border}`,
+                      background: selected ? "#edf4ff" : "#fff",
+                      color: selected ? t.accent : t.textSub,
+                      padding: "7px 11px",
+                      fontSize: 12,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {formatClassKey(classKey)}
+                  </button>
+                );
+              })}
+            </div>
+            {selectableClasses.length === 0 ? (
+              <div style={{ marginTop: 7, fontSize: 11, color: t.warn }}>
+                등록된 학생 학급이 없습니다. 회원 관리에서 학생 계정을 먼저 확인해주세요.
+              </div>
+            ) : (
+              <div style={{ marginTop: 7, fontSize: 11, color: t.textSub }}>
+                현재 설정: {formatTargetClasses(form.targetClasses)}
+              </div>
+            )}
           </Field>
 
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
@@ -7559,18 +7705,28 @@ export default function PrototypeApp({ studentOnly = false }) {
   const clubDisplayBackfillAttemptedRef = useRef(false);
 
   const userMap = useMemo(() => new Map(users.map((u) => [u.uid, u])), [users]);
-  const activeProgram = useMemo(
-    () => programs.find((row) => row.id === activeProgramId) || programs.find((row) => row.status === "active") || programs[0] || null,
-    [programs, activeProgramId],
-  );
-  // 역할별로 보이는 프로그램: 학생에게는 '학생 화면에 표시'가 꺼진 프로그램을 숨김
+  const studentClassOptions = useMemo(() => Array.from(new Set(
+    users
+      .filter((row) => row.role === "student")
+      .map((row) => getStudentClassKey(row.studentNo || row.loginId))
+      .filter(Boolean),
+  )).sort(compareClassKeys), [users]);
+  // 역할별로 보이는 프로그램: 학생에게는 비공개이거나 대상 학급이 아닌 프로그램을 숨김
   const rolePrograms = useMemo(() => {
     const active = programs.filter((row) => row.status === "active");
     if (user?.role === "student") {
-      return active.filter((row) => row.studentVisible !== false);
+      const studentNo = user.studentNo || user.loginId;
+      return active.filter((row) => row.studentVisible !== false && isStudentEligibleForProgram(row, studentNo));
     }
     return active;
-  }, [programs, user?.role]);
+  }, [programs, user?.loginId, user?.role, user?.studentNo]);
+  const activeProgram = useMemo(() => {
+    const source = user?.role === "student" ? rolePrograms : programs;
+    return source.find((row) => row.id === activeProgramId)
+      || source.find((row) => row.status === "active")
+      || source[0]
+      || null;
+  }, [activeProgramId, programs, rolePrograms, user?.role]);
 
   useEffect(() => {
     if (!isAuthenticated || !user) return;
@@ -7769,13 +7925,23 @@ export default function PrototypeApp({ studentOnly = false }) {
       const programRows = await refreshPrograms();
       const activeRows = programRows.filter((row) => row.status === "active");
       const visibleRows = user.role === "student"
-        ? activeRows.filter((row) => row.studentVisible !== false)
+        ? activeRows.filter((row) => row.studentVisible !== false && isStudentEligibleForProgram(row, user.studentNo || user.loginId))
         : activeRows;
       const currentProgram = visibleRows.find((row) => row.id === activeProgramId)
         || visibleRows[0]
-        || activeRows[0]
-        || programRows[0]
+        || (user.role === "student" ? null : activeRows[0] || programRows[0])
         || null;
+      if (!currentProgram && user.role === "student") {
+        setActiveProgramId("");
+        setClubs([]);
+        setMyApplications([]);
+        setMyDraft(null);
+        setRoundStats({});
+        setStudentStatusRows([]);
+        setCycle({ id: "", currentRound: 1, status: "closed" });
+        setMessage({ type: "", text: "" });
+        return;
+      }
       if (currentProgram && currentProgram.id !== activeProgramId) {
         setActiveProgramId(currentProgram.id);
       }
@@ -7891,6 +8057,13 @@ export default function PrototypeApp({ studentOnly = false }) {
   async function handleChangeProgram(nextProgramId) {
     const target = programs.find((row) => row.id === nextProgramId);
     if (!target || target.id === activeProgramId) return;
+    if (user?.role === "student" && (
+      target.studentVisible === false
+      || !isStudentEligibleForProgram(target, user.studentNo || user.loginId)
+    )) {
+      withMessageError(new Error("현재 학급은 이 프로그램의 신청 대상이 아닙니다."), "프로그램을 선택할 수 없습니다.");
+      return;
+    }
 
     // 이전 프로그램 컨텍스트로 열린 작업 창을 모두 닫음 (다른 프로그램으로의 오저장 방지)
     if (clubFormDialogOpen) closeClubFormDialog();
@@ -9317,7 +9490,7 @@ export default function PrototypeApp({ studentOnly = false }) {
 
   useEffect(() => {
     if (!isAuthenticated || user?.role !== "admin") return;
-    if (tab !== "users" || usersLoaded) return;
+    if ((tab !== "users" && tab !== "programs") || usersLoaded) return;
 
     let mounted = true;
     setLoading(true);
@@ -9601,6 +9774,7 @@ export default function PrototypeApp({ studentOnly = false }) {
       {tab === "programs" && user.role === "admin" ? (
         <ProgramPanel
           programs={programs}
+          classOptions={studentClassOptions}
           loading={programLoading}
           onCreate={handleCreateProgram}
           onBulkUpload={handleBulkProgramUpload}
@@ -9697,22 +9871,31 @@ export default function PrototypeApp({ studentOnly = false }) {
       ) : null}
 
       {tab === "apply" && user.role === "student" ? (
-        <StudentApplyPanel
-          key={studentApplyFormKey}
-          user={user}
-          cycle={cycle}
-          clubs={visibleClubs}
-          draft={myDraft}
-          submissionState={submissionState}
-          myApplications={myApplications}
-          submitting={studentSubmitLoading}
-          onSubmit={handleStudentPreferenceSubmit}
-          onCancelDraft={handleCancelStudentDraft}
-          program={activeProgram}
-          programs={rolePrograms}
-          programCycles={programCycles}
-          onSwitchProgram={handleChangeProgram}
-        />
+        activeProgram ? (
+          <StudentApplyPanel
+            key={studentApplyFormKey}
+            user={user}
+            cycle={cycle}
+            clubs={visibleClubs}
+            draft={myDraft}
+            submissionState={submissionState}
+            myApplications={myApplications}
+            submitting={studentSubmitLoading}
+            onSubmit={handleStudentPreferenceSubmit}
+            onCancelDraft={handleCancelStudentDraft}
+            program={activeProgram}
+            programs={rolePrograms}
+            programCycles={programCycles}
+            onSwitchProgram={handleChangeProgram}
+          />
+        ) : (
+          <section style={{ ...cardStyle, background: "#fff8e1", borderColor: "#f3dfb9" }}>
+            <h2 style={{ fontSize: 17, margin: "0 0 6px" }}>현재 신청 대상 프로그램이 없습니다.</h2>
+            <div style={{ fontSize: 13, color: t.textSub }}>
+              학생 공개 여부와 신청 대상 학급 설정을 관리자에게 확인해주세요.
+            </div>
+          </section>
+        )
       ) : null}
 
       {tab === "my" && user.role === "student" ? (

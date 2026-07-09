@@ -28,6 +28,7 @@ import {
   DEFAULT_PROGRAM_ID,
   MAX_PREFERENCE_COUNT,
   getProgramById,
+  isStudentEligibleForProgram,
   listPrograms,
   normalizeProgram,
   setProgramCycleId,
@@ -628,6 +629,9 @@ function assertSubmissionWindowEditable(cycle) {
 
 async function normalizeStudentPreferences(studentNo, preferences, program) {
   const rows = Array.isArray(preferences) ? preferences : []
+  if (!isStudentEligibleForProgram(program, studentNo)) {
+    throw new Error('현재 학급은 이 프로그램의 신청 대상이 아닙니다.')
+  }
   const grade = inferGradeFromStudentNo(studentNo)
   if (!grade) {
     throw new Error('학번 첫 자리로 학년을 추정할 수 없습니다. 학번을 확인해주세요.')
