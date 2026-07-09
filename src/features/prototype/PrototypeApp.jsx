@@ -60,6 +60,7 @@ import {
   canManageSelection,
   createClubRoom,
   createSchedule,
+  createSchedulesBatch,
   deleteClubRoom,
   deleteSchedule,
   getClubTeacherUids,
@@ -92,12 +93,16 @@ import {
   MAX_PREFERENCE_COUNT,
   archiveProgram,
   createProgram,
+  createProgramsBatch,
   ensureDefaultProgram,
   getProgramLabels,
   listPrograms,
   restoreProgram,
   updateProgram,
 } from "../../services/programService";
+import { downloadProgramTemplate, parseProgramExcel } from "../../services/programExcelService";
+import { downloadClubTemplate, parseClubExcel, resolveClubExcelRows } from "../../services/clubExcelService";
+import educationOfficeBi from "../../../logo_img/심벌타이포조합/심벌타이포조합사용.png";
 
 const t = {
   bg: "#f6f7fb",
@@ -625,7 +630,14 @@ function LoginPanel({ onLogin, loading, error }) {
   return (
     <div style={{ ...page, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ width: "min(460px, 100%)", ...cardStyle, padding: 24 }}>
-        <h1 style={{ fontSize: 24, marginBottom: 6 }}>강원 설악고등학교 신청 통합 시스템</h1>
+        <img
+          src={educationOfficeBi}
+          alt="강원특별자치도교육청"
+          style={{ display: "block", width: "min(330px, 100%)", height: "auto", margin: "0 auto 18px" }}
+        />
+        <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 18 }}>
+          <h1 style={{ fontSize: 24, marginBottom: 6 }}>설악고등학교 신청 통합 시스템</h1>
+        </div>
         <p style={{ fontSize: 14, color: t.textSub, marginBottom: 18 }}>
           교사/학생 탭을 선택해 로그인하세요.
         </p>
@@ -729,7 +741,14 @@ function StudentLoginPanel({ onLogin, loading, error }) {
   return (
     <div style={{ ...page, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ width: "min(460px, 100%)", ...cardStyle, padding: 24 }}>
-        <h1 style={{ fontSize: 24, marginBottom: 6 }}>설악고 학생 로그인</h1>
+        <img
+          src={educationOfficeBi}
+          alt="강원특별자치도교육청"
+          style={{ display: "block", width: "min(330px, 100%)", height: "auto", margin: "0 auto 18px" }}
+        />
+        <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 18 }}>
+          <h1 style={{ fontSize: 24, marginBottom: 6 }}>설악고 학생 로그인</h1>
+        </div>
         <p style={{ fontSize: 13, color: t.textSub, marginBottom: 18 }}>
           학번, 이름, 비밀번호를 입력하세요.
         </p>
@@ -1746,7 +1765,7 @@ function getProgramStatusBadge(cycle) {
   return { label: "선발 중", color: t.accent };
 }
 
-function ProgramSwitcher({ programs, activeProgramId, onChangeProgram, programCycles = {} }) {
+function ProgramSwitcher({ programs, activeProgramId, onChangeProgram, programCycles = {}, label = "프로그램" }) {
   const [open, setOpen] = useState(false);
   const rows = Array.isArray(programs) ? programs : [];
   const active = rows.find((row) => row.id === activeProgramId) || rows[0] || null;
@@ -1772,7 +1791,7 @@ function ProgramSwitcher({ programs, activeProgramId, onChangeProgram, programCy
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: t.textSub, letterSpacing: 0.5, marginBottom: 2 }}>프로그램</div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: t.textSub, letterSpacing: 0.5, marginBottom: 2 }}>{label}</div>
             <div style={{ fontSize: 14, fontWeight: 800, color: t.accent, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {active.name}
             </div>
@@ -1827,6 +1846,88 @@ function ProgramSwitcher({ programs, activeProgramId, onChangeProgram, programCy
   );
 }
 
+function DesktopProgramNavigation({
+  programs,
+  activeProgramId,
+  onChangeProgram,
+  programCycles = {},
+  showProgramManagement = false,
+  programManagementActive = false,
+  onOpenProgramManagement,
+}) {
+  const rows = Array.isArray(programs) ? programs : [];
+  const canChangeProgram = typeof onChangeProgram === "function";
+
+  return (
+    <div style={{ display: "grid", gap: 4, marginBottom: 6 }}>
+      <div style={{ fontSize: 10, fontWeight: 800, color: t.textSub, textTransform: "uppercase", letterSpacing: 0.8, padding: "2px 8px 4px" }}>
+        프로그램
+      </div>
+
+      {showProgramManagement ? (
+        <button
+          onClick={onOpenProgramManagement}
+          style={{
+            ...buttonBase,
+            textAlign: "left",
+            background: programManagementActive ? t.accent : "transparent",
+            color: programManagementActive ? "#fff" : t.text,
+            border: `1px solid ${programManagementActive ? t.accent : "transparent"}`,
+            fontWeight: 700,
+          }}
+        >
+          프로그램 관리
+        </button>
+      ) : null}
+
+      {showProgramManagement ? (
+        <div style={{ fontSize: 10, fontWeight: 800, color: t.textSub, letterSpacing: 0.5, padding: "8px 8px 3px", borderTop: `1px solid ${t.border}`, marginTop: 2 }}>
+          운영 프로그램
+        </div>
+      ) : null}
+
+      {rows.length ? (
+        <div style={{ display: "grid", gap: 3, maxHeight: 280, overflowY: "auto" }}>
+          {rows.map((row) => {
+            const badge = getProgramStatusBadge(programCycles[row.id]);
+            const isActive = row.id === activeProgramId;
+            return (
+              <button
+                key={row.id}
+                onClick={() => onChangeProgram?.(row.id)}
+                disabled={!canChangeProgram}
+                aria-pressed={isActive}
+                style={{
+                  ...buttonBase,
+                  width: "100%",
+                  textAlign: "left",
+                  background: isActive ? "#edf4ff" : "transparent",
+                  color: isActive ? t.accent : t.text,
+                  border: `1px solid ${isActive ? "#c8dcff" : "transparent"}`,
+                  borderLeft: `3px solid ${isActive ? t.accent : "transparent"}`,
+                  padding: "8px 9px",
+                  cursor: canChangeProgram ? "pointer" : "default",
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: isActive ? 800 : 650, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {row.name}
+                </div>
+                {badge.label ? (
+                  <div style={{ fontSize: 10, fontWeight: 700, color: badge.color, marginTop: 2 }}>
+                    {badge.label}
+                  </div>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div style={{ padding: "8px", fontSize: 11, color: t.textSub }}>운영 중인 프로그램이 없습니다.</div>
+      )}
+    </div>
+  );
+}
+
 function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], activeProgramId = "", onChangeProgram, programCycles = {}, notifications, unreadCount, onMarkAsRead, onMarkAllAsRead, children }) {
   const [isMobile, setIsMobile] = useState(
     () => (typeof window !== "undefined" ? window.innerWidth < 980 : false),
@@ -1848,12 +1949,11 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
 
   const navByRole = {
     admin: [
+      { type: "group", label: "선택한 프로그램 업무" },
       { key: "clubs", label: `${unitLabel} 관리` },
       ...(useRoomFeature ? [{ key: "clubRooms", label: `${roomLabel} 관리` }] : []),
       { key: "studentStatus", label: "학생 신청 현황" },
       { key: "round", label: `${unitLabel} 선발 진행` },
-      { type: "group", label: "프로그램" },
-      { key: "programs", label: "프로그램 관리" },
       { type: "group", label: "신청카드" },
       { key: "extraRequests", label: "신청카드 목록" },
       { key: "requestCards", label: "신청카드 관리" },
@@ -1863,6 +1963,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
       { key: "profile", label: "내 정보" },
     ],
     teacher: [
+      { type: "group", label: "선택한 프로그램 업무" },
       { key: "myClubs", label: `내 ${unitLabel}` },
       { key: "clubOverview", label: `${unitLabel} 개설현황` },
       ...(useRoomFeature ? [{ key: "clubRooms", label: `${roomLabel} 현황` }] : []),
@@ -1875,6 +1976,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
     ],
     student: isStudentLeader
       ? [
+        { type: "group", label: "선택한 프로그램 업무" },
         { key: "apply", label: `${unitLabel} 신청` },
         { key: "my", label: "신청 현황" },
         { key: "clubOverview", label: `${unitLabel} 개설현황` },
@@ -1885,6 +1987,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
         { key: "profile", label: "내 정보" },
       ]
       : [
+        { type: "group", label: "선택한 프로그램 업무" },
         { key: "apply", label: `${unitLabel} 신청` },
         { key: "my", label: "신청 현황" },
         { key: "clubOverview", label: `${unitLabel} 개설현황` },
@@ -1900,14 +2003,22 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
   return (
     <div style={page}>
       <div style={{ maxWidth: 1400, margin: "0 auto", padding: 16, display: "grid", gap: 12 }}>
-        <header style={{ ...cardStyle, padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontSize: isMobile ? 17 : 22, fontWeight: 800, wordBreak: "keep-all", lineHeight: 1.3 }}>설악고 신청 통합 시스템</div>
-            <div style={{ fontSize: 12, color: t.textSub, marginTop: 2 }}>
-              {roleLabel(user?.role)} · {user?.name || "-"} ({user?.loginId || "-"})
+        <header style={{ ...cardStyle, padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: isMobile ? 10 : 14, flexWrap: "wrap" }}>
+          <div style={{ minWidth: 0, flex: isMobile ? "1 1 100%" : 1, display: "flex", alignItems: "center", gap: isMobile ? 10 : 14 }}>
+            <img
+              src={educationOfficeBi}
+              alt="강원특별자치도교육청"
+              style={{ display: "block", width: isMobile ? 150 : 210, maxWidth: "46%", height: "auto", flexShrink: 0 }}
+            />
+            <div style={{ width: 1, height: isMobile ? 38 : 46, background: t.border, flexShrink: 0 }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: isMobile ? 16 : 22, fontWeight: 800, wordBreak: "keep-all", lineHeight: 1.3 }}>설악고 신청 통합 시스템</div>
+              <div style={{ fontSize: 12, color: t.textSub, marginTop: 2 }}>
+                {roleLabel(user?.role)} · {user?.name || "-"} ({user?.loginId || "-"})
+              </div>
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginLeft: isMobile ? "auto" : 0 }}>
             <NotificationBell
               notifications={notifications}
               unreadCount={unreadCount}
@@ -1926,11 +2037,39 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
         {isMobile ? (
           <div style={{ display: "grid", gap: 12 }}>
             <nav style={{ ...cardStyle, padding: 8 }}>
+              {user?.role === "admin" ? (
+                <div style={{ display: "grid", gap: 4, marginBottom: 6 }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: t.textSub, textTransform: "uppercase", letterSpacing: 0.5, padding: "2px 4px 0" }}>
+                    프로그램
+                  </div>
+                  <button
+                    onClick={() => setTab("programs")}
+                    style={{
+                      ...buttonBase,
+                      width: "fit-content",
+                      whiteSpace: "nowrap",
+                      background: tab === "programs" ? t.accent : "#fff",
+                      color: tab === "programs" ? "#fff" : t.text,
+                      border: `1px solid ${tab === "programs" ? t.accent : t.border}`,
+                      fontWeight: 700,
+                      minHeight: 36,
+                      padding: "6px 10px",
+                      fontSize: 12,
+                    }}
+                  >
+                    프로그램 관리
+                  </button>
+                </div>
+              ) : null}
               <ProgramSwitcher
                 programs={activeProgramList}
                 activeProgramId={activeProgramId}
-                onChangeProgram={onChangeProgram}
+                onChangeProgram={(nextProgramId) => {
+                  if (tab === "programs") setTab("clubs");
+                  onChangeProgram?.(nextProgramId);
+                }}
                 programCycles={programCycles}
+                label={user?.role === "admin" ? "운영 프로그램" : "프로그램"}
               />
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                 {nav.map((item, index) => {
@@ -1980,11 +2119,17 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 12 }}>
             <aside style={{ ...cardStyle, height: "fit-content", padding: 10 }}>
-              <ProgramSwitcher
+              <DesktopProgramNavigation
                 programs={activeProgramList}
                 activeProgramId={activeProgramId}
-                onChangeProgram={onChangeProgram}
+                onChangeProgram={(nextProgramId) => {
+                  if (tab === "programs") setTab("clubs");
+                  onChangeProgram?.(nextProgramId);
+                }}
                 programCycles={programCycles}
+                showProgramManagement={user?.role === "admin"}
+                programManagementActive={tab === "programs"}
+                onOpenProgramManagement={() => setTab("programs")}
               />
               <div style={{ display: "grid", gap: 4 }}>
                 {nav.map((item, index) => {
@@ -2549,10 +2694,14 @@ function ClubTable({
   onOpenPlan,
   onDownloadSubmittedPlans,
   onDownloadPlanBudgetXlsx,
+  onDownloadTemplate,
+  onBulkUpload,
+  bulkLoading = false,
   showCapacity = true,
   showRoundStatus = true,
   showActions = true,
 }) {
+  const bulkFileInputRef = useRef(null);
   const [isMobileTable, setIsMobileTable] = useState(
     () => (typeof window !== "undefined" ? window.innerWidth < 700 : false),
   );
@@ -2626,6 +2775,38 @@ function ClubTable({
             >
               봉사·예산 XLSX 저장
             </button>
+          ) : null}
+          {onDownloadTemplate ? (
+            <button
+              onClick={onDownloadTemplate}
+              disabled={bulkLoading}
+              style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
+            >
+              엑셀 양식
+            </button>
+          ) : null}
+          {onBulkUpload ? (
+            <>
+              <button
+                onClick={() => bulkFileInputRef.current?.click()}
+                disabled={bulkLoading}
+                style={{ ...buttonBase, background: bulkLoading ? "#cfd8e3" : "#edf4ff", color: bulkLoading ? "#6b7280" : t.accent, fontWeight: 700 }}
+              >
+                {bulkLoading ? "등록 중..." : "엑셀 일괄 등록"}
+              </button>
+              <input
+                ref={bulkFileInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                disabled={bulkLoading}
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onBulkUpload(file);
+                  e.target.value = "";
+                }}
+              />
+            </>
           ) : null}
           {canCreate ? (
             <button
@@ -6879,7 +7060,7 @@ function newProgramForm() {
   };
 }
 
-function ProgramPanel({ programs, loading, onCreate, onUpdate, onArchive, onRestore }) {
+function ProgramPanel({ programs, loading, onCreate, onBulkUpload, onDownloadTemplate, onUpdate, onArchive, onRestore }) {
   const [editingId, setEditingId] = useState("");
   const [form, setForm] = useState(newProgramForm());
   const rows = Array.isArray(programs) ? programs : [];
@@ -6914,6 +7095,47 @@ function ProgramPanel({ programs, loading, onCreate, onUpdate, onArchive, onRest
         <div style={{ fontSize: 12, color: t.textSub, marginBottom: 12 }}>
           동아리 외에도 방과후, 자율교육과정 등 지망 신청·선발 방식의 프로그램을 자유롭게 개설할 수 있습니다.
           프로그램마다 신청 기간과 라운드가 독립적으로 진행됩니다.
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", padding: 12, marginBottom: 12, border: "1px solid #c8dcff", borderRadius: 10, background: "#f6f9ff" }}>
+          <div style={{ minWidth: 220 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: t.text }}>엑셀로 여러 프로그램 등록</div>
+            <div style={{ fontSize: 11, color: t.textSub, marginTop: 2 }}>
+              양식의 한 행이 프로그램 하나로 생성됩니다. 기능 항목은 예/아니오 또는 Y/N으로 입력할 수 있습니다.
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              onClick={onDownloadTemplate}
+              disabled={loading}
+              style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub, fontWeight: 700 }}
+            >
+              엑셀 양식 다운로드
+            </button>
+            <label
+              style={{
+                ...buttonBase,
+                background: loading ? "#cfd8e3" : t.accent,
+                color: "#fff",
+                fontWeight: 700,
+                cursor: loading ? "default" : "pointer",
+                pointerEvents: loading ? "none" : "auto",
+              }}
+            >
+              {loading ? "등록 중..." : "엑셀 일괄 등록"}
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                disabled={loading}
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onBulkUpload(file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
         </div>
 
         <div style={{ overflowX: "auto" }}>
@@ -7680,7 +7902,12 @@ export default function PrototypeApp({ studentOnly = false }) {
     setActiveProgramId(target.id);
     setLoading(true);
     try {
-      const cycleInfo = await refreshCycle(target);
+      const [cycleInfo] = await Promise.all([
+        refreshCycle(target),
+        user?.role === "admin" || user?.role === "teacher"
+          ? refreshClubRooms()
+          : Promise.resolve([]),
+      ]);
       const scopedClubs = clubs.filter((club) => !club.legacy && club.programId === target.id);
       await refreshRoundStats(scopedClubs, cycleInfo, target);
       setStudentStatusRows([]);
@@ -7705,6 +7932,36 @@ export default function PrototypeApp({ studentOnly = false }) {
     } catch (error) {
       withMessageError(error, "프로그램 개설에 실패했습니다.");
       return false;
+    } finally {
+      setProgramLoading(false);
+    }
+  }
+
+  async function handleBulkProgramUpload(file) {
+    setProgramLoading(true);
+    try {
+      const parsed = await parseProgramExcel(file);
+      if (parsed.length === 0) {
+        throw new Error("엑셀에서 등록할 프로그램 데이터를 찾지 못했습니다.");
+      }
+
+      const result = await createProgramsBatch(parsed, { actor: user });
+      if (result.created.length > 0) {
+        await refreshPrograms({ forceRefresh: true });
+        await refreshOtherProgramCycles(result.created, "");
+      }
+
+      const failMessages = result.failed
+        .slice(0, 5)
+        .map((item) => `${item.row}행${item.name ? `(${item.name})` : ""}: ${item.reason}`);
+      const summary = [`생성 ${result.created.length}건`, `실패 ${result.failed.length}건`];
+      if (failMessages.length > 0) summary.push(failMessages.join(" / "));
+      if (result.failed.length > failMessages.length) {
+        summary.push(`외 ${result.failed.length - failMessages.length}건`);
+      }
+      setMessage({ type: result.failed.length > 0 ? "info" : "ok", text: summary.join(" · ") });
+    } catch (error) {
+      withMessageError(error, "프로그램 엑셀 일괄 등록에 실패했습니다.");
     } finally {
       setProgramLoading(false);
     }
@@ -7875,6 +8132,76 @@ export default function PrototypeApp({ studentOnly = false }) {
       await refreshRecruitmentViews(clubRows, cycleInfo);
     } catch (error) {
       withMessageError(error, "동아리 저장에 실패했습니다.");
+    } finally {
+      setSavingClub(false);
+    }
+  }
+
+  async function handleDownloadClubTemplate() {
+    setSavingClub(true);
+    try {
+      if (!activeProgram) throw new Error("선택된 프로그램이 없습니다.");
+      const userRows = await ensureUsersLoaded();
+      await downloadClubTemplate({ program: activeProgram, users: userRows, rooms: clubRooms });
+      setMessage({ type: "ok", text: `${getProgramLabels(activeProgram).unit} 일괄등록 양식을 다운로드했습니다.` });
+    } catch (error) {
+      withMessageError(error, "엑셀 양식 다운로드에 실패했습니다.");
+    } finally {
+      setSavingClub(false);
+    }
+  }
+
+  async function handleBulkClubUpload(file) {
+    setSavingClub(true);
+    try {
+      if (!activeProgram) throw new Error("선택된 프로그램이 없습니다.");
+      const userRows = await ensureUsersLoaded();
+      const parsed = await parseClubExcel(file, { program: activeProgram });
+      if (parsed.length === 0) {
+        throw new Error(`엑셀에서 등록할 ${getProgramLabels(activeProgram).unit} 데이터를 찾지 못했습니다.`);
+      }
+
+      const resolved = resolveClubExcelRows(parsed, {
+        program: activeProgram,
+        users: userRows,
+        rooms: clubRooms,
+      });
+      const result = await createSchedulesBatch(resolved, { actor: user });
+
+      let leaderSyncFailed = 0;
+      for (const created of result.created) {
+        try {
+          await syncLeaderAssignmentForClub(created);
+        } catch {
+          leaderSyncFailed += 1;
+        }
+      }
+
+      if (result.created.length > 0) {
+        invalidateScheduleCache();
+        invalidateApplicationCache();
+        const [clubRows, cycleInfo] = await Promise.all([
+          refreshClubs({ forceRefresh: true }),
+          refreshCycle(),
+        ]);
+        await refreshRecruitmentViews(clubRows, cycleInfo);
+      }
+
+      const failMessages = result.failed
+        .slice(0, 5)
+        .map((item) => `${item.row}행${item.name ? `(${item.name})` : ""}: ${item.reason}`);
+      const summary = [`생성 ${result.created.length}건`, `실패 ${result.failed.length}건`];
+      if (leaderSyncFailed > 0) summary.push(`대표학생 연결 확인 필요 ${leaderSyncFailed}건`);
+      if (failMessages.length > 0) summary.push(failMessages.join(" / "));
+      if (result.failed.length > failMessages.length) {
+        summary.push(`외 ${result.failed.length - failMessages.length}건`);
+      }
+      setMessage({
+        type: result.failed.length > 0 || leaderSyncFailed > 0 ? "info" : "ok",
+        text: summary.join(" · "),
+      });
+    } catch (error) {
+      withMessageError(error, "개설 단위 엑셀 일괄 등록에 실패했습니다.");
     } finally {
       setSavingClub(false);
     }
@@ -9173,6 +9500,9 @@ export default function PrototypeApp({ studentOnly = false }) {
               onOpenPlan={activeProgram?.features?.plan === false ? undefined : handleOpenPlanDialog}
               onDownloadSubmittedPlans={user.role === "admin" && activeProgram?.features?.plan !== false ? handleDownloadSubmittedPlansPdf : undefined}
               onDownloadPlanBudgetXlsx={user.role === "admin" && activeProgram?.features?.plan !== false ? handleDownloadPlanBudgetXlsx : undefined}
+              onDownloadTemplate={user.role === "admin" ? handleDownloadClubTemplate : undefined}
+              onBulkUpload={user.role === "admin" ? handleBulkClubUpload : undefined}
+              bulkLoading={savingClub}
             />
           </div>
         ) : null
@@ -9182,7 +9512,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         <ClubRoomManagementPage
           roomLabel={getProgramLabels(activeProgram).room}
           rooms={clubRooms}
-          clubs={clubs}
+          clubs={visibleClubs}
           loading={savingRoom}
           isAdmin={user.role === "admin"}
           onAdd={handleCreateClubRoom}
@@ -9273,6 +9603,8 @@ export default function PrototypeApp({ studentOnly = false }) {
           programs={programs}
           loading={programLoading}
           onCreate={handleCreateProgram}
+          onBulkUpload={handleBulkProgramUpload}
+          onDownloadTemplate={downloadProgramTemplate}
           onUpdate={handleUpdateProgram}
           onArchive={handleArchiveProgram}
           onRestore={handleRestoreProgram}

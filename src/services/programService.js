@@ -138,6 +138,10 @@ function assertProgramPayload(payload) {
   }
 }
 
+function normalizeProgramNameKey(value) {
+  return String(value || '').trim().normalize('NFKC').toLocaleLowerCase('ko')
+}
+
 const _listProgramsCache = { data: null, ts: 0 }
 
 export function invalidateProgramCache() {
@@ -249,6 +253,43 @@ export async function createProgram(payload, options = {}) {
   })
   invalidateProgramCache()
   return normalizeProgram(ref.id, row)
+}
+
+export async function createProgramsBatch(programs, options = {}) {
+  const actor = assertAdmin(options?.actor)
+  const rows = Array.isArray(programs) ? programs : []
+  const existing = await listPrograms({ includeArchived: true, forceRefresh: true })
+  const usedNames = new Set(existing.map((row) => normalizeProgramNameKey(row.name)))
+  const created = []
+  const failed = []
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]
+    const sourceRow = Number(row?.sourceRow) || index + 2
+    try {
+      if (row?.importError) {
+        throw new Error(String(row.importError))
+      }
+
+      const data = assertProgramPayload(row)
+      const nameKey = normalizeProgramNameKey(data.name)
+      if (usedNames.has(nameKey)) {
+        throw new Error('같은 이름의 프로그램이 이미 있습니다.')
+      }
+
+      const program = await createProgram(data, { actor })
+      created.push(program)
+      usedNames.add(nameKey)
+    } catch (error) {
+      failed.push({
+        row: sourceRow,
+        name: String(row?.name || '').trim(),
+        reason: error instanceof Error ? error.message : '프로그램 생성 실패',
+      })
+    }
+  }
+
+  return { created, failed }
 }
 
 export async function updateProgram(programId, payload, options = {}) {

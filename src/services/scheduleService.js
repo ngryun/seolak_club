@@ -480,7 +480,7 @@ export async function createSchedule(payload, options = {}) {
 
   if (!isFirebaseEnabled()) {
     const next = {
-      id: String(Date.now()),
+      id: `local-schedule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       ...row,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -500,6 +500,50 @@ export async function createSchedule(payload, options = {}) {
     id: created.id,
     ...normalizeClub(created.id, row),
   }
+}
+
+function normalizeClubNameKey(value) {
+  return String(value || '').trim().normalize('NFKC').toLocaleLowerCase('ko')
+}
+
+export async function createSchedulesBatch(schedules, options = {}) {
+  const actor = assertActor(options?.actor)
+  if (actor.role !== 'admin' && actor.loginId !== 'admin') {
+    throw new Error('개설 단위 일괄 등록은 관리자만 가능합니다.')
+  }
+
+  const rows = Array.isArray(schedules) ? schedules : []
+  const existing = await listSchedules({ forceRefresh: true })
+  const usedNames = new Set(
+    existing.map((row) => `${String(row.programId || DEFAULT_PROGRAM_ID)}::${normalizeClubNameKey(row.clubName)}`),
+  )
+  const created = []
+  const failed = []
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]
+    const sourceRow = Number(row?.sourceRow) || index + 2
+    try {
+      if (row?.importError) throw new Error(String(row.importError))
+      const programId = String(row?.programId || '').trim() || DEFAULT_PROGRAM_ID
+      const nameKey = `${programId}::${normalizeClubNameKey(row?.clubName)}`
+      if (usedNames.has(nameKey)) {
+        throw new Error('같은 이름의 개설 단위가 현재 프로그램에 이미 있습니다.')
+      }
+
+      const schedule = await createSchedule(row, { actor })
+      created.push(schedule)
+      usedNames.add(nameKey)
+    } catch (error) {
+      failed.push({
+        row: sourceRow,
+        name: String(row?.clubName || '').trim(),
+        reason: error instanceof Error ? error.message : '개설 단위 생성 실패',
+      })
+    }
+  }
+
+  return { created, failed }
 }
 
 export async function updateSchedule(scheduleId, payload, options = {}) {
