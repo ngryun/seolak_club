@@ -23,6 +23,7 @@ function readInitialSession() {
 function normalizeRole(role) {
   if (role === 'admin') return 'admin'
   if (role === 'teacher') return 'teacher'
+  if (role === 'homeroom') return 'homeroom'
   return 'student'
 }
 
@@ -50,6 +51,7 @@ function buildSession(profile, fallback = {}) {
     phone: profile?.phone || fallback.phone || '',
     subject: profile?.subject || fallback.subject || '',
     studentNo: profile?.studentNo || fallback.studentNo || '',
+    homeroomClass: profile?.homeroomClass || fallback.homeroomClass || '',
     passwordChangedAt: profile?.passwordChangedAt || fallback.passwordChangedAt || null,
   }
 }

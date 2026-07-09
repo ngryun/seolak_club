@@ -167,6 +167,7 @@ const badgeStyle = {
 function roleLabel(role) {
   if (role === "admin") return "관리자";
   if (role === "teacher") return "교사";
+  if (role === "homeroom") return "담임교사";
   return "학생";
 }
 
@@ -1976,6 +1977,12 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
       { type: "group", label: "설정" },
       { key: "profile", label: "내 정보" },
     ],
+    homeroom: [
+      { type: "group", label: "학급 관리" },
+      { key: "users", label: "우리 반 학생 관리" },
+      { type: "group", label: "설정" },
+      { key: "profile", label: "내 정보" },
+    ],
     student: isStudentLeader
       ? [
         { type: "group", label: "선택한 프로그램 업무" },
@@ -2063,16 +2070,18 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
                   </button>
                 </div>
               ) : null}
-              <ProgramSwitcher
-                programs={activeProgramList}
-                activeProgramId={activeProgramId}
-                onChangeProgram={(nextProgramId) => {
-                  if (tab === "programs") setTab("clubs");
-                  onChangeProgram?.(nextProgramId);
-                }}
-                programCycles={programCycles}
-                label={user?.role === "admin" ? "운영 프로그램" : "프로그램"}
-              />
+              {user?.role !== "homeroom" ? (
+                <ProgramSwitcher
+                  programs={activeProgramList}
+                  activeProgramId={activeProgramId}
+                  onChangeProgram={(nextProgramId) => {
+                    if (tab === "programs") setTab("clubs");
+                    onChangeProgram?.(nextProgramId);
+                  }}
+                  programCycles={programCycles}
+                  label={user?.role === "admin" ? "운영 프로그램" : "프로그램"}
+                />
+              ) : null}
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                 {nav.map((item, index) => {
                   if (item.type === "group") {
@@ -2121,18 +2130,20 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 12 }}>
             <aside style={{ ...cardStyle, height: "fit-content", padding: 10 }}>
-              <DesktopProgramNavigation
-                programs={activeProgramList}
-                activeProgramId={activeProgramId}
-                onChangeProgram={(nextProgramId) => {
-                  if (tab === "programs") setTab("clubs");
-                  onChangeProgram?.(nextProgramId);
-                }}
-                programCycles={programCycles}
-                showProgramManagement={user?.role === "admin"}
-                programManagementActive={tab === "programs"}
-                onOpenProgramManagement={() => setTab("programs")}
-              />
+              {user?.role !== "homeroom" ? (
+                <DesktopProgramNavigation
+                  programs={activeProgramList}
+                  activeProgramId={activeProgramId}
+                  onChangeProgram={(nextProgramId) => {
+                    if (tab === "programs") setTab("clubs");
+                    onChangeProgram?.(nextProgramId);
+                  }}
+                  programCycles={programCycles}
+                  showProgramManagement={user?.role === "admin"}
+                  programManagementActive={tab === "programs"}
+                  onOpenProgramManagement={() => setTab("programs")}
+                />
+              ) : null}
               <div style={{ display: "grid", gap: 4 }}>
                 {nav.map((item, index) => {
                   if (item.type === "group") {
@@ -3158,10 +3169,13 @@ function ClubFormDialog({
 function ClubDetailDialog({
   open,
   club,
+  program,
   userMap,
   onClose,
 }) {
   if (!open || !club) return null;
+  const labels = getProgramLabels(program);
+  const features = program?.features || { leader: true, plan: true, room: true, interview: true };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 12, overflowY: "auto" }}>
@@ -3178,25 +3192,31 @@ function ClubDetailDialog({
             <strong>담당교사:</strong>
             <div style={{ whiteSpace: "pre-line", lineHeight: 1.5, marginTop: 4 }}>{formatClubTeacherLabel(club, userMap)}</div>
           </div>
-          <div style={{ fontSize: 13 }}>
-            <strong>동아리장:</strong> {formatClubLeaderLabel(club, userMap)}
-          </div>
+          {features.leader ? (
+            <div style={{ fontSize: 13 }}>
+              <strong>{labels.leader}:</strong> {formatClubLeaderLabel(club, userMap)}
+            </div>
+          ) : null}
           <div style={{ fontSize: 13 }}>
             <strong>대상학년:</strong> {(club.targetGrades || []).join(", ")}
           </div>
-          <div style={{ fontSize: 13 }}>
-            <strong>동아리실:</strong> {club.room || "-"}
-          </div>
+          {features.room ? (
+            <div style={{ fontSize: 13 }}>
+              <strong>{labels.room}:</strong> {club.room || "-"}
+            </div>
+          ) : null}
           <div style={{ fontSize: 13 }}>
             <strong>정원:</strong> {club.memberCount}/{club.maxMembers}
           </div>
-          <div style={{ fontSize: 13 }}>
-            <strong>자체면접:</strong> {club.isInterviewSelection ? "O" : "X"}
-          </div>
+          {features.interview ? (
+            <div style={{ fontSize: 13 }}>
+              <strong>자체면접:</strong> {club.isInterviewSelection ? "O" : "X"}
+            </div>
+          ) : null}
         </div>
 
         <div style={{ borderTop: `1px solid ${t.border}`, paddingTop: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>동아리 소개</div>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>{labels.unit} 소개</div>
           <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.6, fontSize: 13, color: t.textSub }}>
             {String(club.description || "").trim() || "소개가 아직 입력되지 않았습니다."}
           </div>
@@ -3634,21 +3654,9 @@ function ApplicantsDialog({
     }
   }
 
-  const clubTargetGradesKey = Array.isArray(club?.targetGrades) ? club.targetGrades.join(",") : "";
   const students = useMemo(
-    () => {
-      const targets = clubTargetGradesKey
-        ? clubTargetGradesKey.split(",").map((value) => Number(value)).filter(Boolean)
-        : [];
-      return (users || [])
-        .filter((row) => row.role === "student")
-        .filter((row) => {
-          if (targets.length === 0) return true;
-          const grade = inferStudentGrade(row.studentNo || row.loginId);
-          return grade ? targets.includes(grade) : false;
-        });
-    },
-    [users, clubTargetGradesKey],
+    () => (users || []).filter((row) => row.role === "student"),
+    [users],
   );
   const selectionReady = submissionState?.selectionReady !== false;
   const preAssignmentReady = preAssignmentState?.canAssign === true;
@@ -3806,8 +3814,8 @@ function ApplicantsDialog({
           </div>
           <div style={{ marginTop: 7, fontSize: 12, color: t.textSub }}>
             {preAssignmentReady
-              ? "대상학년 학생만 검색되며, 교사 사전 학생 배정 기간에는 학생 신청 없이도 미리 배정할 수 있습니다."
-              : "대상학년 학생만 검색되며, 신청 마감 후에는 신청하지 않은 학생도 바로 배정할 수 있습니다."}
+              ? "대상학년과 관계없이 검색되며, 교사 사전 학생 배정 기간에는 학생 신청 없이도 미리 배정할 수 있습니다."
+              : "대상학년과 관계없이 검색되며, 신청 마감 후에는 신청하지 않은 학생도 바로 배정할 수 있습니다."}
           </div>
         </div>
 
@@ -6498,7 +6506,8 @@ function UserManagementPanel({
   loading,
   bulkResetLoading,
 }) {
-  const [userListTab, setUserListTab] = useState("teacher"); // "teacher" | "student"
+  const isHomeroomManager = currentUser?.role === "homeroom";
+  const [userListTab, setUserListTab] = useState(isHomeroomManager ? "student" : "teacher"); // "teacher" | "student"
   const [search, setSearch] = useState("");
   const [createForm, setCreateForm] = useState({
     loginId: "",
@@ -6507,6 +6516,7 @@ function UserManagementPanel({
     role: "student",
     studentNo: "",
     subject: "",
+    homeroomClass: "",
   });
 
   const [editingUid, setEditingUid] = useState("");
@@ -6515,9 +6525,10 @@ function UserManagementPanel({
     role: "student",
     studentNo: "",
     subject: "",
+    homeroomClass: "",
   });
 
-  const teacherUsers = users.filter((u) => u.role === "teacher" || u.role === "admin");
+  const teacherUsers = users.filter((u) => u.role === "teacher" || u.role === "homeroom" || u.role === "admin");
   const studentUsers = users.filter((u) => u.role === "student");
 
   const baseList = userListTab === "teacher" ? teacherUsers : studentUsers;
@@ -6535,7 +6546,14 @@ function UserManagementPanel({
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <section style={cardStyle}>
-        <h2 style={{ fontSize: 17, marginBottom: 10 }}>회원 계정 생성</h2>
+        <h2 style={{ fontSize: 17, marginBottom: 6 }}>
+          {isHomeroomManager ? `${formatClassKey(currentUser.homeroomClass)} 학생 계정 관리` : "회원 계정 생성"}
+        </h2>
+        {isHomeroomManager ? (
+          <div style={{ fontSize: 12, color: t.textSub, marginBottom: 10 }}>
+            담당 학급 학생만 등록하거나 비밀번호를 초기화할 수 있습니다.
+          </div>
+        ) : null}
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 10 }}>
             <Field label="아이디(교사명/학생학번)">
@@ -6561,14 +6579,24 @@ function UserManagementPanel({
               />
             </Field>
             <Field label="역할">
-              <Select
-                value={createForm.role}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, role: e.target.value }))}
-              >
-                <option value="student">학생</option>
-                <option value="teacher">교사</option>
-                <option value="admin">관리자</option>
-              </Select>
+              {isHomeroomManager ? (
+                <input value="학생" readOnly style={{ ...inputBase, background: t.muted }} />
+              ) : (
+                <Select
+                  value={createForm.role}
+                  onChange={(e) => setCreateForm((prev) => ({
+                    ...prev,
+                    role: e.target.value,
+                    studentNo: e.target.value === "student" ? prev.studentNo : "",
+                    homeroomClass: e.target.value === "homeroom" ? prev.homeroomClass : "",
+                  }))}
+                >
+                  <option value="student">학생</option>
+                  <option value="teacher">교사</option>
+                  <option value="homeroom">담임교사</option>
+                  <option value="admin">관리자</option>
+                </Select>
+              )}
             </Field>
           </div>
 
@@ -6588,6 +6616,16 @@ function UserManagementPanel({
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, subject: e.target.value }))}
               />
             </Field>
+            {!isHomeroomManager && createForm.role === "homeroom" ? (
+              <Field label="담당 학급(담임교사)" hint="예: 1-1">
+                <input
+                  style={inputBase}
+                  value={createForm.homeroomClass}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, homeroomClass: e.target.value }))}
+                  placeholder="예: 1-1"
+                />
+              </Field>
+            ) : null}
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -6603,7 +6641,7 @@ function UserManagementPanel({
               disabled={loading}
               style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
             >
-              엑셀 템플릿 다운로드
+              {isHomeroomManager ? "학생 엑셀 템플릿" : "엑셀 템플릿 다운로드"}
             </button>
             <label style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}>
               엑셀 일괄 등록
@@ -6644,7 +6682,11 @@ function UserManagementPanel({
                   fontWeight: 700,
                 }}
               >
-                {bulkResetLoading ? "학생 비번 초기화 중..." : "학생 비번 일괄 초기화"}
+                {bulkResetLoading
+                  ? "학생 비번 초기화 중..."
+                  : isHomeroomManager
+                    ? "우리 반 비번 일괄 초기화"
+                    : "학생 비번 일괄 초기화"}
               </button>
             ) : null}
             <input
@@ -6657,10 +6699,13 @@ function UserManagementPanel({
         </div>
 
         <div style={{ display: "flex", gap: 0, marginBottom: 12, borderBottom: `2px solid ${t.border}` }}>
-          {[
-            { key: "teacher", label: `교사/관리자 (${teacherUsers.length})` },
-            { key: "student", label: `학생 (${studentUsers.length})` },
-          ].map((item) => (
+          {(isHomeroomManager
+            ? [{ key: "student", label: `우리 반 학생 (${studentUsers.length})` }]
+            : [
+              { key: "teacher", label: `교사/담임/관리자 (${teacherUsers.length})` },
+              { key: "student", label: `학생 (${studentUsers.length})` },
+            ]
+          ).map((item) => (
             <button
               key={item.key}
               onClick={() => { setUserListTab(item.key); setSearch(""); setEditingUid(""); }}
@@ -6685,7 +6730,7 @@ function UserManagementPanel({
             <thead>
               <tr>
                 {(userListTab === "teacher"
-                  ? ["아이디", "이름", "역할", "과목", "최종 로그인", "작업"]
+                  ? ["아이디", "이름", "역할", "과목/담당 학급", "최종 로그인", "작업"]
                   : ["학번(아이디)", "이름", "학번", "최종 로그인", "작업"]
                 ).map((head) => (
                   <th key={head} style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}>{head}</th>
@@ -6715,9 +6760,14 @@ function UserManagementPanel({
                         {editing ? (
                           <Select
                             value={editForm.role}
-                            onChange={(e) => setEditForm((prev) => ({ ...prev, role: e.target.value }))}
+                            onChange={(e) => setEditForm((prev) => ({
+                              ...prev,
+                              role: e.target.value,
+                              homeroomClass: e.target.value === "homeroom" ? prev.homeroomClass : "",
+                            }))}
                           >
                             <option value="teacher">교사</option>
+                            <option value="homeroom">담임교사</option>
                             <option value="admin">관리자</option>
                           </Select>
                         ) : (
@@ -6726,13 +6776,24 @@ function UserManagementPanel({
                       </td>
                       <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
                         {editing ? (
-                          <input
-                            value={editForm.subject}
-                            onChange={(e) => setEditForm((prev) => ({ ...prev, subject: e.target.value }))}
-                            style={{ ...inputBase, padding: "6px 8px" }}
-                          />
+                          editForm.role === "homeroom" ? (
+                            <input
+                              value={editForm.homeroomClass}
+                              onChange={(e) => setEditForm((prev) => ({ ...prev, homeroomClass: e.target.value }))}
+                              style={{ ...inputBase, padding: "6px 8px" }}
+                              placeholder="예: 1-1"
+                            />
+                          ) : (
+                            <input
+                              value={editForm.subject}
+                              onChange={(e) => setEditForm((prev) => ({ ...prev, subject: e.target.value }))}
+                              style={{ ...inputBase, padding: "6px 8px" }}
+                            />
+                          )
                         ) : (
-                          <span style={{ fontSize: 13 }}>{row.subject || "-"}</span>
+                          <span style={{ fontSize: 13 }}>
+                            {row.role === "homeroom" ? formatClassKey(row.homeroomClass) : row.subject || "-"}
+                          </span>
                         )}
                       </td>
                       <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: row.lastLoginAt ? t.text : t.textSub, whiteSpace: "nowrap" }}>
@@ -6767,6 +6828,7 @@ function UserManagementPanel({
                                   role: row.role || "teacher",
                                   studentNo: row.studentNo || "",
                                   subject: row.subject || "",
+                                  homeroomClass: row.homeroomClass || "",
                                 });
                               }}
                               style={{ ...buttonBase, padding: "5px 8px", background: "#fff", border: `1px solid ${t.border}` }}
@@ -6830,7 +6892,7 @@ function UserManagementPanel({
                     </td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        {editing ? (
+                        {!isHomeroomManager && editing ? (
                           <>
                             <button
                               onClick={async () => {
@@ -6848,7 +6910,7 @@ function UserManagementPanel({
                               취소
                             </button>
                           </>
-                        ) : (
+                        ) : !isHomeroomManager ? (
                           <button
                             onClick={() => {
                               setEditingUid(row.uid);
@@ -6857,31 +6919,34 @@ function UserManagementPanel({
                                 role: row.role || "student",
                                 studentNo: row.studentNo || "",
                                 subject: "",
+                                homeroomClass: "",
                               });
                             }}
                             style={{ ...buttonBase, padding: "5px 8px", background: "#fff", border: `1px solid ${t.border}` }}
                           >
                             수정
                           </button>
-                        )}
+                        ) : null}
                         <button
                           onClick={() => onResetPassword(row)}
                           style={{ ...buttonBase, padding: "5px 8px", background: "#fff3e0", color: t.warn, fontWeight: 700 }}
                         >
                           비번초기화
                         </button>
-                        <button
-                          onClick={() => onDelete(row)}
-                          style={{
-                            ...buttonBase,
-                            padding: "5px 8px",
-                            background: "#ffebee",
-                            color: t.danger,
-                            fontWeight: 700,
-                          }}
-                        >
-                          삭제
-                        </button>
+                        {!isHomeroomManager ? (
+                          <button
+                            onClick={() => onDelete(row)}
+                            style={{
+                              ...buttonBase,
+                              padding: "5px 8px",
+                              background: "#ffebee",
+                              color: t.danger,
+                              fontWeight: 700,
+                            }}
+                          >
+                            삭제
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -6890,7 +6955,7 @@ function UserManagementPanel({
               {filtered.length === 0 ? (
                 <tr>
                   <td colSpan={userListTab === "teacher" ? 6 : 5} style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
-                    {userListTab === "teacher" ? "교사/관리자 계정이 없습니다." : "학생 계정이 없습니다."}
+                    {userListTab === "teacher" ? "교사/담임/관리자 계정이 없습니다." : "학생 계정이 없습니다."}
                   </td>
                 </tr>
               ) : null}
@@ -6939,6 +7004,12 @@ function ProfilePanel({ user, onSave, onChangePassword, loading, passwordLoading
           </Field>
         ) : null}
 
+        {user?.role === "homeroom" ? (
+          <Field label="담당 학급">
+            <input value={formatClassKey(user?.homeroomClass)} readOnly style={{ ...inputBase, background: t.muted }} />
+          </Field>
+        ) : null}
+
         <Field label="이름">
           <input
             value={form.name}
@@ -6947,7 +7018,7 @@ function ProfilePanel({ user, onSave, onChangePassword, loading, passwordLoading
           />
         </Field>
 
-        {(user?.role === "teacher" || user?.role === "admin") ? (
+        {(user?.role === "teacher" || user?.role === "homeroom" || user?.role === "admin") ? (
           <Field label="과목">
             <input
               value={form.subject}
@@ -7577,6 +7648,7 @@ const TAB_QUERY_KEY = "tab";
 function getDefaultTabForRole(role) {
   if (role === "admin") return "clubs";
   if (role === "teacher") return "myClubs";
+  if (role === "homeroom") return "users";
   return "apply";
 }
 
@@ -7588,6 +7660,7 @@ function isTabAllowedForRole(tab, role, options = {}) {
   const allowedTabsByRole = {
     admin: new Set(["clubs", "studentStatus", "round", "programs", "users", "extraRequests", "requestCards", "backup", "profile"]),
     teacher: new Set(["myClubs", "clubOverview", "studentStatus", "extraRequests", "requestCards", "profile"]),
+    homeroom: new Set(["users", "profile"]),
     student: new Set(["apply", "my", "clubOverview", "clubs", "extraRequests", "profile"]),
   };
 
@@ -7811,7 +7884,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   }
 
   async function refreshUsers({ forceRefresh = false } = {}) {
-    const rows = await listUsers({ forceRefresh });
+    const rows = await listUsers({ forceRefresh, actor: user });
     setUsers(rows);
     setUsersLoaded(true);
     return rows;
@@ -7874,9 +7947,11 @@ export default function PrototypeApp({ studentOnly = false }) {
     }
 
     const program = programInput || activeProgram;
-    const baseStudents = Array.isArray(studentUsers)
-      ? studentUsers.filter((row) => row.role === "student")
-      : users.filter((row) => row.role === "student");
+    const studentSource = Array.isArray(studentUsers) ? studentUsers : users;
+    const baseStudents = studentSource.filter(
+      (row) => row.role === "student"
+        && (!program?.id || isStudentEligibleForProgram(program, row.studentNo || row.loginId)),
+    );
     const baseClubs = (Array.isArray(clubRows) ? clubRows : clubs)
       .filter((club) => !program?.id || club.programId === program.id);
     const [applications, drafts] = await Promise.all([
@@ -7922,6 +7997,17 @@ export default function PrototypeApp({ studentOnly = false }) {
     if (!isAuthenticated || !user) return;
     setLoading(true);
     try {
+      if (user.role === "homeroom") {
+        setPrograms([]);
+        setActiveProgramId("");
+        setClubs([]);
+        setClubRooms([]);
+        setRoundStats({});
+        setStudentStatusRows([]);
+        await refreshUsers({ forceRefresh: true });
+        setMessage({ type: "", text: "" });
+        return;
+      }
       const programRows = await refreshPrograms();
       const activeRows = programRows.filter((row) => row.status === "active");
       const visibleRows = user.role === "student"
@@ -9253,7 +9339,8 @@ export default function PrototypeApp({ studentOnly = false }) {
         role: String(form.role || "student").trim(),
         studentNo: String(form.studentNo || "").trim(),
         subject: String(form.subject || "").trim(),
-      });
+        homeroomClass: String(form.homeroomClass || "").trim(),
+      }, { actor: user });
       invalidateUserCache();
       setMessage({ type: "ok", text: "계정을 생성했습니다." });
       const userRows = await refreshUsers({ forceRefresh: true });
@@ -9270,7 +9357,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         throw new Error("엑셀에서 유효한 계정 데이터를 찾지 못했습니다.");
       }
 
-      const result = await createUsersBatch(parsed);
+      const result = await createUsersBatch(parsed, { actor: user });
       invalidateUserCache();
       const failMessages = result.failed.slice(0, 5).map((item) => `${item.row}행 ${item.loginId}: ${item.reason}`);
       const summary = [`생성 ${result.created.length}건`, `실패 ${result.failed.length}건`];
@@ -9292,6 +9379,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         role: patch.role,
         studentNo: patch.studentNo,
         subject: patch.subject,
+        homeroomClass: patch.homeroomClass,
       });
       invalidateUserCache();
       invalidateScheduleCache();
@@ -9326,7 +9414,7 @@ export default function PrototypeApp({ studentOnly = false }) {
     if (!nextPassword) return;
 
     try {
-      await resetUserPasswordByAdmin(row.uid, nextPassword);
+      await resetUserPasswordByAdmin(row.uid, nextPassword, { actor: user });
       setMessage({ type: "ok", text: `비밀번호를 초기화했습니다. (${row.loginId})` });
     } catch (error) {
       withMessageError(error, "비밀번호 초기화에 실패했습니다.");
@@ -9357,7 +9445,7 @@ export default function PrototypeApp({ studentOnly = false }) {
 
     try {
       setBulkResetLoading(true);
-      const result = await resetStudentPasswordsByAdmin(nextPassword);
+      const result = await resetStudentPasswordsByAdmin(nextPassword, { actor: user });
       setMessage({ type: "ok", text: `학생 비밀번호를 일괄 초기화했습니다. (${result.count}명)` });
     } catch (error) {
       withMessageError(error, "학생 비밀번호 일괄 초기화에 실패했습니다.");
@@ -9489,7 +9577,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   ]);
 
   useEffect(() => {
-    if (!isAuthenticated || user?.role !== "admin") return;
+    if (!isAuthenticated || (user?.role !== "admin" && user?.role !== "homeroom")) return;
     if ((tab !== "users" && tab !== "programs") || usersLoaded) return;
 
     let mounted = true;
@@ -9846,7 +9934,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         />
       ) : null}
 
-      {tab === "users" && user.role === "admin" ? (
+      {tab === "users" && (user.role === "admin" || user.role === "homeroom") ? (
         <UserManagementPanel
           currentUser={user}
           users={users}
@@ -9861,9 +9949,9 @@ export default function PrototypeApp({ studentOnly = false }) {
           }}
           onCreate={handleCreateUser}
           onBulkUpload={handleBulkUserUpload}
-          onDownloadTemplate={downloadUserAccountTemplate}
-          onUpdate={handleUpdateUser}
-          onDelete={handleDeleteUser}
+          onDownloadTemplate={() => downloadUserAccountTemplate({ actor: user })}
+          onUpdate={user.role === "admin" ? handleUpdateUser : undefined}
+          onDelete={user.role === "admin" ? handleDeleteUser : undefined}
           onResetPassword={handleResetPassword}
           onResetStudentPasswords={handleResetStudentPasswords}
           loading={loading}
@@ -9991,6 +10079,7 @@ export default function PrototypeApp({ studentOnly = false }) {
       <ClubDetailDialog
         open={clubDetailDialog.open}
         club={clubDetailDialog.club}
+        program={activeProgram}
         userMap={userMap}
         onClose={closeClubDetail}
       />

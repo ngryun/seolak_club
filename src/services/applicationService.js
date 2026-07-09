@@ -2680,6 +2680,7 @@ export async function directAssignStudentToClub(payload) {
     requireInterview: false,
     requireLeader: false,
     allowPreAssignment: true,
+    ignoreStudentEligibility: true,
   })
 }
 

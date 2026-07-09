@@ -140,13 +140,14 @@ export async function exportFullBackup() {
     u.loginId || '',
     u.role || '',
     u.studentNo || '',
+    u.homeroomClass || '',
     u.school || '',
     u.phone || '',
     u.email || '',
     formatDate(u.createdAt),
     u.uid,
   ])
-  const userHeaders = ['이름', '아이디', '역할', '학번', '학교', '전화번호', '이메일', '생성일시', 'UID']
+  const userHeaders = ['이름', '아이디', '역할', '학번', '담당학급', '학교', '전화번호', '이메일', '생성일시', 'UID']
 
   // 워크북 생성
   const wb = XLSX.utils.book_new()

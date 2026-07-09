@@ -15,11 +15,12 @@ import {
 } from 'firebase/firestore'
 import { appConfig } from '../config/appConfig'
 import { db, isFirebaseEnabled } from '../lib/firebase'
+import { getStudentClassKey } from './programService'
 
 const COLLECTION = 'users'
 const APPLICATIONS = 'applications'
 const SCHEDULES = 'schedules'
-const VALID_ROLES = new Set(['admin', 'teacher', 'student'])
+const VALID_ROLES = new Set(['admin', 'teacher', 'homeroom', 'student'])
 const AUTH_LOGIN_DOMAIN = String(appConfig.authLoginDomain || 'seolak.local').trim() || 'seolak.local'
 export const DEFAULT_ADMIN_LOGIN_ID = 'admin'
 const LEGACY_DEFAULT_ADMIN_PASSWORD = 'admin'
@@ -30,6 +31,7 @@ const ACCOUNT_HEADERS = [
   '이름',
   '역할',
   '학번(5자리 숫자)',
+  '담당학급(담임교사)',
   '이메일',
   '과목',
 ]
@@ -53,6 +55,10 @@ const ACCOUNT_HEADER_MAP = {
   '학번(5자리 숫자)': 'studentNo',
   STUDENT_NO: 'studentNo',
   studentNo: 'studentNo',
+  담당학급: 'homeroomClass',
+  '담당학급(담임교사)': 'homeroomClass',
+  HOMEROOM_CLASS: 'homeroomClass',
+  homeroomClass: 'homeroomClass',
   이메일: 'email',
   EMAIL: 'email',
   email: 'email',
@@ -83,6 +89,7 @@ function normalizeRole(role) {
   const value = String(role || '').trim().toLowerCase()
   if (value === '관리자') return 'admin'
   if (value === '교사') return 'teacher'
+  if (value === '담임교사' || value === '담임') return 'homeroom'
   if (value === '학생') return 'student'
   if (VALID_ROLES.has(value)) return value
   return 'student'
@@ -103,6 +110,41 @@ function toBase64Url(value) {
 
 function isValidStudentNo(value) {
   return /^\d{5}$/.test(String(value || '').trim())
+}
+
+export function normalizeHomeroomClass(value) {
+  const normalized = String(value || '')
+    .trim()
+    .replace(/\s+/gu, '')
+    .replace(/학년/gu, '-')
+    .replace(/반/gu, '')
+  const matched = normalized.match(/^([1-3])-0*([1-9]\d?)$/u)
+  if (!matched) return ''
+  return `${Number(matched[1])}-${Number(matched[2])}`
+}
+
+function assertUserManagementActor(actor) {
+  const role = normalizeRole(actor?.role)
+  const uid = String(actor?.uid || '').trim()
+  if (!uid || (role !== 'admin' && role !== 'homeroom')) {
+    throw new Error('회원 관리 권한이 없습니다.')
+  }
+  const homeroomClass = normalizeHomeroomClass(actor?.homeroomClass)
+  if (role === 'homeroom' && !homeroomClass) {
+    throw new Error('담임교사의 담당 학급이 설정되지 않았습니다.')
+  }
+  return { uid, role, homeroomClass }
+}
+
+function assertActorCanManageAccount(actor, account) {
+  if (actor.role === 'admin') return
+  if (normalizeRole(account?.role) !== 'student') {
+    throw new Error('담임교사는 학생 계정만 관리할 수 있습니다.')
+  }
+  const studentClass = getStudentClassKey(account?.studentNo || account?.loginId)
+  if (!studentClass || studentClass !== actor.homeroomClass) {
+    throw new Error('담당 학급 학생만 관리할 수 있습니다.')
+  }
 }
 
 async function sha256Hex(value) {
@@ -158,6 +200,7 @@ function normalizeUser(uid, data, { includeSecret = false } = {}) {
     phone: String(data.phone || '').trim(),
     subject: String(data.subject || '').trim(),
     studentNo: String(data.studentNo || '').trim(),
+    homeroomClass: normalizeHomeroomClass(data.homeroomClass),
     role: normalizeRole(data.role),
     passwordChangedAt: data.passwordChangedAt || null,
     lastLoginAt: data.lastLoginAt || null,
@@ -204,6 +247,7 @@ function toAccountPayload(payload) {
     phone: String(payload.phone || '').trim(),
     subject: String(payload.subject || '').trim(),
     studentNo: String(payload.studentNo || '').trim(),
+    homeroomClass: normalizeHomeroomClass(payload.homeroomClass),
   }
 
   if (!account.loginId) {
@@ -214,8 +258,12 @@ function toAccountPayload(payload) {
     throw new Error('비밀번호는 필수입니다.')
   }
 
-  if (role === 'teacher' && !account.name) {
+  if ((role === 'teacher' || role === 'homeroom') && !account.name) {
     account.name = loginId
+  }
+
+  if (role === 'homeroom' && !account.homeroomClass) {
+    throw new Error(`담임교사 계정(${loginId})의 담당 학급을 1-1 형식으로 입력해주세요.`)
   }
 
   if (role === 'student') {
@@ -226,6 +274,10 @@ function toAccountPayload(payload) {
     if (!account.name) {
       throw new Error(`학생 계정(${loginId})은 이름이 필요합니다.`)
     }
+  }
+
+  if (role !== 'student') {
+    account.studentNo = ''
   }
 
   if (role === 'admin' && !account.name) {
@@ -255,6 +307,7 @@ function toProfilePayload(payload) {
     phone: String(payload.phone || '').trim(),
     subject: String(payload.subject || '').trim(),
     studentNo,
+    homeroomClass: role === 'homeroom' ? normalizeHomeroomClass(payload.homeroomClass) : '',
     role,
   }
 }
@@ -270,6 +323,7 @@ export async function ensureDefaultAdminAccount() {
     phone: '',
     subject: '',
     studentNo: '',
+    homeroomClass: '',
     role: 'admin',
   }
 
@@ -413,8 +467,10 @@ export async function recordLastLogin(uid) {
   }
 }
 
-export async function createUserAccount(payload) {
+export async function createUserAccount(payload, options = {}) {
+  const actor = assertUserManagementActor(options?.actor)
   const account = toAccountPayload(payload)
+  assertActorCanManageAccount(actor, account)
 
   const duplicated = await findUserByLoginId(account.loginId)
   if (duplicated) {
@@ -446,6 +502,7 @@ export async function createUserAccount(payload) {
     phone: account.phone,
     subject: account.subject,
     studentNo: account.studentNo,
+    homeroomClass: account.homeroomClass,
     role: account.role,
     passwordHash,
     createdAt: serverTimestamp(),
@@ -456,7 +513,7 @@ export async function createUserAccount(payload) {
   return normalizeUser(uid, profileData)
 }
 
-export async function createUsersBatch(accounts) {
+export async function createUsersBatch(accounts, options = {}) {
   const rows = Array.isArray(accounts) ? accounts : []
   const created = []
   const failed = []
@@ -464,7 +521,7 @@ export async function createUsersBatch(accounts) {
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i]
     try {
-      const user = await createUserAccount(row)
+      const user = await createUserAccount(row, options)
       created.push(user)
     } catch (error) {
       failed.push({
@@ -478,13 +535,20 @@ export async function createUsersBatch(accounts) {
   return { created, failed }
 }
 
-export async function downloadUserAccountTemplate() {
+export async function downloadUserAccountTemplate(options = {}) {
   const XLSX = await getXlsx()
-  const sampleRows = [
-    ACCOUNT_HEADERS,
-    ['김교사', 'teacher123', '김교사', '교사', '', '', '국어'],
-    ['20912', 'student123', '홍길동', '학생', '20912', '', ''],
-  ]
+  const isHomeroom = normalizeRole(options?.actor?.role) === 'homeroom'
+  const sampleRows = isHomeroom
+    ? [
+      ACCOUNT_HEADERS,
+      ['10101', 'student123', '홍길동', '학생', '10101', '', '', ''],
+    ]
+    : [
+      ACCOUNT_HEADERS,
+      ['김교사', 'teacher123', '김교사', '교사', '', '', '', '국어'],
+      ['이담임', 'teacher123', '이담임', '담임교사', '', '1-1', '', ''],
+      ['10101', 'student123', '홍길동', '학생', '10101', '', '', ''],
+    ]
   const ws = XLSX.utils.aoa_to_sheet(sampleRows)
   ws['!cols'] = [
     { wch: 16 },
@@ -492,6 +556,7 @@ export async function downloadUserAccountTemplate() {
     { wch: 12 },
     { wch: 10 },
     { wch: 12 },
+    { wch: 18 },
     { wch: 24 },
     { wch: 12 },
   ]
@@ -530,6 +595,9 @@ export async function parseUserAccountExcel(file) {
           studentNo: normalizedRole === 'student'
             ? String(mapped.studentNo || loginId).trim()
             : String(mapped.studentNo || '').trim(),
+          homeroomClass: normalizedRole === 'homeroom'
+            ? normalizeHomeroomClass(mapped.homeroomClass)
+            : '',
           email: String(mapped.email || '').trim(),
           school: String(mapped.school || '').trim(),
           phone: String(mapped.phone || '').trim(),
@@ -609,14 +677,23 @@ export async function getUserProfile(uid) {
 const _listUsersCache = { data: null, ts: 0 }
 const LIST_USERS_TTL = Infinity // 명시적 새로고침/데이터 변경 시만 무효화
 
-export async function listUsers({ forceRefresh = false } = {}) {
+export async function listUsers({ forceRefresh = false, actor = null } = {}) {
+  const scopeRows = (rows) => {
+    if (normalizeRole(actor?.role) !== 'homeroom') return rows
+    const manager = assertUserManagementActor(actor)
+    return rows.filter((row) => {
+      if (row.role !== 'student') return false
+      return getStudentClassKey(row.studentNo || row.loginId) === manager.homeroomClass
+    })
+  }
+
   if (!isFirebaseEnabled()) {
-    return getLocalUsers().map((item) => normalizeUser(item.uid, item))
+    return scopeRows(getLocalUsers().map((item) => normalizeUser(item.uid, item)))
   }
 
   const now = Date.now()
   if (!forceRefresh && _listUsersCache.data && now - _listUsersCache.ts < LIST_USERS_TTL) {
-    return _listUsersCache.data
+    return scopeRows(_listUsersCache.data)
   }
 
   const usersRef = collection(db, COLLECTION)
@@ -629,7 +706,7 @@ export async function listUsers({ forceRefresh = false } = {}) {
   })
   _listUsersCache.data = sorted
   _listUsersCache.ts = now
-  return sorted
+  return scopeRows(sorted)
 }
 
 export function invalidateUserCache() {
@@ -668,6 +745,7 @@ export async function updateUserByAdmin(uid, patch = {}) {
   if (patch.subject != null) payload.subject = String(patch.subject || '').trim()
   if (patch.studentNo != null) payload.studentNo = String(patch.studentNo || '').trim()
   if (patch.role != null) payload.role = normalizeRole(patch.role)
+  if (patch.homeroomClass != null) payload.homeroomClass = normalizeHomeroomClass(patch.homeroomClass)
 
   if (Object.keys(payload).length === 0) {
     throw new Error('변경할 항목이 없습니다.')
@@ -683,6 +761,13 @@ export async function updateUserByAdmin(uid, patch = {}) {
     const nextStudentNo = payload.studentNo != null ? payload.studentNo : existing.studentNo
     if (nextRole === 'student' && !isValidStudentNo(nextStudentNo)) {
       throw new Error('학생 학번은 5자리 숫자여야 합니다.')
+    }
+    if (nextRole === 'homeroom') {
+      const nextHomeroomClass = payload.homeroomClass || normalizeHomeroomClass(existing.homeroomClass)
+      if (!nextHomeroomClass) throw new Error('담임교사의 담당 학급을 입력해주세요.')
+      payload.homeroomClass = nextHomeroomClass
+    } else {
+      payload.homeroomClass = ''
     }
 
     const next = { ...existing, ...payload }
@@ -702,6 +787,13 @@ export async function updateUserByAdmin(uid, patch = {}) {
   if (nextRole === 'student' && !isValidStudentNo(nextStudentNo)) {
     throw new Error('학생 학번은 5자리 숫자여야 합니다.')
   }
+  if (nextRole === 'homeroom') {
+    const nextHomeroomClass = payload.homeroomClass || normalizeHomeroomClass(existingData.homeroomClass)
+    if (!nextHomeroomClass) throw new Error('담임교사의 담당 학급을 입력해주세요.')
+    payload.homeroomClass = nextHomeroomClass
+  } else {
+    payload.homeroomClass = ''
+  }
 
   await updateDoc(ref, {
     ...payload,
@@ -711,7 +803,8 @@ export async function updateUserByAdmin(uid, patch = {}) {
   return getUserProfile(targetUid)
 }
 
-export async function resetUserPasswordByAdmin(uid, nextPassword) {
+export async function resetUserPasswordByAdmin(uid, nextPassword, options = {}) {
+  const actor = assertUserManagementActor(options?.actor)
   const targetUid = String(uid || '').trim()
   const password = String(nextPassword || '')
   if (!targetUid) {
@@ -726,6 +819,7 @@ export async function resetUserPasswordByAdmin(uid, nextPassword) {
     if (!existing) {
       throw new Error('대상 계정을 찾을 수 없습니다.')
     }
+    assertActorCanManageAccount(actor, existing)
     const passwordHash = await hashPassword(existing.loginId, password)
     localUsers.set(targetUid, {
       ...existing,
@@ -741,6 +835,8 @@ export async function resetUserPasswordByAdmin(uid, nextPassword) {
     throw new Error('대상 계정을 찾을 수 없습니다.')
   }
 
+  assertActorCanManageAccount(actor, normalizeUser(snapshot.id, snapshot.data()))
+
   const loginId = String(snapshot.data()?.loginId || '')
   if (!loginId) {
     throw new Error('대상 계정의 아이디 정보가 없습니다.')
@@ -754,7 +850,8 @@ export async function resetUserPasswordByAdmin(uid, nextPassword) {
   return { ok: true }
 }
 
-export async function resetStudentPasswordsByAdmin(nextPassword) {
+export async function resetStudentPasswordsByAdmin(nextPassword, options = {}) {
+  const actor = assertUserManagementActor(options?.actor)
   const password = String(nextPassword || '')
   if (!password) {
     throw new Error('비밀번호를 입력해주세요.')
@@ -764,6 +861,7 @@ export async function resetStudentPasswordsByAdmin(nextPassword) {
     let count = 0
     for (const [uid, existing] of localUsers.entries()) {
       if (normalizeRole(existing?.role) !== 'student') continue
+      if (actor.role === 'homeroom' && getStudentClassKey(existing.studentNo || existing.loginId) !== actor.homeroomClass) continue
       const passwordHash = await hashPassword(existing.loginId, password)
       localUsers.set(uid, {
         ...existing,
@@ -785,7 +883,11 @@ export async function resetStudentPasswordsByAdmin(nextPassword) {
     throw new Error('초기화할 학생 계정이 없습니다.')
   }
 
-  const docs = snapshot.docs.filter((item) => String(item.data()?.loginId || '').trim())
+  const docs = snapshot.docs.filter((item) => {
+    if (!String(item.data()?.loginId || '').trim()) return false
+    if (actor.role !== 'homeroom') return true
+    return getStudentClassKey(item.data()?.studentNo || item.data()?.loginId) === actor.homeroomClass
+  })
   if (docs.length === 0) {
     throw new Error('초기화할 학생 계정이 없습니다.')
   }
