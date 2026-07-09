@@ -955,7 +955,7 @@ function ForcePasswordChangeModal({ user, onComplete, onChangePassword, onSignOu
 
 function Field({ label, children, hint }) {
   return (
-    <div style={{ display: "grid", gap: 4 }}>
+    <div style={{ display: "grid", gap: 4, alignContent: "start" }}>
       <div style={{ fontSize: 13, color: t.textSub, fontWeight: 600 }}>{label}</div>
       {children}
       {hint ? <div style={{ fontSize: 12, color: t.textSub }}>{hint}</div> : null}
@@ -963,9 +963,9 @@ function Field({ label, children, hint }) {
   );
 }
 
-function Select({ value, onChange, children }) {
+function Select({ value, onChange, children, disabled = false }) {
   return (
-    <select value={value} onChange={onChange} style={{ ...inputBase, paddingRight: 28 }}>
+    <select value={value} onChange={onChange} disabled={disabled} style={{ ...inputBase, paddingRight: 28 }}>
       {children}
     </select>
   );
@@ -2557,16 +2557,37 @@ function ClubRoomManager({
 
 function ClubRoomManagementPage({
   roomLabel = "동아리실",
+  unitLabel = "동아리",
   rooms,
   clubs,
+  assignableClubs,
   loading,
   isAdmin,
   onAdd,
   onDelete,
+  onAssign,
   onRefresh,
 }) {
+  const [assignClubId, setAssignClubId] = useState("");
+  const [assignRoomName, setAssignRoomName] = useState("");
   const rows = Array.isArray(rooms) ? rooms : [];
   const allClubs = Array.isArray(clubs) ? clubs : [];
+  const assignmentClubs = (Array.isArray(assignableClubs) ? assignableClubs : allClubs)
+    .filter((club) => !club.legacy);
+  const assignmentRoomNames = Array.from(new Set([
+    "미정",
+    ...rows.map((room) => String(room?.name || "").trim()).filter(Boolean),
+    ...allClubs.map((club) => String(club?.room || "").trim()).filter(Boolean),
+  ])).sort((a, b) => {
+    if (a === "미정") return 1;
+    if (b === "미정") return -1;
+    return a.localeCompare(b, "ko");
+  });
+
+  async function submitAssignment() {
+    if (loading || !assignClubId || !assignRoomName || !onAssign) return;
+    await onAssign(assignClubId, assignRoomName);
+  }
 
   // Build room → clubs mapping
   const roomClubMap = new Map();
@@ -2599,6 +2620,67 @@ function ClubRoomManagementPage({
           onDelete={onDelete}
           onRefresh={onRefresh}
         />
+      ) : null}
+
+      {onAssign ? (
+        <section style={{ ...cardStyle, background: "#f8fbff", borderColor: "#d8e5ff" }}>
+          <div style={{ marginBottom: 10 }}>
+            <h2 style={{ fontSize: 17, marginBottom: 4 }}>프로그램 바로 배정</h2>
+            <div style={{ fontSize: 12, color: t.textSub }}>
+              배정할 {unitLabel}와 장소를 선택하면 이 화면에서 바로 변경할 수 있습니다.
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8, alignItems: "end" }}>
+            <Field label={`${unitLabel} 선택`}>
+              <Select
+                value={assignClubId}
+                onChange={(event) => {
+                  const nextClubId = event.target.value;
+                  const nextClub = assignmentClubs.find((club) => club.id === nextClubId);
+                  setAssignClubId(nextClubId);
+                  setAssignRoomName(String(nextClub?.room || "").trim() || "미정");
+                }}
+              >
+                <option value="">배정할 {unitLabel}를 선택하세요</option>
+                {assignmentClubs.map((club) => (
+                  <option key={club.id} value={club.id}>
+                    {club.clubName} (현재: {club.room || "미정"})
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label={`${roomLabel} 선택`}>
+              <Select
+                value={assignRoomName}
+                onChange={(event) => setAssignRoomName(event.target.value)}
+                disabled={!assignClubId}
+              >
+                <option value="">장소를 선택하세요</option>
+                {assignmentRoomNames.map((roomName) => (
+                  <option key={roomName} value={roomName}>{roomName}</option>
+                ))}
+              </Select>
+            </Field>
+            <button
+              onClick={submitAssignment}
+              disabled={loading || !assignClubId || !assignRoomName}
+              style={{
+                ...buttonBase,
+                minHeight: 44,
+                background: loading || !assignClubId || !assignRoomName ? "#cfd8e3" : t.accent,
+                color: "#fff",
+                fontWeight: 700,
+              }}
+            >
+              {loading ? "저장 중..." : "장소 배정"}
+            </button>
+          </div>
+          {assignmentClubs.length === 0 ? (
+            <div style={{ marginTop: 8, fontSize: 12, color: t.textSub }}>
+              배정할 수 있는 {unitLabel}가 없습니다.
+            </div>
+          ) : null}
+        </section>
       ) : null}
 
       <section style={cardStyle}>
@@ -6495,6 +6577,7 @@ function RequestCardUserSection({
 function UserManagementPanel({
   currentUser,
   users,
+  classOptions = [],
   onRefresh,
   onCreate,
   onBulkUpload,
@@ -6530,6 +6613,12 @@ function UserManagementPanel({
 
   const teacherUsers = users.filter((u) => u.role === "teacher" || u.role === "homeroom" || u.role === "admin");
   const studentUsers = users.filter((u) => u.role === "student");
+  const homeroomClassOptions = Array.from(new Set([
+    ...(Array.isArray(classOptions) ? classOptions : []),
+    ...teacherUsers.map((row) => String(row.homeroomClass || "").trim()).filter(Boolean),
+    String(createForm.homeroomClass || "").trim(),
+    String(editForm.homeroomClass || "").trim(),
+  ].filter(Boolean))).sort(compareClassKeys);
 
   const baseList = userListTab === "teacher" ? teacherUsers : studentUsers;
   const filtered = baseList.filter((u) => {
@@ -6588,7 +6677,9 @@ function UserManagementPanel({
                     ...prev,
                     role: e.target.value,
                     studentNo: e.target.value === "student" ? prev.studentNo : "",
-                    homeroomClass: e.target.value === "homeroom" ? prev.homeroomClass : "",
+                    homeroomClass: e.target.value === "homeroom"
+                      ? prev.homeroomClass || homeroomClassOptions[0] || ""
+                      : "",
                   }))}
                 >
                   <option value="student">학생</option>
@@ -6617,13 +6708,16 @@ function UserManagementPanel({
               />
             </Field>
             {!isHomeroomManager && createForm.role === "homeroom" ? (
-              <Field label="담당 학급(담임교사)" hint="예: 1-1">
-                <input
-                  style={inputBase}
+              <Field label="담당 학급(담임교사)" hint="등록된 학생 학번을 기준으로 구성된 학급 목록입니다.">
+                <Select
                   value={createForm.homeroomClass}
                   onChange={(e) => setCreateForm((prev) => ({ ...prev, homeroomClass: e.target.value }))}
-                  placeholder="예: 1-1"
-                />
+                >
+                  <option value="">담당 학급 선택</option>
+                  {homeroomClassOptions.map((classKey) => (
+                    <option key={classKey} value={classKey}>{formatClassKey(classKey)}</option>
+                  ))}
+                </Select>
               </Field>
             ) : null}
           </div>
@@ -6763,7 +6857,9 @@ function UserManagementPanel({
                             onChange={(e) => setEditForm((prev) => ({
                               ...prev,
                               role: e.target.value,
-                              homeroomClass: e.target.value === "homeroom" ? prev.homeroomClass : "",
+                              homeroomClass: e.target.value === "homeroom"
+                                ? prev.homeroomClass || homeroomClassOptions[0] || ""
+                                : "",
                             }))}
                           >
                             <option value="teacher">교사</option>
@@ -6777,12 +6873,15 @@ function UserManagementPanel({
                       <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
                         {editing ? (
                           editForm.role === "homeroom" ? (
-                            <input
+                            <Select
                               value={editForm.homeroomClass}
                               onChange={(e) => setEditForm((prev) => ({ ...prev, homeroomClass: e.target.value }))}
-                              style={{ ...inputBase, padding: "6px 8px" }}
-                              placeholder="예: 1-1"
-                            />
+                            >
+                              <option value="">담당 학급 선택</option>
+                              {homeroomClassOptions.map((classKey) => (
+                                <option key={classKey} value={classKey}>{formatClassKey(classKey)}</option>
+                              ))}
+                            </Select>
                           ) : (
                             <input
                               value={editForm.subject}
@@ -8526,6 +8625,32 @@ export default function PrototypeApp({ studentOnly = false }) {
     }
   }
 
+  async function handleAssignClubRoom(clubId, roomName) {
+    const targetClub = visibleClubs.find((club) => club.id === clubId);
+    if (!targetClub) {
+      setMessage({ type: "error", text: "배정할 항목을 찾을 수 없습니다." });
+      return false;
+    }
+
+    const normalizedRoom = String(roomName || "").trim() || "미정";
+    setSavingRoom(true);
+    try {
+      await updateSchedule(targetClub.id, { room: normalizedRoom }, { actor: user });
+      invalidateScheduleCache();
+      await refreshClubs({ forceRefresh: true });
+      setMessage({
+        type: "ok",
+        text: `장소 배정 완료: ${targetClub.clubName} → ${normalizedRoom}`,
+      });
+      return true;
+    } catch (error) {
+      withMessageError(error, "장소 배정에 실패했습니다.");
+      return false;
+    } finally {
+      setSavingRoom(false);
+    }
+  }
+
   async function handleDeleteClub(club) {
     if (user.role !== "admin" && Number(club.memberCount) > 0) {
       alert(`승인된 학생이 ${club.memberCount}명 있어 삭제할 수 없습니다.\n관리자에게 요청해 주세요.`);
@@ -9772,12 +9897,15 @@ export default function PrototypeApp({ studentOnly = false }) {
       {tab === "clubRooms" && (user.role === "admin" || user.role === "teacher") && activeProgram?.features?.room !== false ? (
         <ClubRoomManagementPage
           roomLabel={getProgramLabels(activeProgram).room}
+          unitLabel={getProgramLabels(activeProgram).unit}
           rooms={clubRooms}
           clubs={visibleClubs}
+          assignableClubs={user.role === "admin" ? visibleClubs : teacherOwnedClubs}
           loading={savingRoom}
           isAdmin={user.role === "admin"}
           onAdd={handleCreateClubRoom}
           onDelete={handleDeleteClubRoom}
+          onAssign={handleAssignClubRoom}
           onRefresh={async () => {
             try {
               setSavingRoom(true);
@@ -9938,6 +10066,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         <UserManagementPanel
           currentUser={user}
           users={users}
+          classOptions={studentClassOptions}
           bulkResetLoading={bulkResetLoading}
           onRefresh={async () => {
             try {
