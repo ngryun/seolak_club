@@ -7993,6 +7993,12 @@ export default function PrototypeApp({ studentOnly = false }) {
   } = useNotifications(user?.uid);
 
   const [tab, setTab] = useState("clubs");
+  const attendanceDirtyRef = useRef(false);
+  const guardedSetTab = (nextTab) => {
+    if (tab === "attendance" && nextTab !== "attendance" && attendanceDirtyRef.current
+      && !window.confirm("저장되지 않은 출결 변경이 있습니다. 탭을 이동하면 입력한 내용이 사라집니다. 계속할까요?")) return;
+    setTab(nextTab);
+  };
   const [loading, setLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [myPasswordLoading, setMyPasswordLoading] = useState(false);
@@ -8458,6 +8464,8 @@ export default function PrototypeApp({ studentOnly = false }) {
   async function handleChangeProgram(nextProgramId) {
     const target = programs.find((row) => row.id === nextProgramId);
     if (!target || target.id === activeProgramId) return;
+    if (attendanceDirtyRef.current
+      && !window.confirm("저장되지 않은 출결 변경이 있습니다. 프로그램을 전환하면 입력한 내용이 사라집니다. 계속할까요?")) return;
     if (user?.role === "student" && (
       target.studentVisible === false
       || !isStudentEligibleForProgram(target, user.studentNo || user.loginId)
@@ -9960,7 +9968,9 @@ export default function PrototypeApp({ studentOnly = false }) {
         withMessageError(error, "회원 목록을 불러오지 못했습니다.");
       })
       .finally(() => {
-        if (mounted) setLoading(false);
+        // usersLoaded 갱신으로 이 effect가 재실행되면 cleanup(mounted=false)이
+        // finally보다 먼저 실행될 수 있어, 로딩 해제는 조건 없이 수행한다.
+        setLoading(false);
       });
 
     return () => {
@@ -9991,7 +10001,9 @@ export default function PrototypeApp({ studentOnly = false }) {
         withMessageError(error, "동아리 통계를 불러오지 못했습니다.");
       })
       .finally(() => {
-        if (mounted) setLoading(false);
+        // roundStatsClubIdsKey 갱신으로 effect가 재실행되면 cleanup(mounted=false)이
+        // finally보다 먼저 실행될 수 있어, 로딩 해제는 조건 없이 수행한다.
+        setLoading(false);
       });
 
     return () => {
@@ -10101,7 +10113,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   }
 
   return (
-    <Layout user={user} tab={tab} setTab={setTab} onSignOut={handleSignOut} isStudentLeader={isStudentLeader} programs={rolePrograms} activeProgramId={activeProgramId} onChangeProgram={handleChangeProgram} programCycles={programCycles} notifications={notifications} unreadCount={unreadCount} onMarkAsRead={handleNotifMarkAsRead} onMarkAllAsRead={handleNotifMarkAllAsRead}>
+    <Layout user={user} tab={tab} setTab={guardedSetTab} onSignOut={handleSignOut} isStudentLeader={isStudentLeader} programs={rolePrograms} activeProgramId={activeProgramId} onChangeProgram={handleChangeProgram} programCycles={programCycles} notifications={notifications} unreadCount={unreadCount} onMarkAsRead={handleNotifMarkAsRead} onMarkAllAsRead={handleNotifMarkAllAsRead}>
       <MessageBar message={message} onClose={() => setMessage({ type: "", text: "" })} />
 
       {loading ? (
@@ -10170,6 +10182,7 @@ export default function PrototypeApp({ studentOnly = false }) {
           program={activeProgram}
           clubs={user.role === "admin" ? visibleClubs : teacherOwnedClubs}
           onMessage={(type, text) => setMessage({ type, text })}
+          onDirtyChange={(dirty) => { attendanceDirtyRef.current = dirty; }}
         />
       ) : null}
 
