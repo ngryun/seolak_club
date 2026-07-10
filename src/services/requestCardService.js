@@ -255,14 +255,6 @@ function assertRequestCardPayload(payload) {
   return result
 }
 
-function ensureAdmin(actor) {
-  const user = assertActor(actor)
-  if (user.role !== 'admin') {
-    throw new Error('관리자만 사용할 수 있습니다.')
-  }
-  return user
-}
-
 function ensureAdminOrTeacher(actor) {
   const user = assertActor(actor)
   if (user.role !== 'admin' && user.role !== 'teacher') {

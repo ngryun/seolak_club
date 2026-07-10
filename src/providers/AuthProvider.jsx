@@ -1,5 +1,6 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { isFirebaseEnabled } from '../lib/firebase'
+import { AuthContext } from './authContext'
 import {
   bootstrapDefaultAdminIfNeeded,
   ensureDefaultAdminAccount,
@@ -9,7 +10,6 @@ import {
 } from '../services/userService'
 import { clearAttendanceApiSession, createAttendanceApiSession } from '../services/attendanceService'
 
-const AuthContext = createContext(null)
 const SESSION_KEY = 'app.session.v3'
 
 function readInitialSession() {
@@ -215,12 +215,4 @@ export function AuthProvider({ children }) {
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-}
-
-export function useAuthContext() {
-  const value = useContext(AuthContext)
-  if (!value) {
-    throw new Error('useAuthContext must be used inside AuthProvider')
-  }
-  return value
 }

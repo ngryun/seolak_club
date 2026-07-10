@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
 import { useNotifications } from "../../hooks/useNotifications";
 import {
@@ -374,7 +374,7 @@ function requestCardTypeColor(value) {
   return { bg: "#edf4ff", border: "#c8dcff", color: t.accent };
 }
 
-function requestCardPhaseMeta(state, card) {
+function requestCardPhaseMeta(state) {
   if (state?.phase === "open") {
     return { label: "신청 중", bg: "#eef7ee", border: "#cbe6cd", color: t.ok };
   }
@@ -563,11 +563,6 @@ function getRequestCardStatusText(card, state, application) {
     description: "현재 상태를 확인할 수 없습니다.",
     note: null,
   };
-}
-
-function canUseRequestCard(card, user) {
-  const normalizedRole = user?.role === "admin" ? "teacher" : user?.role;
-  return card?.targetRole === normalizedRole;
 }
 
 function requestCardUserGroupKey(state) {
@@ -831,7 +826,7 @@ function StudentLoginPanel({ onLogin, loading, error }) {
   );
 }
 
-function ForcePasswordChangeModal({ user, onComplete, onChangePassword, onSignOut, loading }) {
+function ForcePasswordChangeModal({ onComplete, onChangePassword, onSignOut, loading }) {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -998,7 +993,6 @@ function hasMissingClubTeacherDisplay(club) {
 function formatClubTeacherLabel(club, userMap) {
   const teacherUids = getClubTeacherUids(club);
   const teacherNames = Array.isArray(club?.teacherNames) ? club.teacherNames : [];
-  const teacherLoginIds = Array.isArray(club?.teacherLoginIds) ? club.teacherLoginIds : [];
 
   const labels = teacherUids.map((teacherUid, index) => {
     const teacher = userMap?.get?.(teacherUid) || null;
@@ -1389,14 +1383,9 @@ function StudentSearchCombobox({
   onChange,
 }) {
   const wrapperRef = useRef(null);
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-
   const selected = students.find((s) => s.uid === value) || null;
-
-  useEffect(() => {
-    setQuery(selected ? formatStudentLabel(selected) : "");
-  }, [selected?.uid, selected?.studentNo, selected?.name, selected?.loginId]);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState(() => selected ? formatStudentLabel(selected) : "");
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -1430,6 +1419,7 @@ function StudentSearchCombobox({
 
   function handleSelect(student) {
     onChange(student.uid);
+    setQuery(formatStudentLabel(student));
     setOpen(false);
   }
 
@@ -2214,17 +2204,14 @@ function ClubForm({
   const isAdmin = actor?.role === "admin";
   const labels = getProgramLabels(program);
   const features = program?.features || { leader: true, plan: true, room: true, interview: true };
-  const selectedTeacherUids = useMemo(
-    () => getClubTeacherUids(form),
-    [form?.teacherUids, form?.teacherUid],
-  );
-  const teacherDisplay = useMemo(() => {
+  const selectedTeacherUids = getClubTeacherUids(form);
+  const teacherDisplay = (() => {
     const labelMap = new Map(
       teachers.map((u) => [u.uid, `${u.name} (${u.loginId})`]),
     );
     return selectedTeacherUids.map((uid) => labelMap.get(uid) || uid).join(", ") || "미지정";
-  }, [selectedTeacherUids, teachers]);
-  const normalizedRoomOptions = useMemo(() => {
+  })();
+  const normalizedRoomOptions = (() => {
     const map = new Map();
     (roomOptions || []).forEach((row) => {
       const name = String(row?.name || "").trim();
@@ -2243,7 +2230,7 @@ function ClubForm({
       if (b.name === "미정") return 1;
       return a.name.localeCompare(b.name, "ko");
     });
-  }, [roomOptions, form?.room]);
+  })();
   const roomClubMap = useMemo(() => {
     const map = new Map();
     (clubs || []).forEach((c) => {
@@ -2327,6 +2314,7 @@ function ClubForm({
           {features.leader ? (
             <Field label={`${labels.leader} 학번(학생계정 연결)`}>
               <StudentSearchCombobox
+                key={form.leaderUid || "empty"}
                 students={students}
                 value={form.leaderUid}
                 onChange={(nextUid) => setForm((prev) => ({ ...prev, leaderUid: nextUid }))}
@@ -3755,8 +3743,6 @@ function ApplicantsDialog({
   ).length;
   const randomDisabled = loading || pendingCurrent === 0 || randomLocked || cycle?.status === "closed" || !selectionReady;
 
-  const statusLabel = (s) => s === "approved" ? "승인" : s === "rejected" ? "반려" : s === "cancelled" ? "취소" : "대기";
-
   const approvedOnly = rows.filter((r) => r.status === "approved");
 
   const handleExcelDownload = async () => {
@@ -3875,6 +3861,7 @@ function ApplicantsDialog({
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8 }}>
             <StudentSearchCombobox
+              key={manualStudentUid || "empty"}
               students={students}
               value={manualStudentUid}
               onChange={setManualStudentUid}
@@ -4244,6 +4231,7 @@ function InterviewSelectDialog({
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8 }}>
               <StudentSearchCombobox
+                key={selectedStudentUid || "empty"}
                 students={candidateStudents}
                 value={selectedStudentUid}
                 onChange={setSelectedStudentUid}
@@ -6054,7 +6042,7 @@ function RequestCardAdminPanel({
       <div style={{ display: "grid", gap: 10 }}>
         {visibleCards.map((card) => {
           const state = getRequestCardState(card);
-          const phaseMeta = requestCardPhaseMeta(state, card);
+          const phaseMeta = requestCardPhaseMeta(state);
           const typeColor = requestCardTypeColor(card.cardType);
           const capacity = Math.max(0, Number(card.capacity || 0));
           const applicantCount = Math.max(0, Number(card.applicantCount || 0));
@@ -6325,7 +6313,7 @@ function RequestCardUserSection({
   const renderCardRows = (rows) => (
     <div style={{ display: "grid", gap: 8 }}>
       {rows.map(({ card, state }) => {
-        const phaseMeta = requestCardPhaseMeta(state, card);
+        const phaseMeta = requestCardPhaseMeta(state);
         const typeColor = requestCardTypeColor(card.cardType);
         const myApplication = appMap.get(card.id) || null;
         const resultMeta = requestCardResultMeta(myApplication?.status, state);
@@ -7255,13 +7243,6 @@ function ProfilePanel({ user, onSave, onChangePassword, loading, passwordLoading
     confirmPassword: "",
   });
 
-  useEffect(() => {
-    setForm({
-      name: user?.name || "",
-      subject: user?.subject || "",
-    });
-  }, [user?.uid, user?.name, user?.subject]);
-
   return (
     <section style={{ ...cardStyle, maxWidth: 600 }}>
       <h2 style={{ fontSize: 17, marginBottom: 12 }}>내 정보</h2>
@@ -8009,7 +7990,6 @@ export default function PrototypeApp({ studentOnly = false }) {
     unreadCount,
     markAsRead: handleNotifMarkAsRead,
     markAllAsRead: handleNotifMarkAllAsRead,
-    refresh: refreshNotifications,
   } = useNotifications(user?.uid);
 
   const [tab, setTab] = useState("clubs");
@@ -8135,7 +8115,7 @@ export default function PrototypeApp({ studentOnly = false }) {
     setRequestCardsLoaded(false);
     setMyRequestCardApplicationsLoaded(false);
     clubDisplayBackfillAttemptedRef.current = false;
-  }, [isAuthenticated, user?.uid, user?.role]);
+  }, [isAuthenticated, user]);
 
   async function refreshPrograms({ forceRefresh = false } = {}) {
     await ensureDefaultProgram();
@@ -8421,10 +8401,12 @@ export default function PrototypeApp({ studentOnly = false }) {
     }
   }
 
+  const loadAllEffect = useEffectEvent(loadAll);
+
   useEffect(() => {
     if (!isAuthenticated || !user) return;
-    loadAll();
-  }, [isAuthenticated, user?.uid, user?.role]);
+    loadAllEffect();
+  }, [isAuthenticated, user]);
 
   useEffect(() => {
     if (!lastSyncError) return;
@@ -9909,11 +9891,20 @@ export default function PrototypeApp({ studentOnly = false }) {
     }
   }, [activeProgram?.features?.attendance, tab, user?.role]);
 
+  const refreshClubRoomsEffect = useEffectEvent(refreshClubRooms);
+  const refreshRoundStatsEffect = useEffectEvent(refreshRoundStats);
+  const refreshUsersEffect = useEffectEvent(refreshUsers);
+  const refreshRequestCardsEffect = useEffectEvent(refreshRequestCards);
+  const refreshMyRequestCardApplicationsEffect = useEffectEvent(refreshMyRequestCardApplications);
+  const refreshClubsEffect = useEffectEvent(refreshClubs);
+  const refreshCycleEffect = useEffectEvent(refreshCycle);
+  const refreshRecruitmentViewsEffect = useEffectEvent(refreshRecruitmentViews);
+
   useEffect(() => {
     if (!isAuthenticated || !user) return;
     if (!isTabAllowedForRole(tab, user.role, { isStudentLeader })) return;
     syncTabToUrl(tab);
-  }, [isAuthenticated, isStudentLeader, tab, user?.role]);
+  }, [isAuthenticated, isStudentLeader, tab, user]);
 
   useEffect(() => {
     if (!isAuthenticated || !user) return;
@@ -9923,9 +9914,9 @@ export default function PrototypeApp({ studentOnly = false }) {
 
     async function loadLeaderResources() {
       const tasks = [];
-      if (clubRooms.length === 0) tasks.push(refreshClubRooms());
+      if (clubRooms.length === 0) tasks.push(refreshClubRoomsEffect());
       if (roundStatsClubIdsKey !== leaderEditableClubIdsKey) {
-        tasks.push(refreshRoundStats(leaderEditableClubs, cycle));
+        tasks.push(refreshRoundStatsEffect(leaderEditableClubs, cycle));
       }
       if (tasks.length === 0) return;
 
@@ -9946,15 +9937,14 @@ export default function PrototypeApp({ studentOnly = false }) {
     };
   }, [
     clubRooms.length,
-    cycle.currentRound,
-    cycle.status,
+    cycle,
     isAuthenticated,
     isStudentLeader,
     leaderEditableClubIdsKey,
+    leaderEditableClubs,
     roundStatsClubIdsKey,
     tab,
-    user?.role,
-    user?.uid,
+    user,
   ]);
 
   useEffect(() => {
@@ -9964,7 +9954,7 @@ export default function PrototypeApp({ studentOnly = false }) {
     let mounted = true;
     setLoading(true);
 
-    refreshUsers()
+    refreshUsersEffect()
       .catch((error) => {
         if (!mounted) return;
         withMessageError(error, "회원 목록을 불러오지 못했습니다.");
@@ -9979,8 +9969,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   }, [
     isAuthenticated,
     tab,
-    user?.role,
-    user?.uid,
+    user,
     usersLoaded,
   ]);
 
@@ -9996,7 +9985,7 @@ export default function PrototypeApp({ studentOnly = false }) {
     let mounted = true;
     setLoading(true);
 
-    refreshRoundStats(targetClubs, cycle)
+    refreshRoundStatsEffect(targetClubs, cycle)
       .catch((error) => {
         if (!mounted) return;
         withMessageError(error, "동아리 통계를 불러오지 못했습니다.");
@@ -10009,13 +9998,14 @@ export default function PrototypeApp({ studentOnly = false }) {
       mounted = false;
     };
   }, [
-    cycle.currentRound,
-    cycle.status,
+    cycle,
     isAuthenticated,
     roundStatsClubIdsKey,
     tab,
+    teacherOwnedClubs,
     teacherOwnedClubIdsKey,
-    user?.role,
+    user,
+    visibleClubs,
     visibleClubIdsKey,
   ]);
 
@@ -10034,8 +10024,8 @@ export default function PrototypeApp({ studentOnly = false }) {
     setRequestCardLoading(true);
 
     const tasks = [];
-    if (shouldLoadCards) tasks.push(refreshRequestCards());
-    if (shouldLoadMyApps) tasks.push(refreshMyRequestCardApplications());
+    if (shouldLoadCards) tasks.push(refreshRequestCardsEffect());
+    if (shouldLoadMyApps) tasks.push(refreshMyRequestCardApplicationsEffect());
 
     Promise.all(tasks)
       .catch((error) => {
@@ -10054,8 +10044,7 @@ export default function PrototypeApp({ studentOnly = false }) {
     myRequestCardApplicationsLoaded,
     requestCardsLoaded,
     tab,
-    user?.role,
-    user?.uid,
+    user,
   ]);
 
   useEffect(() => {
@@ -10065,8 +10054,8 @@ export default function PrototypeApp({ studentOnly = false }) {
     let mounted = true;
     setStudentStatusLoading(true);
 
-    Promise.all([refreshClubs(), refreshUsers(), refreshCycle()])
-      .then(([clubRows, userRows, cycleInfo]) => refreshRecruitmentViews(clubRows, cycleInfo, userRows))
+    Promise.all([refreshClubsEffect(), refreshUsersEffect(), refreshCycleEffect()])
+      .then(([clubRows, userRows, cycleInfo]) => refreshRecruitmentViewsEffect(clubRows, cycleInfo, userRows))
       .catch((error) => {
         if (!mounted) return;
         withMessageError(error, "학생 신청 현황을 불러오지 못했습니다.");
@@ -10083,8 +10072,7 @@ export default function PrototypeApp({ studentOnly = false }) {
     isAuthenticated,
     studentStatusRows.length,
     tab,
-    user?.role,
-    user?.uid,
+    user,
   ]);
 
   if (isLoading) {
@@ -10104,7 +10092,6 @@ export default function PrototypeApp({ studentOnly = false }) {
   if (forcePasswordChange && user?.role === "student") {
     return (
       <ForcePasswordChangeModal
-        user={user}
         onComplete={() => setForcePasswordChange(false)}
         onChangePassword={handleChangeMyPassword}
         onSignOut={handleSignOut}
@@ -10474,6 +10461,7 @@ export default function PrototypeApp({ studentOnly = false }) {
 
       {tab === "profile" ? (
         <ProfilePanel
+          key={`${user.uid}:${user.name}:${user.subject}`}
           user={user}
           onSave={handleSaveMyProfile}
           onChangePassword={handleChangeMyPassword}

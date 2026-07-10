@@ -1,4 +1,4 @@
-import { useAuthContext } from '../providers/AuthProvider'
+import { useAuthContext } from '../providers/authContext'
 
 export function useAuth() {
   return useAuthContext()

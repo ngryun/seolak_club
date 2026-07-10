@@ -14,12 +14,12 @@ export function AppRouter() {
   useEffect(() => {
     if (path === '/prototype') {
       window.history.replaceState({}, '', `/${window.location.search}${window.location.hash}`)
-      setPath('/')
     }
   }, [path])
 
-  const studentOnly = path === '/student'
-  const publicAttendanceMatch = path.match(/^\/attendance\/public\/([^/]+)$/u)
+  const routePath = path === '/prototype' ? '/' : path
+  const studentOnly = routePath === '/student'
+  const publicAttendanceMatch = routePath.match(/^\/attendance\/public\/([^/]+)$/u)
 
   if (publicAttendanceMatch) {
     return <PublicAttendancePage token={decodeURIComponent(publicAttendanceMatch[1])} />

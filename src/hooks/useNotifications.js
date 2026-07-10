@@ -6,30 +6,26 @@ import {
 } from '../services/notificationService'
 
 export function useNotifications(uid) {
-  const [notifications, setNotifications] = useState([])
-  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState({ uid: '', items: [] })
+  const notifications = result.uid === uid ? result.items : []
+  const loading = Boolean(uid) && result.uid !== uid
 
   const unreadCount = notifications.filter((n) => !n.read).length
 
   // 앱 진입(uid 변경) 시 1회만 로드 — 주기적 폴링/onSnapshot 없음
   useEffect(() => {
-    if (!uid) {
-      setNotifications([])
-      return
-    }
+    if (!uid) return undefined
 
     let active = true
-    setLoading(true)
 
     listNotifications(uid)
       .then((items) => {
         if (active) {
-          setNotifications(items)
-          setLoading(false)
+          setResult({ uid, items })
         }
       })
       .catch(() => {
-        if (active) setLoading(false)
+        if (active) setResult({ uid, items: [] })
       })
 
     return () => { active = false }
@@ -40,7 +36,7 @@ export function useNotifications(uid) {
     if (!uid) return
     try {
       const items = await listNotifications(uid)
-      setNotifications(items)
+      setResult({ uid, items })
     } catch {
       // ignore
     }
@@ -48,15 +44,19 @@ export function useNotifications(uid) {
 
   const handleMarkAsRead = useCallback(async (notificationId) => {
     await markAsRead(notificationId)
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === notificationId ? { ...n, read: true } : n)),
-    )
+    setResult((prev) => ({
+      ...prev,
+      items: prev.items.map((n) => (n.id === notificationId ? { ...n, read: true } : n)),
+    }))
   }, [])
 
   const handleMarkAllAsRead = useCallback(async () => {
     if (!uid) return
     await markAllAsRead(uid)
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
+    setResult((prev) => ({
+      ...prev,
+      items: prev.items.map((n) => ({ ...n, read: true })),
+    }))
   }, [uid])
 
   return {

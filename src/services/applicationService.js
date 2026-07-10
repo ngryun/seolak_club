@@ -528,15 +528,6 @@ function chunk(list, size = 450) {
   return rows
 }
 
-async function getAllApplications() {
-  if (!isFirebaseEnabled()) {
-    return [...localApplications]
-  }
-
-  const snapshot = await getDocs(collection(db, APPLICATIONS))
-  return snapshot.docs.map((item) => normalizeApplication(item.id, item.data()))
-}
-
 async function getApplicationsByCycle(cycleId) {
   if (!isFirebaseEnabled()) {
     return localApplications.filter((row) => row.cycleId === cycleId)

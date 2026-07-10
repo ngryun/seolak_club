@@ -80,7 +80,7 @@ export async function generateLessonActivities({ clubName, overview, lessonCount
   const result = await chatCompletion(messages, { maxTokens: 2000 })
   const lines = result
     .split('\n')
-    .map((line) => line.replace(/^\d+[\.\)\-\s]*/, '').trim())
+    .map((line) => line.replace(/^\d+[.)\s-]*/, '').trim())
     .filter(Boolean)
 
   // lessonCount에 맞게 조정

@@ -1,4 +1,3 @@
-/* global process, Buffer */
 import { createHmac, createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import { cert, getApps, initializeApp } from 'firebase-admin/app'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
