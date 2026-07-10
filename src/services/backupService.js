@@ -2,6 +2,7 @@ import { listSchedules } from './scheduleService'
 import { listUsers } from './userService'
 import { listClubMembers, listCurrentCycleApplications } from './applicationService'
 import { listPrograms } from './programService'
+import { exportAttendanceData } from './attendanceService'
 
 let xlsxModulePromise = null
 
@@ -38,10 +39,11 @@ function toStatusLabel(status) {
 export async function exportFullBackup() {
   const XLSX = await getXlsx()
 
-  const [clubs, users, programs] = await Promise.all([
+  const [clubs, users, programs, attendanceData] = await Promise.all([
     listSchedules({ includeLegacy: true }),
     listUsers(),
     listPrograms({ includeArchived: true }),
+    exportAttendanceData(),
   ])
 
   // 프로그램별 현재 사이클 신청 내역을 모두 수집
@@ -67,12 +69,14 @@ export async function exportFullBackup() {
     p.features?.plan ? 'O' : '',
     p.features?.room ? 'O' : '',
     p.features?.interview ? 'O' : '',
+    p.features?.attendance ? 'O' : '',
+    (p.attendanceSchedule || []).map((row) => `${row.date} ${row.period}교시${row.active === false ? '(보관)' : ''}${row.label ? ` ${row.label}` : ''}`).join(' / '),
     Array.isArray(p.targetClasses) && p.targetClasses.length > 0 ? p.targetClasses.join(', ') : '전체',
     p.status === 'archived' ? '보관' : '운영중',
     p.cycleId,
     p.id,
   ])
-  const programHeaders = ['프로그램명', '개설단위', '지망수', '대표학생', '계획서', '장소', '면접', '신청대상학급', '상태', '사이클ID', 'ID']
+  const programHeaders = ['프로그램명', '개설단위', '지망수', '대표학생', '계획서', '장소', '면접', '출석부', '출석일정', '신청대상학급', '상태', '사이클ID', 'ID']
 
   // 1. 동아리 목록 시트
   const clubRows = clubs.map((c) => [
@@ -149,6 +153,26 @@ export async function exportFullBackup() {
   ])
   const userHeaders = ['이름', '아이디', '역할', '학번', '담당학급', '학교', '전화번호', '이메일', '생성일시', 'UID']
 
+  // 5. 출석 회차 및 출결 내역 (운영 모드는 서버 전용 API, 데모 모드는 로컬 저장소)
+  const attendanceRecords = Array.isArray(attendanceData?.records) ? attendanceData.records : []
+  const attendanceSessionRows = attendanceRecords.map((record) => {
+    const club = clubs.find((row) => row.id === record.clubId)
+    const program = programs.find((row) => row.id === (record.programId || club?.programId))
+    const session = program?.attendanceSchedule?.find((row) => row.id === record.sessionId)
+    return [program?.name || '', club?.clubName || record.clubId || '', session?.date || '', session?.period || '', session?.label || '', record.status || 'open', record.publicEnabled ? 'O' : '', record.rosterSnapshot?.length || 0, record.sessionId || '']
+  })
+  const attendanceSessionHeaders = ['프로그램', '수업', '날짜', '교시', '설명', '회차상태', 'QR활성', '명단인원', '회차ID']
+  const attendanceEntryRows = attendanceRecords.flatMap((record) => {
+    const club = clubs.find((row) => row.id === record.clubId)
+    const program = programs.find((row) => row.id === (record.programId || club?.programId))
+    const session = program?.attendanceSchedule?.find((row) => row.id === record.sessionId)
+    return (record.rosterSnapshot || []).map((student) => {
+      const entry = record.entries?.[student.studentUid] || {}
+      return [program?.name || '', club?.clubName || record.clubId || '', session?.date || '', session?.period || '', student.studentNo || '', student.name || '', entry.status === 'present' ? '출석' : entry.status === 'absent' ? '결석' : '미체크', formatDate(entry.updatedAt), entry.updatedBy || '']
+    })
+  })
+  const attendanceEntryHeaders = ['프로그램', '수업', '날짜', '교시', '학번', '학생명', '출결', '수정일시', '수정주체']
+
   // 워크북 생성
   const wb = XLSX.utils.book_new()
 
@@ -172,6 +196,14 @@ export async function exportFullBackup() {
   wsUsers['!cols'] = userHeaders.map(() => ({ wch: 16 }))
   XLSX.utils.book_append_sheet(wb, wsUsers, '회원목록')
 
+  const wsAttendanceSessions = XLSX.utils.aoa_to_sheet([attendanceSessionHeaders, ...attendanceSessionRows])
+  wsAttendanceSessions['!cols'] = attendanceSessionHeaders.map(() => ({ wch: 16 }))
+  XLSX.utils.book_append_sheet(wb, wsAttendanceSessions, '출석회차')
+
+  const wsAttendanceEntries = XLSX.utils.aoa_to_sheet([attendanceEntryHeaders, ...attendanceEntryRows])
+  wsAttendanceEntries['!cols'] = attendanceEntryHeaders.map(() => ({ wch: 16 }))
+  XLSX.utils.book_append_sheet(wb, wsAttendanceEntries, '출결내역')
+
   const now = new Date()
   const dateStr = [
     now.getFullYear(),
@@ -188,5 +220,7 @@ export async function exportFullBackup() {
     applicationCount: appRows.length,
     memberCount: memberRows.length,
     userCount: userRows.length,
+    attendanceSessionCount: attendanceSessionRows.length,
+    attendanceEntryCount: attendanceEntryRows.length,
   }
 }

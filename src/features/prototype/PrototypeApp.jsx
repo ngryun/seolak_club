@@ -104,6 +104,7 @@ import {
 } from "../../services/programService";
 import { downloadProgramTemplate, parseProgramExcel } from "../../services/programExcelService";
 import { downloadClubTemplate, parseClubExcel, resolveClubExcelRows } from "../../services/clubExcelService";
+import { AttendancePanel } from "../attendance/AttendancePages";
 import educationOfficeBi from "../../../logo_img/심벌타이포조합/심벌타이포조합사용.png";
 
 const t = {
@@ -206,11 +207,12 @@ function submissionSourceLabel(value) {
   return "미제출";
 }
 
-function buildStudentApplicationStatusRows(students, clubs, applications, drafts) {
+function buildStudentApplicationStatusRows(students, clubs, applications, drafts, preferenceCount = 3) {
   const studentRows = Array.isArray(students) ? students : [];
   const clubMap = new Map((Array.isArray(clubs) ? clubs : []).map((club) => [club.id, club]));
   const appsByStudent = new Map();
   const draftByStudent = new Map();
+  const normalizedPreferenceCount = Math.max(1, Math.min(MAX_PREFERENCE_COUNT, Number(preferenceCount) || 1));
 
   (Array.isArray(applications) ? applications : []).forEach((row) => {
     if (!appsByStudent.has(row.studentUid)) {
@@ -232,7 +234,7 @@ function buildStudentApplicationStatusRows(students, clubs, applications, drafts
       const draft = draftByStudent.get(student.uid) || null;
       const sourceType = apps.length > 0 ? "application" : draft ? "draft" : "none";
       const sourceRows = apps.length > 0 ? apps : (draft?.preferences || []);
-      const preferences = [1, 2, 3].map((rank) => {
+      const preferences = Array.from({ length: normalizedPreferenceCount }, (_, index) => index + 1).map((rank) => {
         const source = sourceRows.find((row) => Number(row.preferenceRank || 0) === rank) || null;
         const club = source ? clubMap.get(source.clubId) : null;
         return {
@@ -1949,6 +1951,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
   const unitLabel = programLabels.unit;
   const roomLabel = programLabels.room;
   const useRoomFeature = activeProgram?.features?.room !== false;
+  const useAttendanceFeature = activeProgram?.features?.attendance === true;
 
   const navByRole = {
     admin: [
@@ -1956,6 +1959,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
       { key: "clubs", label: `${unitLabel} 관리` },
       ...(useRoomFeature ? [{ key: "clubRooms", label: `${roomLabel} 관리` }] : []),
       { key: "studentStatus", label: "학생 신청 현황" },
+      ...(useAttendanceFeature ? [{ key: "attendance", label: "출석부" }] : []),
       { key: "round", label: `${unitLabel} 선발 진행` },
       { type: "group", label: "신청카드" },
       { key: "extraRequests", label: "신청카드 목록" },
@@ -1971,6 +1975,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
       { key: "clubOverview", label: `${unitLabel} 개설현황` },
       ...(useRoomFeature ? [{ key: "clubRooms", label: `${roomLabel} 현황` }] : []),
       { key: "studentStatus", label: "학생 신청 현황" },
+      ...(useAttendanceFeature ? [{ key: "attendance", label: "출석부" }] : []),
       { type: "group", label: "신청카드" },
       { key: "extraRequests", label: "신청카드 목록" },
       { key: "requestCards", label: "신청카드 관리" },
@@ -1979,6 +1984,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
     ],
     homeroom: [
       { type: "group", label: "학급 관리" },
+      { key: "studentStatus", label: "우리 반 신청 현황" },
       { key: "users", label: "우리 반 학생 관리" },
       { type: "group", label: "설정" },
       { key: "profile", label: "내 정보" },
@@ -2070,18 +2076,16 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
                   </button>
                 </div>
               ) : null}
-              {user?.role !== "homeroom" ? (
-                <ProgramSwitcher
-                  programs={activeProgramList}
-                  activeProgramId={activeProgramId}
-                  onChangeProgram={(nextProgramId) => {
-                    if (tab === "programs") setTab("clubs");
-                    onChangeProgram?.(nextProgramId);
-                  }}
-                  programCycles={programCycles}
-                  label={user?.role === "admin" ? "운영 프로그램" : "프로그램"}
-                />
-              ) : null}
+              <ProgramSwitcher
+                programs={activeProgramList}
+                activeProgramId={activeProgramId}
+                onChangeProgram={(nextProgramId) => {
+                  if (tab === "programs") setTab("clubs");
+                  onChangeProgram?.(nextProgramId);
+                }}
+                programCycles={programCycles}
+                label={user?.role === "admin" ? "운영 프로그램" : "프로그램"}
+              />
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                 {nav.map((item, index) => {
                   if (item.type === "group") {
@@ -2130,20 +2134,18 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0,1fr)", gap: 12 }}>
             <aside style={{ ...cardStyle, height: "fit-content", padding: 10 }}>
-              {user?.role !== "homeroom" ? (
-                <DesktopProgramNavigation
-                  programs={activeProgramList}
-                  activeProgramId={activeProgramId}
-                  onChangeProgram={(nextProgramId) => {
-                    if (tab === "programs") setTab("clubs");
-                    onChangeProgram?.(nextProgramId);
-                  }}
-                  programCycles={programCycles}
-                  showProgramManagement={user?.role === "admin"}
-                  programManagementActive={tab === "programs"}
-                  onOpenProgramManagement={() => setTab("programs")}
-                />
-              ) : null}
+              <DesktopProgramNavigation
+                programs={activeProgramList}
+                activeProgramId={activeProgramId}
+                onChangeProgram={(nextProgramId) => {
+                  if (tab === "programs") setTab("clubs");
+                  onChangeProgram?.(nextProgramId);
+                }}
+                programCycles={programCycles}
+                showProgramManagement={user?.role === "admin"}
+                programManagementActive={tab === "programs"}
+                onOpenProgramManagement={() => setTab("programs")}
+              />
               <div style={{ display: "grid", gap: 4 }}>
                 {nav.map((item, index) => {
                   if (item.type === "group") {
@@ -3908,6 +3910,10 @@ function ApplicantsDialog({
           const renderRow = (row) => {
             const isDraft = row.selectionSource === "draft";
             const canDecide = !isDraft && row.status === "pending" && cycle?.status === "open" && selectionReady;
+            const waitingForSubmissionClose = isDraft
+              && row.status === "pending"
+              && cycle?.status === "open"
+              && !selectionReady;
             const canRevoke = row.status === "approved"
               && cycle?.status === "open"
               && (selectionReady || preAssignmentReady)
@@ -3961,6 +3967,11 @@ function ApplicantsDialog({
                         반려
                       </button>
                     </div>
+                  ) : null}
+                  {waitingForSubmissionClose ? (
+                    <span style={{ display: "inline-flex", padding: "4px 8px", borderRadius: 999, background: "#f3f4f6", color: t.textSub, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+                      신청 마감 후 승인 가능
+                    </span>
                   ) : null}
                   {canRevoke ? (
                     <button
@@ -4398,6 +4409,10 @@ function InterviewSelectDialog({
                                   반려
                                 </button>
                               </div>
+                            ) : app.status === "pending" && !selectionReady && app.selectionSource === "draft" ? (
+                              <span style={{ display: "inline-flex", padding: "4px 8px", borderRadius: 999, background: "#f3f4f6", color: t.textSub, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+                                신청 마감 후 승인 가능
+                              </span>
                             ) : null}
                           </td>
                         </tr>
@@ -4649,6 +4664,164 @@ function RoundPanel({
           </tbody>
         </table>
       </div>
+    </section>
+  );
+}
+
+function HomeroomApplicationStatusPanel({
+  rows,
+  program,
+  homeroomClass,
+  submissionState,
+  loading,
+  onRefresh,
+  onOpenDetail,
+}) {
+  const [query, setQuery] = useState("");
+  const labels = getProgramLabels(program);
+  const unitLabel = labels.unit;
+
+  const filteredRows = useMemo(() => {
+    const keyword = String(query || "").trim().toLowerCase();
+    if (!keyword) return rows;
+    return rows.filter((row) => {
+      const values = [
+        row.studentNo,
+        row.studentName,
+        ...row.preferences.flatMap((item) => [item.clubName, item.applyReason]),
+      ];
+      return values.some((value) => String(value || "").toLowerCase().includes(keyword));
+    });
+  }, [query, rows]);
+
+  const stats = useMemo(() => {
+    const appliedRows = rows.filter((row) => row.preferences.some((item) => item.clubId));
+    return {
+      total: rows.length,
+      applied: appliedRows.length,
+      notApplied: rows.length - appliedRows.length,
+    };
+  }, [rows]);
+
+  const phaseOpen = submissionState?.phase === "open";
+
+  return (
+    <section style={cardStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", marginBottom: 14, flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ fontSize: 17, margin: 0 }}>{formatClassKey(homeroomClass)} 신청 현황</h2>
+          <div style={{ fontSize: 12, color: t.textSub, marginTop: 5 }}>
+            {program?.name || "프로그램"} · 학생별 신청 {unitLabel} · 신청 사유를 확인할 수 있습니다.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={`학번, 이름, ${unitLabel}, 신청 사유 검색`}
+            style={{ ...inputBase, width: 250 }}
+          />
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+          >
+            새로고침
+          </button>
+        </div>
+      </div>
+
+      <div style={{ ...cardStyle, padding: 12, marginBottom: 14, background: phaseOpen ? "#eef7ee" : "#f8f9fc", borderColor: phaseOpen ? "#cbe6cd" : t.border, boxShadow: "none" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ padding: "3px 9px", borderRadius: 999, background: phaseOpen ? "#dff0e1" : t.muted, color: phaseOpen ? t.ok : t.textSub, fontSize: 12, fontWeight: 800 }}>
+            {submissionPhaseLabel(submissionState)}
+          </span>
+          <span style={{ fontSize: 12, color: t.textSub }}>{submissionPhaseDescription(submissionState)}</span>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginBottom: 14 }}>
+        {[
+          { label: "학급 학생", value: stats.total, color: t.accent, bg: "#edf4ff" },
+          { label: "신청 학생", value: stats.applied, color: t.ok, bg: "#eef7ee" },
+          { label: "미신청 학생", value: stats.notApplied, color: stats.notApplied ? t.warn : t.textSub, bg: stats.notApplied ? "#fff8e1" : "#f3f4f6" },
+        ].map((item) => (
+          <div key={item.label} style={{ padding: "12px 10px", borderRadius: 10, background: item.bg, textAlign: "center" }}>
+            <div style={{ fontSize: 11, color: t.textSub, fontWeight: 700 }}>{item.label}</div>
+            <div style={{ fontSize: 21, color: item.color, fontWeight: 800, marginTop: 4 }}>{item.value}명</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse", tableLayout: "fixed" }}>
+          <colgroup>
+            <col style={{ width: 90 }} />
+            <col style={{ width: 100 }} />
+            <col style={{ width: 220 }} />
+            <col />
+            <col style={{ width: 100 }} />
+          </colgroup>
+          <thead>
+            <tr>
+              {["학번", "이름", `신청 ${unitLabel}`, "신청 사유", "제출 상태"].map((head) => (
+                <th key={head} style={{ padding: "9px 8px", borderBottom: `1px solid ${t.border}`, textAlign: "left", fontSize: 12, color: t.textSub }}>{head}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRows.map((row) => {
+              const appliedPreferences = row.preferences.filter((item) => item.clubId);
+              return (
+                <tr key={row.studentUid} onClick={() => onOpenDetail(row.studentUid)} style={{ cursor: appliedPreferences.length ? "pointer" : "default" }}>
+                  <td style={{ padding: "11px 8px", borderBottom: `1px solid ${t.border}`, verticalAlign: "top", fontSize: 13 }}>{row.studentNo || "-"}</td>
+                  <td style={{ padding: "11px 8px", borderBottom: `1px solid ${t.border}`, verticalAlign: "top", fontSize: 13, fontWeight: 700 }}>{row.studentName || "-"}</td>
+                  <td style={{ padding: "8px", borderBottom: `1px solid ${t.border}`, verticalAlign: "top" }}>
+                    {appliedPreferences.length ? (
+                      <div style={{ display: "grid", gap: 6 }}>
+                        {appliedPreferences.map((item) => (
+                          <div key={item.preferenceRank} style={{ padding: "7px 8px", borderRadius: 8, background: "#f7f9fc" }}>
+                            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                              <span style={{ color: t.accent, fontSize: 11, fontWeight: 800 }}>{item.preferenceRank}지망</span>
+                              <span style={{ fontSize: 13, fontWeight: 700 }}>{item.clubName || "-"}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <span style={{ color: t.textSub, fontSize: 12 }}>아직 신청하지 않음</span>}
+                  </td>
+                  <td style={{ padding: "8px", borderBottom: `1px solid ${t.border}`, verticalAlign: "top" }}>
+                    {appliedPreferences.length ? (
+                      <div style={{ display: "grid", gap: 6 }}>
+                        {appliedPreferences.map((item) => (
+                          <div key={item.preferenceRank} style={{ minHeight: 30, padding: "7px 8px", borderRadius: 8, background: "#f7f9fc", fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                            {item.applyReason || "신청 사유 미입력"}
+                          </div>
+                        ))}
+                      </div>
+                    ) : <span style={{ color: t.textSub, fontSize: 12 }}>-</span>}
+                  </td>
+                  <td style={{ padding: "11px 8px", borderBottom: `1px solid ${t.border}`, verticalAlign: "top" }}>
+                    <span style={{ display: "inline-flex", padding: "3px 8px", borderRadius: 999, background: appliedPreferences.length ? "#e8f5e9" : "#f3f4f6", color: appliedPreferences.length ? t.ok : t.textSub, fontSize: 11, fontWeight: 800 }}>
+                      {submissionSourceLabel(row.sourceType)}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+            {filteredRows.length === 0 ? (
+              <tr>
+                <td colSpan={5} style={{ padding: 20, textAlign: "center", color: t.textSub, fontSize: 13 }}>
+                  {query ? "검색 조건에 맞는 학생이 없습니다." : "담당 학급의 신청 대상 학생이 없습니다."}
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+      {stats.applied > 0 ? (
+        <div style={{ marginTop: 10, color: t.textSub, fontSize: 11 }}>신청한 학생 행을 누르면 활동 계획과 처리 상태까지 확인할 수 있습니다.</div>
+      ) : null}
     </section>
   );
 }
@@ -5188,7 +5361,12 @@ function StudentApplyPanel({
   onSwitchProgram,
 }) {
   const grade = inferStudentGrade(user?.studentNo || user?.loginId);
-  const finalized = myApplications.length > 0;
+  // 신청기간 중 listStudentApplications가 반환하는 draft 미리보기 행은 확정 신청이 아니다.
+  // 실제 applications 문서로 전환된 행만 확정으로 판단해야 제출 후에도 수정/취소할 수 있다.
+  const finalizedApplications = myApplications.filter(
+    (row) => row.selectionSource !== "draft" && !String(row.id || "").startsWith("draft__"),
+  );
+  const finalized = finalizedApplications.length > 0;
   const hasDraft = !!draft;
   const canEdit = cycle?.status === "open" && submissionState?.canSubmit && !finalized;
   const labels = getProgramLabels(program);
@@ -5205,7 +5383,7 @@ function StudentApplyPanel({
   const nonInterviewClubs = clubs.filter((club) => !club.legacy && !club.isInterviewSelection);
   const interviewClubs = clubs.filter((club) => !club.legacy && club.isInterviewSelection);
   const readonlyRows = finalized
-    ? [...myApplications].sort((a, b) => Number(a.preferenceRank || 0) - Number(b.preferenceRank || 0))
+    ? [...finalizedApplications].sort((a, b) => Number(a.preferenceRank || 0) - Number(b.preferenceRank || 0))
     : (draft?.preferences || []);
   const selectableClubs = canEdit ? available : nonInterviewClubs;
 
@@ -7220,6 +7398,7 @@ const PROGRAM_FEATURE_META = [
   { key: "plan", label: "활동계획서" },
   { key: "room", label: "장소 배정" },
   { key: "interview", label: "자체면접 선발" },
+  { key: "attendance", label: "출석부" },
 ];
 
 function newProgramForm() {
@@ -7227,7 +7406,8 @@ function newProgramForm() {
     name: "",
     unitLabel: "강좌",
     preferenceCount: 1,
-    features: { leader: false, plan: false, room: false, interview: false },
+    features: { leader: false, plan: false, room: false, interview: false, attendance: false },
+    attendanceSchedule: [],
     targetClasses: [],
     studentVisible: true,
   };
@@ -7324,12 +7504,25 @@ function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUp
       unitLabel: row.unitLabel || "동아리",
       preferenceCount: row.preferenceCount || 3,
       features: { ...row.features },
+      attendanceSchedule: Array.isArray(row.attendanceSchedule) ? row.attendanceSchedule.map((item) => ({ ...item })) : [],
       targetClasses: Array.isArray(row.targetClasses) ? [...row.targetClasses] : [],
       studentVisible: row.studentVisible !== false,
     });
   }
 
   async function submitForm() {
+    if (form.features?.attendance) {
+      const activeRows = (form.attendanceSchedule || []).filter((row) => row.active !== false);
+      if (activeRows.some((row) => !/^\d{4}-\d{2}-\d{2}$/u.test(String(row.date || "")) || Number(row.period) < 1)) {
+        window.alert("출석 회차의 날짜와 교시를 모두 입력해주세요.");
+        return;
+      }
+      const keys = activeRows.map((row) => `${row.date}::${Number(row.period)}`);
+      if (new Set(keys).size !== keys.length) {
+        window.alert("같은 날짜와 교시는 중복 등록할 수 없습니다.");
+        return;
+      }
+    }
     const ok = editingId
       ? await onUpdate(editingId, form)
       : await onCreate(form);
@@ -7559,6 +7752,22 @@ function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUp
             </div>
           </Field>
 
+          {form.features?.attendance ? (
+            <Field label="출석 일정" hint="모든 수업이 공통으로 사용하는 날짜·교시입니다. 기존 회차는 삭제 대신 보관됩니다.">
+              <div style={{ display: "grid", gap: 8 }}>
+                {(form.attendanceSchedule || []).map((row, index) => (
+                  <div key={row.id || index} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, alignItems: "center", opacity: row.active === false ? 0.55 : 1 }}>
+                    <input type="date" value={row.date || ""} disabled={row.active === false} onChange={(e) => setForm((prev) => ({ ...prev, attendanceSchedule: prev.attendanceSchedule.map((item, itemIndex) => itemIndex === index ? { ...item, date: e.target.value } : item) }))} style={inputBase} />
+                    <input type="number" min="1" max="20" value={row.period || 1} disabled={row.active === false} aria-label="교시" onChange={(e) => setForm((prev) => ({ ...prev, attendanceSchedule: prev.attendanceSchedule.map((item, itemIndex) => itemIndex === index ? { ...item, period: Math.max(1, Number(e.target.value) || 1) } : item) }))} style={inputBase} />
+                    <input value={row.label || ""} disabled={row.active === false} placeholder="설명(선택)" onChange={(e) => setForm((prev) => ({ ...prev, attendanceSchedule: prev.attendanceSchedule.map((item, itemIndex) => itemIndex === index ? { ...item, label: e.target.value } : item) }))} style={inputBase} />
+                    <button type="button" onClick={() => setForm((prev) => ({ ...prev, attendanceSchedule: String(row.id || "").startsWith("draft-") ? prev.attendanceSchedule.filter((_, itemIndex) => itemIndex !== index) : prev.attendanceSchedule.map((item, itemIndex) => itemIndex === index ? { ...item, active: item.active === false } : item) }))} style={{ ...buttonBase, padding: "7px 10px", color: row.active === false ? t.ok : t.danger, background: row.active === false ? "#eefbf2" : "#fff3f3" }}>{row.active === false ? "복원" : (String(row.id || "").startsWith("draft-") ? "삭제" : "보관")}</button>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setForm((prev) => ({ ...prev, attendanceSchedule: [...(prev.attendanceSchedule || []), { id: `draft-${Date.now()}-${prev.attendanceSchedule?.length || 0}`, date: "", period: 1, label: "", active: true }] }))} style={{ ...buttonBase, justifySelf: "start", background: "#edf4ff", color: t.accent, fontWeight: 700 }}>+ 출석 회차 추가</button>
+              </div>
+            </Field>
+          ) : null}
+
           <Field
             label="신청 대상 학급"
             hint="전체 학급 또는 일부 학급을 선택합니다. 학급 목록은 회원 관리에 등록된 학생 학번을 기준으로 자동 구성됩니다."
@@ -7747,7 +7956,7 @@ const TAB_QUERY_KEY = "tab";
 function getDefaultTabForRole(role) {
   if (role === "admin") return "clubs";
   if (role === "teacher") return "myClubs";
-  if (role === "homeroom") return "users";
+  if (role === "homeroom") return "studentStatus";
   return "apply";
 }
 
@@ -7757,9 +7966,9 @@ function isTabAllowedForRole(tab, role, options = {}) {
   const isStudentLeader = options.isStudentLeader === true;
 
   const allowedTabsByRole = {
-    admin: new Set(["clubs", "studentStatus", "round", "programs", "users", "extraRequests", "requestCards", "backup", "profile"]),
-    teacher: new Set(["myClubs", "clubOverview", "studentStatus", "extraRequests", "requestCards", "profile"]),
-    homeroom: new Set(["users", "profile"]),
+    admin: new Set(["clubs", "studentStatus", "attendance", "round", "programs", "users", "extraRequests", "requestCards", "backup", "profile"]),
+    teacher: new Set(["myClubs", "clubOverview", "studentStatus", "attendance", "extraRequests", "requestCards", "profile"]),
+    homeroom: new Set(["studentStatus", "users", "profile"]),
     student: new Set(["apply", "my", "clubOverview", "clubs", "extraRequests", "profile"]),
   };
 
@@ -7883,17 +8092,25 @@ export default function PrototypeApp({ studentOnly = false }) {
       .map((row) => getStudentClassKey(row.studentNo || row.loginId))
       .filter(Boolean),
   )).sort(compareClassKeys), [users]);
-  // 역할별로 보이는 프로그램: 학생에게는 비공개이거나 대상 학급이 아닌 프로그램을 숨김
+  // 역할별로 보이는 프로그램: 학생과 담임에게는 대상 학급이 아닌 프로그램을 숨김
   const rolePrograms = useMemo(() => {
     const active = programs.filter((row) => row.status === "active");
     if (user?.role === "student") {
       const studentNo = user.studentNo || user.loginId;
       return active.filter((row) => row.studentVisible !== false && isStudentEligibleForProgram(row, studentNo));
     }
+    if (user?.role === "homeroom") {
+      const homeroomClass = String(user.homeroomClass || "").trim();
+      return active.filter((row) => {
+        const targetClasses = Array.isArray(row.targetClasses) ? row.targetClasses : [];
+        return row.studentVisible !== false
+          && (targetClasses.length === 0 || targetClasses.includes(homeroomClass));
+      });
+    }
     return active;
-  }, [programs, user?.loginId, user?.role, user?.studentNo]);
+  }, [programs, user?.homeroomClass, user?.loginId, user?.role, user?.studentNo]);
   const activeProgram = useMemo(() => {
-    const source = user?.role === "student" ? rolePrograms : programs;
+    const source = user?.role === "student" || user?.role === "homeroom" ? rolePrograms : programs;
     return source.find((row) => row.id === activeProgramId)
       || source.find((row) => row.status === "active")
       || source[0]
@@ -8040,33 +8257,47 @@ export default function PrototypeApp({ studentOnly = false }) {
   }
 
   async function refreshStudentStatusRows(studentUsers = null, clubRows = null, programInput = null) {
-    if (user?.role !== "admin" && user?.role !== "teacher") {
+    if (user?.role !== "admin" && user?.role !== "teacher" && user?.role !== "homeroom") {
       setStudentStatusRows([]);
       return [];
     }
 
     const program = programInput || activeProgram;
     const studentSource = Array.isArray(studentUsers) ? studentUsers : users;
-    const baseStudents = studentSource.filter(
-      (row) => row.role === "student"
-        && (!program?.id || isStudentEligibleForProgram(program, row.studentNo || row.loginId)),
-    );
+    const baseStudents = studentSource.filter((row) => {
+      if (row.role !== "student") return false;
+      if (program?.id && !isStudentEligibleForProgram(program, row.studentNo || row.loginId)) return false;
+      if (user?.role === "homeroom") {
+        return getStudentClassKey(row.studentNo || row.loginId) === String(user.homeroomClass || "").trim();
+      }
+      return true;
+    });
     const baseClubs = (Array.isArray(clubRows) ? clubRows : clubs)
       .filter((club) => !program?.id || club.programId === program.id);
     const [applications, drafts] = await Promise.all([
       listCurrentCycleApplications({ program }),
       listCurrentCycleDrafts(program),
     ]);
-    const rows = buildStudentApplicationStatusRows(baseStudents, baseClubs, applications, drafts);
+    const studentUids = new Set(baseStudents.map((row) => row.uid));
+    const scopedApplications = applications.filter((row) => studentUids.has(row.studentUid));
+    const scopedDrafts = drafts.filter((row) => studentUids.has(row.studentUid));
+    const rows = buildStudentApplicationStatusRows(
+      baseStudents,
+      baseClubs,
+      scopedApplications,
+      scopedDrafts,
+      program?.preferenceCount,
+    );
     setStudentStatusRows(rows);
     return rows;
   }
 
   async function refreshRecruitmentViews(clubRows = clubs, cycleInfo = cycle, studentUsers = users, programInput = null) {
-    await Promise.all([
-      refreshRoundStats(clubRows, cycleInfo, programInput),
-      refreshStudentStatusRows(studentUsers, clubRows, programInput),
-    ]);
+    const tasks = [refreshStudentStatusRows(studentUsers, clubRows, programInput)];
+    if (user?.role !== "homeroom") {
+      tasks.push(refreshRoundStats(clubRows, cycleInfo, programInput));
+    }
+    await Promise.all(tasks);
   }
 
   async function refreshRoundStats(clubList = clubs, cycleInfo = cycle, programInput = null) {
@@ -8096,27 +8327,22 @@ export default function PrototypeApp({ studentOnly = false }) {
     if (!isAuthenticated || !user) return;
     setLoading(true);
     try {
-      if (user.role === "homeroom") {
-        setPrograms([]);
-        setActiveProgramId("");
-        setClubs([]);
-        setClubRooms([]);
-        setRoundStats({});
-        setStudentStatusRows([]);
-        await refreshUsers({ forceRefresh: true });
-        setMessage({ type: "", text: "" });
-        return;
-      }
       const programRows = await refreshPrograms();
       const activeRows = programRows.filter((row) => row.status === "active");
       const visibleRows = user.role === "student"
         ? activeRows.filter((row) => row.studentVisible !== false && isStudentEligibleForProgram(row, user.studentNo || user.loginId))
-        : activeRows;
+        : user.role === "homeroom"
+          ? activeRows.filter((row) => {
+            const targetClasses = Array.isArray(row.targetClasses) ? row.targetClasses : [];
+            return row.studentVisible !== false
+              && (targetClasses.length === 0 || targetClasses.includes(String(user.homeroomClass || "").trim()));
+          })
+          : activeRows;
       const currentProgram = visibleRows.find((row) => row.id === activeProgramId)
         || visibleRows[0]
-        || (user.role === "student" ? null : activeRows[0] || programRows[0])
+        || (user.role === "student" || user.role === "homeroom" ? null : activeRows[0] || programRows[0])
         || null;
-      if (!currentProgram && user.role === "student") {
+      if (!currentProgram && (user.role === "student" || user.role === "homeroom")) {
         setActiveProgramId("");
         setClubs([]);
         setMyApplications([]);
@@ -8124,6 +8350,9 @@ export default function PrototypeApp({ studentOnly = false }) {
         setRoundStats({});
         setStudentStatusRows([]);
         setCycle({ id: "", currentRound: 1, status: "closed" });
+        if (user.role === "homeroom") {
+          await refreshUsers({ forceRefresh: true });
+        }
         setMessage({ type: "", text: "" });
         return;
       }
@@ -8171,6 +8400,11 @@ export default function PrototypeApp({ studentOnly = false }) {
           currentProgram,
         );
         setStudentStatusRows([]);
+      } else if (user.role === "homeroom") {
+        const homeroomStudents = await refreshUsers({ forceRefresh: true });
+        setClubRooms([]);
+        setRoundStats({});
+        await refreshStudentStatusRows(homeroomStudents, clubRows, currentProgram);
       } else {
         setUsers([]);
         setClubRooms([]);
@@ -8248,6 +8482,14 @@ export default function PrototypeApp({ studentOnly = false }) {
     )) {
       withMessageError(new Error("현재 학급은 이 프로그램의 신청 대상이 아닙니다."), "프로그램을 선택할 수 없습니다.");
       return;
+    }
+    if (user?.role === "homeroom") {
+      const targetClasses = Array.isArray(target.targetClasses) ? target.targetClasses : [];
+      const homeroomClass = String(user.homeroomClass || "").trim();
+      if (target.studentVisible === false || (targetClasses.length > 0 && !targetClasses.includes(homeroomClass))) {
+        withMessageError(new Error("담당 학급은 이 프로그램의 신청 대상이 아닙니다."), "프로그램을 선택할 수 없습니다.");
+        return;
+      }
     }
 
     // 이전 프로그램 컨텍스트로 열린 작업 창을 모두 닫음 (다른 프로그램으로의 오저장 방지)
@@ -8946,10 +9188,14 @@ export default function PrototypeApp({ studentOnly = false }) {
   async function openApplicantDialog(club) {
     setApplicantDialog({ open: true, club, rows: [], loading: true });
     try {
-      const loadedUsers = await ensureUsersLoaded();
+      // 마감 시각을 넘긴 채 화면을 열어둔 경우에도 최신 사이클을 읽어 초안을 확정한다.
+      const [loadedUsers, cycleInfo] = await Promise.all([
+        ensureUsersLoaded(),
+        refreshCycle(activeProgram),
+      ]);
       const profilesByUid = new Map((loadedUsers || []).map((row) => [row.uid, row]));
       const rows = await listApplicationsBySchedule(club.id, {
-        cycle,
+        cycle: cycleInfo,
         profilesByUid,
       });
       setApplicantDialog({ open: true, club, rows, loading: false });
@@ -9167,11 +9413,15 @@ export default function PrototypeApp({ studentOnly = false }) {
     });
 
     try {
-      const loadedUsers = await ensureUsersLoaded();
+      // 일반 신청 관리와 동일하게, 마감 직후에는 초안 확정부터 반영한다.
+      const [loadedUsers, cycleInfo] = await Promise.all([
+        ensureUsersLoaded(),
+        refreshCycle(activeProgram),
+      ]);
       const profilesByUid = new Map((loadedUsers || []).map((row) => [row.uid, row]));
       const [members, applicants] = await Promise.all([
         listClubMembers(club.id),
-        listApplicationsBySchedule(club.id, { cycle, profilesByUid }),
+        listApplicationsBySchedule(club.id, { cycle: cycleInfo, profilesByUid }),
       ]);
       setInterviewDialog({
         open: true,
@@ -9654,6 +9904,12 @@ export default function PrototypeApp({ studentOnly = false }) {
   }, [activeProgram?.features?.room, tab, user?.role]);
 
   useEffect(() => {
+    if (tab === "attendance" && activeProgram?.features?.attendance !== true) {
+      setTab(getDefaultTabForRole(user?.role));
+    }
+  }, [activeProgram?.features?.attendance, tab, user?.role]);
+
+  useEffect(() => {
     if (!isAuthenticated || !user) return;
     if (!isTabAllowedForRole(tab, user.role, { isStudentLeader })) return;
     syncTabToUrl(tab);
@@ -9803,7 +10059,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   ]);
 
   useEffect(() => {
-    if (!isAuthenticated || (user?.role !== "admin" && user?.role !== "teacher")) return;
+    if (!isAuthenticated || (user?.role !== "admin" && user?.role !== "teacher" && user?.role !== "homeroom")) return;
     if (tab !== "studentStatus" || studentStatusRows.length > 0) return;
 
     let mounted = true;
@@ -9823,6 +10079,7 @@ export default function PrototypeApp({ studentOnly = false }) {
       mounted = false;
     };
   }, [
+    activeProgramId,
     isAuthenticated,
     studentStatusRows.length,
     tab,
@@ -9917,6 +10174,15 @@ export default function PrototypeApp({ studentOnly = false }) {
               setSavingRoom(false);
             }
           }}
+        />
+      ) : null}
+
+      {tab === "attendance" && (user.role === "admin" || user.role === "teacher") && activeProgram?.features?.attendance === true ? (
+        <AttendancePanel
+          user={user}
+          program={activeProgram}
+          clubs={user.role === "admin" ? visibleClubs : teacherOwnedClubs}
+          onMessage={(type, text) => setMessage({ type, text })}
         />
       ) : null}
 
@@ -10037,29 +10303,63 @@ export default function PrototypeApp({ studentOnly = false }) {
         />
       ) : null}
 
-      {tab === "studentStatus" && (user.role === "admin" || user.role === "teacher") ? (
-        <StudentApplicationStatusPanel
-          rows={studentStatusRows}
-          clubs={visibleClubs}
-          loading={studentStatusLoading || loading}
-          onRefresh={async () => {
-            setStudentStatusLoading(true);
-            try {
-              const [clubRows, userRows, cycleInfo] = await Promise.all([
-                refreshClubs(),
-                refreshUsers(),
-                refreshCycle(),
-              ]);
-              await refreshRecruitmentViews(clubRows, cycleInfo, userRows);
-              setMessage({ type: "ok", text: "학생 신청 현황을 새로고침했습니다." });
-            } catch (error) {
-              withMessageError(error, "학생 신청 현황을 새로고침하지 못했습니다.");
-            } finally {
-              setStudentStatusLoading(false);
-            }
-          }}
-          onOpenDetail={(studentUid) => setStudentStatusDialog({ open: true, studentUid })}
-        />
+      {tab === "studentStatus" && (user.role === "admin" || user.role === "teacher" || user.role === "homeroom") ? (
+        activeProgram ? (
+          user.role === "homeroom" ? (
+            <HomeroomApplicationStatusPanel
+              rows={studentStatusRows}
+              program={activeProgram}
+              homeroomClass={user.homeroomClass}
+              submissionState={submissionState}
+              loading={studentStatusLoading || loading}
+              onRefresh={async () => {
+                setStudentStatusLoading(true);
+                try {
+                  const [clubRows, userRows, cycleInfo] = await Promise.all([
+                    refreshClubs({ forceRefresh: true }),
+                    refreshUsers({ forceRefresh: true }),
+                    refreshCycle(),
+                  ]);
+                  await refreshRecruitmentViews(clubRows, cycleInfo, userRows);
+                  setMessage({ type: "ok", text: "우리 반 신청 현황을 새로고침했습니다." });
+                } catch (error) {
+                  withMessageError(error, "우리 반 신청 현황을 새로고침하지 못했습니다.");
+                } finally {
+                  setStudentStatusLoading(false);
+                }
+              }}
+              onOpenDetail={(studentUid) => setStudentStatusDialog({ open: true, studentUid })}
+            />
+          ) : (
+            <StudentApplicationStatusPanel
+              rows={studentStatusRows}
+              clubs={visibleClubs}
+              loading={studentStatusLoading || loading}
+              onRefresh={async () => {
+                setStudentStatusLoading(true);
+                try {
+                  const [clubRows, userRows, cycleInfo] = await Promise.all([
+                    refreshClubs(),
+                    refreshUsers(),
+                    refreshCycle(),
+                  ]);
+                  await refreshRecruitmentViews(clubRows, cycleInfo, userRows);
+                  setMessage({ type: "ok", text: "학생 신청 현황을 새로고침했습니다." });
+                } catch (error) {
+                  withMessageError(error, "학생 신청 현황을 새로고침하지 못했습니다.");
+                } finally {
+                  setStudentStatusLoading(false);
+                }
+              }}
+              onOpenDetail={(studentUid) => setStudentStatusDialog({ open: true, studentUid })}
+            />
+          )
+        ) : (
+          <section style={{ ...cardStyle, background: "#fff8e1", borderColor: "#f3dfb9" }}>
+            <h2 style={{ fontSize: 17, margin: "0 0 6px" }}>현재 담당 학급이 참여할 프로그램이 없습니다.</h2>
+            <div style={{ fontSize: 13, color: t.textSub }}>운영 프로그램의 신청 대상 학급 설정을 관리자에게 확인해주세요.</div>
+          </section>
+        )
       ) : null}
 
       {tab === "users" && (user.role === "admin" || user.role === "homeroom") ? (

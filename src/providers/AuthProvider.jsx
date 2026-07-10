@@ -7,6 +7,7 @@ import {
   signInWithLoginId,
   recordLastLogin,
 } from '../services/userService'
+import { clearAttendanceApiSession, createAttendanceApiSession } from '../services/attendanceService'
 
 const AuthContext = createContext(null)
 const SESSION_KEY = 'app.session.v3'
@@ -180,6 +181,16 @@ export function AuthProvider({ children }) {
         const account = await signInWithLoginId(normalizedId, rawPassword)
         assertLoginPolicy(account, { loginRole, studentName })
 
+        let attendanceSessionError = ''
+        if (account.role === 'admin' || account.role === 'teacher') {
+          try {
+            await createAttendanceApiSession(normalizedId, rawPassword)
+          } catch (error) {
+            clearAttendanceApiSession()
+            attendanceSessionError = error instanceof Error ? error.message : '출석부 보안 세션 발급에 실패했습니다.'
+          }
+        }
+
         recordLastLogin(account.uid).catch(() => {})
 
         const nextSession = buildSession(account, {
@@ -187,13 +198,14 @@ export function AuthProvider({ children }) {
           loginId: normalizedId,
         })
         setSession(nextSession)
-        setSyncError('')
+        setSyncError(attendanceSessionError)
         persistSession(nextSession)
       },
       async signInWithGoogle() {
         throw new Error('아이디/비밀번호 로그인 방식을 사용해주세요.')
       },
       async signOut() {
+        clearAttendanceApiSession()
         setSession(null)
         setSyncError('')
         persistSession(null)

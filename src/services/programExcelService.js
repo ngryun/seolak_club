@@ -6,6 +6,7 @@ const PROGRAM_HEADERS = [
   '활동계획서 사용',
   '장소 배정 사용',
   '자체면접 사용',
+  '출석부 사용',
   '학생 공개',
 ]
 
@@ -32,6 +33,9 @@ const HEADER_MAP = {
   자체면접: 'interview',
   자체면접사용: 'interview',
   면접사용: 'interview',
+  출석부: 'attendance',
+  출석부사용: 'attendance',
+  출결사용: 'attendance',
   학생공개: 'studentVisible',
   학생화면표시: 'studentVisible',
   학생노출: 'studentVisible',
@@ -81,8 +85,8 @@ export async function downloadProgramTemplate() {
   const XLSX = await getXlsx()
   const sampleRows = [
     PROGRAM_HEADERS,
-    ['2026 1학기 방과후학교', '강좌', 1, '아니오', '아니오', '예', '아니오', '예'],
-    ['2026 자율교육과정', '과목', 3, '예', '예', '예', '예', '예'],
+    ['2026 1학기 방과후학교', '강좌', 1, '아니오', '아니오', '예', '아니오', '예', '예'],
+    ['2026 자율교육과정', '과목', 3, '예', '예', '예', '예', '아니오', '예'],
   ]
   const ws = XLSX.utils.aoa_to_sheet(sampleRows)
   ws['!cols'] = [
@@ -93,9 +97,10 @@ export async function downloadProgramTemplate() {
     { wch: 18 },
     { wch: 16 },
     { wch: 16 },
+    { wch: 14 },
     { wch: 12 },
   ]
-  ws['!autofilter'] = { ref: `A1:H${sampleRows.length}` }
+  ws['!autofilter'] = { ref: `A1:I${sampleRows.length}` }
 
   const guideRows = [
     ['항목', '작성 방법'],
@@ -157,6 +162,7 @@ export async function parseProgramExcel(file) {
         let plan = false
         let room = false
         let interview = false
+        let attendance = false
         let studentVisible = true
 
         try { preferenceCount = parsePreferenceCount(mapped.preferenceCount) } catch (error) { errors.push(error.message) }
@@ -164,6 +170,7 @@ export async function parseProgramExcel(file) {
         try { plan = parseBoolean(mapped.plan, false, '활동계획서 사용') } catch (error) { errors.push(error.message) }
         try { room = parseBoolean(mapped.room, false, '장소 배정 사용') } catch (error) { errors.push(error.message) }
         try { interview = parseBoolean(mapped.interview, false, '자체면접 사용') } catch (error) { errors.push(error.message) }
+        try { attendance = parseBoolean(mapped.attendance, false, '출석부 사용') } catch (error) { errors.push(error.message) }
         try { studentVisible = parseBoolean(mapped.studentVisible, true, '학생 공개') } catch (error) { errors.push(error.message) }
 
         return {
@@ -171,7 +178,8 @@ export async function parseProgramExcel(file) {
           name,
           unitLabel: String(mapped.unitLabel || '').trim() || '동아리',
           preferenceCount,
-          features: { leader, plan, room, interview },
+          features: { leader, plan, room, interview, attendance },
+          attendanceSchedule: [],
           studentVisible,
           importError: errors.join(' '),
         }

@@ -30,7 +30,9 @@ function buildDefaultProgramData() {
       plan: true,
       room: true,
       interview: true,
+      attendance: false,
     },
+    attendanceSchedule: [],
     targetClasses: [],
     status: 'active',
     sortOrder: 0,
@@ -57,7 +59,51 @@ function normalizeFeatures(value, fallback = true) {
     plan: typeof value?.plan === 'boolean' ? value.plan : fallback,
     room: typeof value?.room === 'boolean' ? value.room : fallback,
     interview: typeof value?.interview === 'boolean' ? value.interview : fallback,
+    // 기존 프로그램에는 출석부를 자동 활성화하지 않습니다.
+    attendance: typeof value?.attendance === 'boolean' ? value.attendance : false,
   }
+}
+
+function normalizeAttendanceSchedule(value) {
+  const rows = Array.isArray(value) ? value : []
+  const seen = new Set()
+  return rows
+    .map((row, index) => {
+      const date = String(row?.date || '').trim()
+      const period = Math.max(1, Math.trunc(Number(row?.period) || 0))
+      const label = String(row?.label || '').trim().slice(0, 40)
+      const id = String(row?.id || '').trim() || `session-${date}-${period}-${index + 1}`
+      const active = row?.active !== false
+      if (!/^\d{4}-\d{2}-\d{2}$/u.test(date) || period < 1) return null
+      const duplicateKey = `${date}::${period}`
+      if (seen.has(duplicateKey)) return null
+      seen.add(duplicateKey)
+      return { id, date, period, label, active }
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.date.localeCompare(right.date) || left.period - right.period)
+}
+
+function assertAttendanceSchedule(value) {
+  const rows = Array.isArray(value) ? value : []
+  const datePeriods = new Set()
+  const ids = new Set()
+  for (const row of rows) {
+    const date = String(row?.date || '').trim()
+    const period = Math.trunc(Number(row?.period))
+    const id = String(row?.id || '').trim()
+    const parsedDate = /^\d{4}-\d{2}-\d{2}$/u.test(date) ? new Date(`${date}T00:00:00Z`) : null
+    const validDate = parsedDate && !Number.isNaN(parsedDate.getTime()) && parsedDate.toISOString().slice(0, 10) === date
+    if (!validDate || period < 1) {
+      throw new Error('출석 회차의 날짜와 교시를 모두 입력해주세요.')
+    }
+    const key = `${date}::${period}`
+    if (datePeriods.has(key)) throw new Error('같은 날짜와 교시는 중복 등록할 수 없습니다.')
+    if (id && ids.has(id)) throw new Error('출석 회차 식별자가 중복되었습니다.')
+    datePeriods.add(key)
+    if (id) ids.add(id)
+  }
+  return normalizeAttendanceSchedule(rows)
 }
 
 function normalizeClassKey(value) {
@@ -107,6 +153,7 @@ export function normalizeProgram(id, data) {
     unitLabel: String(data?.unitLabel || '').trim() || '동아리',
     preferenceCount: toPreferenceCount(data?.preferenceCount),
     features: normalizeFeatures(data?.features),
+    attendanceSchedule: normalizeAttendanceSchedule(data?.attendanceSchedule),
     // 비어 있으면 전체 학급, 값이 있으면 해당 학급 학생만 신청할 수 있습니다.
     targetClasses: normalizeProgramTargetClasses(data?.targetClasses),
     status,
@@ -169,6 +216,7 @@ function assertProgramPayload(payload) {
     unitLabel: String(payload?.unitLabel || '').trim() || '동아리',
     preferenceCount: toPreferenceCount(payload?.preferenceCount),
     features: normalizeFeatures(payload?.features),
+    attendanceSchedule: assertAttendanceSchedule(payload?.attendanceSchedule),
     targetClasses: normalizeProgramTargetClasses(payload?.targetClasses),
     studentVisible: payload?.studentVisible !== false,
     roomLabel: String(payload?.roomLabel || '').trim(),

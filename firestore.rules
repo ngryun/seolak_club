@@ -22,6 +22,15 @@ service cloud.firestore {
       match /students/{studentId} {
         allow read, write: if true;
       }
+
+      // 출결 정보는 Netlify Functions의 Firebase Admin SDK로만 접근합니다.
+      match /attendanceSessions/{sessionId} {
+        allow read, write: if false;
+
+        match /entries/{studentUid} {
+          allow read, write: if false;
+        }
+      }
     }
 
     match /applications/{applicationId} {
@@ -54,6 +63,11 @@ service cloud.firestore {
 
     match /notifications/{notificationId} {
       allow read, write: if true;
+    }
+
+    // QR 공개 수정 PIN 해시는 서버에서만 읽고 씁니다.
+    match /_attendanceAccess/{programId} {
+      allow read, write: if false;
     }
   }
 }
