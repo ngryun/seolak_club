@@ -2,12 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { listClubMembers } from '../../services/applicationService'
 import {
-  configurePublicAttendance,
   getAttendanceRecord,
   hasAttendanceApiSession,
   saveAttendanceRecord,
   savePublicAttendance,
-  setAttendancePin,
   setAttendanceSessionStatus,
   syncAttendanceRoster,
   unlockPublicAttendance,
@@ -238,7 +236,6 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
   const [manageSessionId, setManageSessionId] = useState('')
   const [showUncheckedOnly, setShowUncheckedOnly] = useState(false)
   const [search, setSearch] = useState('')
-  const [pin, setPin] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
   const loadSeqRef = useRef(0)
   const rosterRef = useRef([])
@@ -397,16 +394,6 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
     } catch (error) { onMessage?.('error', error.message) } finally { setLoading(false) }
   }
 
-  async function configure(enabled, rotate = false) {
-    if (!club || !manageSession || !manageRecord) return
-    setLoading(true)
-    try {
-      const next = await configurePublicAttendance({ program, club, session: manageSession, enabled, rotate })
-      setRecords((prev) => ({ ...prev, [manageSession.id]: { ...prev[manageSession.id], ...next } }))
-      onMessage?.('ok', enabled ? (rotate ? 'QR 링크를 재발급했습니다.' : 'QR 공개 수정을 활성화했습니다.') : 'QR 공개 수정을 중지했습니다.')
-    } catch (error) { onMessage?.('error', error.message) } finally { setLoading(false) }
-  }
-
   async function changeSessionStatus(status) {
     if (!club || !manageSession || !manageRecord) return
     if (status === 'closed' && !window.confirm('회차를 종료하면 QR 링크도 즉시 차단됩니다. 종료할까요?')) return
@@ -424,12 +411,36 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
     if (!club || !manageSession || !manageRecord) return
     const entries = entriesMap[manageSession.id] || {}
     const qrData = manageRecord.publicEnabled && manageRecord.publicUrl ? await QRCode.toDataURL(manageRecord.publicUrl, { width: 220, margin: 1 }) : ''
-    const rows = manageRecord.rosterSnapshot.map((student, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(student.studentNo)}</td><td>${escapeHtml(student.name)}</td><td>${escapeHtml(statusLabel(entries[student.studentUid]))}</td></tr>`).join('')
+    const roster = manageRecord.rosterSnapshot.map((student, index) => ({ ...student, printIndex: index + 1 }))
+    // 일반적인 학급은 한 열로 읽기 쉽게 유지하고, 인원이 많으면 열을 늘려 A4 한 장에 맞춥니다.
+    const columnCount = roster.length <= 32 ? 1 : roster.length <= 90 ? 2 : roster.length <= 150 ? 3 : 4
+    const rowsPerColumn = Math.ceil(roster.length / columnCount)
+    const columns = Array.from({ length: columnCount }, (_, index) => roster.slice(index * rowsPerColumn, (index + 1) * rowsPerColumn)).filter((column) => column.length)
+    if (!columns.length) columns.push([])
+    const longestColumn = Math.max(1, ...columns.map((rows) => rows.length))
+    const rowHeight = Math.max(3.8, Math.min(7.1, 205 / longestColumn)).toFixed(2)
+    const rowFontSize = longestColumn > 48 ? 7.5 : longestColumn > 40 ? 8.5 : longestColumn > 32 ? 9.5 : 10.5
+    const compactColumns = columns.length > 2
+    const numberColumnWidth = compactColumns ? 7 : 10
+    const studentNumberColumnWidth = compactColumns ? 18 : 22
+    const statusColumnWidth = compactColumns ? 14 : 18
+    const tables = columns.map((column) => `<table><colgroup><col class="col-number"><col class="col-student-no"><col><col class="col-status"></colgroup><thead><tr><th>순</th><th>학번</th><th>이름</th><th>출결</th></tr></thead><tbody>${column.map((student) => {
+      const status = entries[student.studentUid] || 'unchecked'
+      return `<tr><td class="number">${student.printIndex}</td><td>${escapeHtml(student.studentNo || '-')}</td><td class="name">${escapeHtml(student.name || '-')}</td><td class="status ${status}">${escapeHtml(statusLabel(status))}</td></tr>`
+    }).join('')}</tbody></table>`).join('')
+    const teacherNames = (club.teacherNames || [club.teacherName]).filter(Boolean).join(', ') || '-'
+    const counts = Object.values(entries).reduce((result, status) => ({ ...result, [status]: (result[status] || 0) + 1 }), { present: 0, absent: 0, unchecked: 0 })
     const popup = window.open('', '_blank')
     if (!popup) { onMessage?.('error', '인쇄 창을 열 수 없습니다. 팝업 차단을 해제해주세요.'); return }
     popup.opener = null
-    popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>출석부</title><style>body{font-family:Arial,sans-serif;padding:28px;color:#111}h1{font-size:22px}.meta{line-height:1.7;margin-bottom:16px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #777;padding:8px;text-align:left}.qr{position:absolute;right:28px;top:28px;text-align:center;font-size:11px}.qr img{width:140px;height:140px}@media print{button{display:none}}</style></head><body><h1>${escapeHtml(program.name)} 출석부</h1><div class="meta"><b>수업:</b> ${escapeHtml(club.clubName)}<br><b>일시:</b> ${escapeHtml(manageSession.date)} ${escapeHtml(manageSession.period)}교시 ${escapeHtml(manageSession.label)}<br><b>담당교사:</b> ${escapeHtml((club.teacherNames || [club.teacherName]).filter(Boolean).join(', '))}</div>${qrData ? `<div class="qr"><img src="${qrData}"><div>PIN 확인 후 출결 수정</div></div>` : ''}<table><thead><tr><th>번호</th><th>학번</th><th>이름</th><th>출결</th></tr></thead><tbody>${rows}</tbody></table><button onclick="window.print()">인쇄</button></body></html>`)
-    popup.document.close(); popup.focus(); setTimeout(() => popup.print(), 250)
+    popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(program.name)} · ${escapeHtml(club.clubName)} 출석부</title><style>
+      @page{size:A4 portrait;margin:8mm}
+      *{box-sizing:border-box}
+      html,body{margin:0;padding:0;color:#172033;background:#fff;font-family:"Pretendard","Apple SD Gothic Neo",Arial,sans-serif}
+      body{padding:8mm}.sheet{width:100%;position:relative}.header{display:grid;grid-template-columns:1fr auto;gap:7mm;align-items:start;padding:0 0 4mm;border-bottom:2.5px solid #1769e0}.eyebrow{margin-bottom:1.5mm;color:#1769e0;font-size:9pt;font-weight:800;letter-spacing:.08em}.title{margin:0;font-size:20pt;line-height:1.15;letter-spacing:-.04em}.subtitle{margin-top:1.5mm;color:#475569;font-size:10pt}.qr{width:29mm;text-align:center;color:#64748b;font-size:7.5pt;line-height:1.25}.qr img{display:block;width:25mm;height:25mm;margin:0 auto 1mm}.info{display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:2mm;margin:3mm 0}.info-item{min-height:13mm;padding:2.2mm 3mm;border:1px solid #dce3ec;border-radius:2mm;background:#f8fafc}.info-label{display:block;margin-bottom:1mm;color:#64748b;font-size:7.5pt;font-weight:700}.info-value{display:block;font-size:9.5pt;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summary{display:flex;gap:2mm;align-items:center;margin-bottom:2.5mm;font-size:8pt}.chip{padding:1.1mm 2.3mm;border-radius:99px;background:#eef2f7;color:#475569;font-weight:700}.chip.total{background:#eaf2ff;color:#1769e0}.chip.absent{background:#fff0f0;color:#b42318}.tables{display:grid;grid-template-columns:repeat(${columns.length},minmax(0,1fr));gap:3mm}table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;border:1px solid #94a3b8;border-radius:1.5mm;overflow:hidden;font-size:${rowFontSize}pt}.col-number{width:${numberColumnWidth}mm}.col-student-no{width:${studentNumberColumnWidth}mm}.col-status{width:${statusColumnWidth}mm}th{height:8mm;padding:1.3mm 1.8mm;background:#eaf2ff;color:#23436f;border-bottom:1px solid #94a3b8;text-align:center;font-size:8.5pt;font-weight:800}td{height:${rowHeight}mm;padding:.6mm 1.8mm;border-bottom:1px solid #cbd5e1;text-align:center;line-height:1.1}tbody tr:last-child td{border-bottom:0}td+td,th+th{border-left:1px solid #cbd5e1}td.name{text-align:left;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}td.number{color:#64748b}.status{font-weight:800}.status.present{color:#157f3d;background:#f0faf3}.status.absent{color:#b42318;background:#fff4f4}.status.unchecked{color:#94a3b8}.footer{display:flex;justify-content:space-between;gap:4mm;margin-top:2.5mm;padding-top:2mm;border-top:1px solid #dce3ec;color:#64748b;font-size:7.5pt}.toolbar{position:fixed;right:18px;bottom:18px;padding:10px 18px;border:0;border-radius:9px;background:#1769e0;color:#fff;font-weight:800;box-shadow:0 8px 24px rgba(23,105,224,.25);cursor:pointer}
+      @media print{body{padding:0}.toolbar{display:none}.sheet{break-inside:avoid;page-break-inside:avoid}.tables,table,tr{break-inside:avoid;page-break-inside:avoid}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+    </style></head><body><main class="sheet"><header class="header"><div><div class="eyebrow">ATTENDANCE SHEET</div><h1 class="title">${escapeHtml(club.clubName)} 출석부</h1><div class="subtitle">${escapeHtml(program.name)}</div></div>${qrData ? `<div class="qr"><img src="${qrData}" alt="QR 코드"><div>PIN 확인 후<br>출결 수정</div></div>` : ''}</header><section class="info"><div class="info-item"><span class="info-label">수업 · 담당교사</span><span class="info-value">${escapeHtml(club.clubName)} · ${escapeHtml(teacherNames)}</span></div><div class="info-item"><span class="info-label">수업 일자</span><span class="info-value">${escapeHtml(withWeekday(manageSession.date))}</span></div><div class="info-item"><span class="info-label">회차</span><span class="info-value">${escapeHtml(sessionTitle(manageSession))}</span></div></section><div class="summary"><span class="chip total">전체 ${roster.length}명</span><span class="chip">출석 ${counts.present || 0}</span><span class="chip absent">결석 ${counts.absent || 0}</span><span class="chip">미체크 ${counts.unchecked || 0}</span></div><section class="tables">${tables}</section><footer class="footer"><span>출결 변경 사항은 확인 후 시스템에도 반영해 주세요.</span><span>담당교사 확인: ____________________</span></footer></main><button class="toolbar" onclick="window.print()">인쇄하기</button></body></html>`)
+    popup.document.close(); popup.focus(); setTimeout(() => popup.print(), 350)
   }
 
   if (!program?.features?.attendance) return null
@@ -473,7 +484,7 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
         </div>
       </section>
       <section style={{ ...card, display: 'grid', gap: 10 }}>
-        <h3 style={{ margin: 0, fontSize: 16 }}>회차 관리 · 인쇄 및 공개 QR</h3>
+        <h3 style={{ margin: 0, fontSize: 16 }}>회차 관리 · 출석부 인쇄</h3>
         {sessions.length > 1 ? (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {sessions.map((session) => {
@@ -491,19 +502,12 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
             <button onClick={syncRoster} disabled={loading || manageRecord.status === 'closed'} style={{ ...button, background: '#f8fafc', color: colors.sub, border: `1px solid ${colors.border}` }}>명단 동기화</button>
             <button onClick={() => changeSessionStatus(manageRecord.status === 'closed' ? 'open' : 'closed')} disabled={loading} style={{ ...button, background: manageRecord.status === 'closed' ? '#e8f7ed' : '#fff0f0', color: manageRecord.status === 'closed' ? colors.ok : colors.danger }}>{manageRecord.status === 'closed' ? '회차 다시 열기' : '회차 종료'}</button>
           </div>
-          {user.role === 'admin' ? <div style={{ display: 'flex', gap: 8, alignItems: 'end', maxWidth: 420 }}>
-            <label style={{ flex: 1, fontSize: 12, color: colors.sub }}>프로그램 PIN (숫자 4~8자리)<input type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))} style={input} /></label>
-            <button onClick={async () => { try { await setAttendancePin({ programId: program.id, pin }); setPin(''); onMessage?.('ok', '프로그램 QR PIN을 저장했습니다.') } catch (error) { onMessage?.('error', error.message) } }} style={{ ...button, background: '#334155', color: '#fff' }}>PIN 저장</button>
-          </div> : null}
           <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
-            <button onClick={() => configure(true)} disabled={loading || manageRecord.publicEnabled} style={{ ...button, background: '#e8f7ed', color: colors.ok }}>QR 수정 활성화</button>
-            <button onClick={() => configure(true, true)} disabled={loading} style={{ ...button, background: '#fff7e6', color: '#9a6700' }}>QR 재발급</button>
-            <button onClick={() => configure(false)} disabled={loading || !manageRecord.publicEnabled} style={{ ...button, background: '#fff0f0', color: colors.danger }}>QR 중지</button>
             <button onClick={printSheet} style={{ ...button, background: colors.accent, color: '#fff' }}>출석부 인쇄</button>
           </div>
           {manageRecord.publicEnabled && manageRecord.publicUrl
-            ? <div style={{ fontSize: 12, color: colors.sub, wordBreak: 'break-all' }}>공개 링크: <a href={manageRecord.publicUrl} target="_blank" rel="noreferrer">{manageRecord.publicUrl}</a></div>
-            : <div style={{ fontSize: 12, color: colors.sub }}>QR이 중지되어 있으며 인쇄물에는 QR이 표시되지 않습니다.</div>}
+            ? <div style={{ fontSize: 12, color: colors.sub, wordBreak: 'break-all' }}>관리자 일괄 설정으로 QR이 활성화되어 있습니다. 공개 링크: <a href={manageRecord.publicUrl} target="_blank" rel="noreferrer">{manageRecord.publicUrl}</a></div>
+            : <div style={{ fontSize: 12, color: colors.sub }}>QR은 관리자가 ‘프로그램 관리’에서 프로그램 전체에 일괄 설정합니다. 현재 인쇄물에는 QR이 표시되지 않습니다.</div>}
         </> : (manageSession && loadErrors[manageSession.id] ? <div style={{ color: colors.danger, fontSize: 13 }}>이 교시 출석부를 불러오지 못했습니다. 명단 영역에서 재시도해주세요.</div> : null)}
       </section>
     </> : null}

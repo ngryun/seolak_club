@@ -76,6 +76,16 @@ export function hasAttendanceApiSession() {
   return !isFirebaseEnabled() || !!sessionStorage.getItem(API_TOKEN_KEY)
 }
 
+// 데모 모드에서도 프로그램 관리 화면이 새로고침 뒤 QR 상태를 표시할 수 있도록
+// 출석 전용 로컬 저장소의 일괄 설정을 읽습니다. 운영 모드에서는 프로그램 문서의
+// attendanceQrEnabled 값을 사용하므로 null을 반환합니다.
+export function getProgramAttendanceQrSetting(programId) {
+  if (isFirebaseEnabled()) return null
+  const normalizedProgramId = String(programId || '').trim()
+  if (!normalizedProgramId) return null
+  return readStore().programQrSettings?.[normalizedProgramId] || null
+}
+
 export async function getAttendanceRecord({ program, club, session, roster = [] }) {
   if (isFirebaseEnabled()) {
     return api('attendance-api', 'get', {
@@ -84,9 +94,15 @@ export async function getAttendanceRecord({ program, club, session, roster = [] 
   }
   const store = readStore()
   const key = recordKey(club.id, session.id)
+  const exists = !!store.records?.[key]
   const current = normalizeRecord(store.records?.[key], {
     programId: program.id, clubId: club.id, sessionId: session.id, roster,
   })
+  if (!exists && store.programQrSettings?.[program.id]?.enabled === true && current.status !== 'closed') {
+    current.publicEnabled = true
+    const token = makeDemoToken({ c: club.id, s: session.id, p: program.id, v: current.tokenVersion })
+    current.publicUrl = `${window.location.origin}/attendance/public/${token}`
+  }
   store.records = { ...(store.records || {}), [key]: current }
   writeStore(store)
   return current
@@ -147,6 +163,48 @@ export async function setAttendancePin({ programId, pin }) {
   return { ok: true }
 }
 
+export async function configureProgramAttendanceQr({ programId, enabled, rotate = false, pin = '' }) {
+  const normalizedProgramId = String(programId || '').trim()
+  const normalizedPin = String(pin || '').trim()
+  if (!normalizedProgramId) throw new Error('프로그램 정보가 필요합니다.')
+  if (normalizedPin && !/^\d{4,8}$/u.test(normalizedPin)) throw new Error('PIN은 숫자 4~8자리로 입력해주세요.')
+  if (isFirebaseEnabled()) {
+    return api('attendance-api', 'configure-program-public', {
+      programId: normalizedProgramId,
+      enabled: enabled === true,
+      rotate: rotate === true,
+      pin: normalizedPin,
+    })
+  }
+
+  const store = readStore()
+  if (normalizedPin) {
+    store.programPins = { ...(store.programPins || {}), [normalizedProgramId]: normalizedPin }
+  }
+  if (enabled && !store.programPins?.[normalizedProgramId]) {
+    throw new Error('QR을 활성화하려면 프로그램 PIN을 먼저 입력해주세요.')
+  }
+  store.programQrSettings = {
+    ...(store.programQrSettings || {}),
+    [normalizedProgramId]: { enabled: enabled === true, updatedAt: new Date().toISOString() },
+  }
+
+  let updatedCount = 0
+  store.records = Object.fromEntries(Object.entries(store.records || {}).map(([key, source]) => {
+    const current = normalizeRecord(source)
+    if (current.programId !== normalizedProgramId || current.status === 'closed') return [key, current]
+    if (rotate) current.tokenVersion += 1
+    current.publicEnabled = enabled === true
+    const token = makeDemoToken({ c: current.clubId, s: current.sessionId, p: normalizedProgramId, v: current.tokenVersion })
+    current.publicUrl = enabled ? `${window.location.origin}/attendance/public/${token}` : ''
+    current.updatedAt = new Date().toISOString()
+    updatedCount += 1
+    return [key, current]
+  }))
+  writeStore(store)
+  return { ok: true, enabled: enabled === true, updatedCount }
+}
+
 function makeDemoToken(payload) {
   const raw = JSON.stringify(payload)
   return btoa(unescape(encodeURIComponent(raw))).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
@@ -166,7 +224,8 @@ export async function configurePublicAttendance({ program, club, session, enable
     })
   }
   const store = readStore()
-  if (enabled && !store.programPins?.[program.id]) throw new Error('관리자가 먼저 프로그램 QR PIN을 설정해야 합니다.')
+  if (enabled && store.programQrSettings?.[program.id]?.enabled !== true) throw new Error('관리자가 프로그램 관리에서 QR을 먼저 활성화해야 합니다.')
+  if (enabled && !store.programPins?.[program.id]) throw new Error('관리자가 프로그램 QR PIN을 먼저 설정해야 합니다.')
   const key = recordKey(club.id, session.id)
   const current = normalizeRecord(store.records?.[key], {
     programId: program.id, clubId: club.id, sessionId: session.id,
@@ -188,7 +247,17 @@ export async function setAttendanceSessionStatus({ program, club, session, statu
   const store = readStore(); const key = recordKey(club.id, session.id)
   const current = normalizeRecord(store.records?.[key], { programId: program.id, clubId: club.id, sessionId: session.id })
   current.status = nextStatus
-  if (nextStatus === 'closed') current.publicEnabled = false
+  if (nextStatus === 'closed') {
+    current.publicEnabled = false
+    current.publicUrl = ''
+  } else if (store.programQrSettings?.[program.id]?.enabled === true) {
+    current.publicEnabled = true
+    const token = makeDemoToken({ c: club.id, s: session.id, p: program.id, v: current.tokenVersion })
+    current.publicUrl = `${window.location.origin}/attendance/public/${token}`
+  } else {
+    current.publicEnabled = false
+    current.publicUrl = ''
+  }
   store.records = { ...(store.records || {}), [key]: current }; writeStore(store)
   return current
 }

@@ -105,6 +105,8 @@ import {
 import { downloadProgramTemplate, parseProgramExcel } from "../../services/programExcelService";
 import { downloadClubTemplate, parseClubExcel, resolveClubExcelRows } from "../../services/clubExcelService";
 import { AttendancePanel } from "../attendance/AttendancePages";
+import { configureProgramAttendanceQr, getProgramAttendanceQrSetting } from "../../services/attendanceService";
+import { isFirebaseEnabled } from "../../lib/firebase";
 import educationOfficeBi from "../../../logo_img/심벌타이포조합/심벌타이포조합사용.png";
 
 const t = {
@@ -7468,10 +7470,34 @@ function StudentVisibilitySwitch({ visible, disabled, onToggle }) {
   );
 }
 
-function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUpload, onDownloadTemplate, onUpdate, onArchive, onRestore }) {
+function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUpload, onDownloadTemplate, onUpdate, onArchive, onRestore, onConfigureAttendanceQr }) {
   const [editingId, setEditingId] = useState("");
   const [form, setForm] = useState(newProgramForm());
+  const [qrProgramId, setQrProgramId] = useState("");
+  const [qrPin, setQrPin] = useState("");
+  const [qrOverrides, setQrOverrides] = useState({});
   const rows = Array.isArray(programs) ? programs : [];
+  const attendancePrograms = rows.filter((row) => row.status === "active" && row.features?.attendance);
+  const qrProgram = attendancePrograms.find((row) => row.id === qrProgramId) || attendancePrograms[0] || null;
+  const storedQrEnabled = getProgramAttendanceQrSetting(qrProgram?.id)?.enabled;
+  const qrEnabled = qrProgram
+    ? (qrOverrides[qrProgram.id] ?? (typeof storedQrEnabled === "boolean" ? storedQrEnabled : qrProgram.attendanceQrEnabled))
+    : false;
+
+  async function configureQr(enabled, rotate = false) {
+    if (!qrProgram || !onConfigureAttendanceQr) return;
+    if (enabled && !rotate && !/^\d{4,8}$/u.test(qrPin)) {
+      window.alert("프로그램 공통 PIN을 숫자 4~8자리로 입력해주세요.");
+      return;
+    }
+    if (!enabled && !window.confirm(`'${qrProgram.name}'의 전체 QR 출석 링크를 중지할까요?`)) return;
+    if (rotate && !window.confirm(`'${qrProgram.name}'의 전체 QR 링크를 재발급할까요? 기존 QR은 사용할 수 없게 됩니다.`)) return;
+    const result = await onConfigureAttendanceQr(qrProgram.id, { enabled, rotate, pin: rotate ? "" : qrPin });
+    if (result) {
+      setQrOverrides((prev) => ({ ...prev, [qrProgram.id]: enabled }));
+      if (qrPin) setQrPin("");
+    }
+  }
 
   function resetForm() {
     setEditingId("");
@@ -7667,6 +7693,51 @@ function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUp
           </table>
         </div>
       </section>
+
+      {attendancePrograms.length > 0 ? (
+        <section style={{ ...cardStyle, display: "grid", gap: 12, borderColor: "#bfd4f7" }}>
+          <div>
+            <h3 style={{ fontSize: 15, marginBottom: 5 }}>QR 출석 일괄 설정</h3>
+            <div style={{ fontSize: 12, color: t.textSub, lineHeight: 1.55 }}>
+              관리자가 프로그램별 공통 PIN과 QR 사용 여부를 한 번만 설정합니다. 해당 프로그램의 모든 수업·출석 회차에 동일하게 적용되며, 이후 만들어지는 출석부에도 자동 적용됩니다.
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 9, alignItems: "end" }}>
+            <Field label="프로그램">
+              <Select value={qrProgram?.id || ""} onChange={(e) => { setQrProgramId(e.target.value); setQrPin(""); }}>
+                {attendancePrograms.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+              </Select>
+            </Field>
+            <Field label="프로그램 공통 PIN" hint="숫자 4~8자리 · 활성화할 때 함께 저장됩니다.">
+              <input
+                type="password"
+                inputMode="numeric"
+                autoComplete="new-password"
+                value={qrPin}
+                onChange={(e) => setQrPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                style={inputBase}
+                placeholder="PIN 입력"
+              />
+            </Field>
+            <div style={{ alignSelf: "center", minWidth: 92, textAlign: "center" }}>
+              <span style={{ display: "inline-flex", padding: "5px 10px", borderRadius: 999, background: qrEnabled ? "#e8f7ed" : "#f1f5f9", color: qrEnabled ? t.ok : t.textSub, fontSize: 12, fontWeight: 800 }}>
+                QR {qrEnabled ? "사용 중" : "중지"}
+              </span>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" onClick={() => configureQr(true)} disabled={loading || qrPin.length < 4} style={{ ...buttonBase, background: loading || qrPin.length < 4 ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 800 }}>
+              PIN 저장 · 전체 QR 활성화
+            </button>
+            <button type="button" onClick={() => configureQr(true, true)} disabled={loading || !qrEnabled} style={{ ...buttonBase, background: "#fff7e6", color: "#9a6700", fontWeight: 700, opacity: loading || !qrEnabled ? 0.55 : 1 }}>
+              전체 QR 재발급
+            </button>
+            <button type="button" onClick={() => configureQr(false)} disabled={loading || !qrEnabled} style={{ ...buttonBase, background: "#fff0f0", color: t.danger, fontWeight: 700, opacity: loading || !qrEnabled ? 0.55 : 1 }}>
+              전체 QR 중지
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section style={cardStyle}>
         <h3 style={{ fontSize: 15, marginBottom: 10 }}>{editingId ? "프로그램 수정" : "새 프로그램 개설"}</h3>
@@ -8577,6 +8648,32 @@ export default function PrototypeApp({ studentOnly = false }) {
     } catch (error) {
       withMessageError(error, "프로그램 수정에 실패했습니다.");
       return false;
+    } finally {
+      setProgramLoading(false);
+    }
+  }
+
+  async function handleConfigureProgramAttendanceQr(programId, options) {
+    setProgramLoading(true);
+    try {
+      const result = await configureProgramAttendanceQr({ programId, ...options });
+      // 데모 모드에서는 출석 전용 저장소와 프로그램 목록이 분리되어 있으므로
+      // 프로그램 문서의 표시 상태도 함께 갱신해 백업·새로고침과 일치시킵니다.
+      if (!isFirebaseEnabled()) {
+        await updateProgram(programId, { attendanceQrEnabled: options.enabled === true }, { actor: user });
+      }
+      const action = options.enabled ? (options.rotate ? "재발급" : "활성화") : "중지";
+      const updated = Number(result?.updatedCount) || 0;
+      const closed = Number(result?.closedCount) || 0;
+      setMessage({
+        type: "ok",
+        text: `프로그램 QR을 전체 ${action}했습니다. (적용 ${updated}개 회차${closed ? ` · 종료 회차 ${closed}개 제외` : ""})`,
+      });
+      await refreshPrograms({ forceRefresh: true });
+      return result || { ok: true };
+    } catch (error) {
+      withMessageError(error, "프로그램 QR 일괄 설정에 실패했습니다.");
+      return null;
     } finally {
       setProgramLoading(false);
     }
@@ -10264,6 +10361,7 @@ export default function PrototypeApp({ studentOnly = false }) {
           onUpdate={handleUpdateProgram}
           onArchive={handleArchiveProgram}
           onRestore={handleRestoreProgram}
+          onConfigureAttendanceQr={handleConfigureProgramAttendanceQr}
         />
       ) : null}
 

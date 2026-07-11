@@ -33,6 +33,7 @@ function buildDefaultProgramData() {
       attendance: false,
     },
     attendanceSchedule: [],
+    attendanceQrEnabled: false,
     targetClasses: [],
     status: 'active',
     sortOrder: 0,
@@ -154,6 +155,7 @@ export function normalizeProgram(id, data) {
     preferenceCount: toPreferenceCount(data?.preferenceCount),
     features: normalizeFeatures(data?.features),
     attendanceSchedule: normalizeAttendanceSchedule(data?.attendanceSchedule),
+    attendanceQrEnabled: data?.attendanceQrEnabled === true,
     // 비어 있으면 전체 학급, 값이 있으면 해당 학급 학생만 신청할 수 있습니다.
     targetClasses: normalizeProgramTargetClasses(data?.targetClasses),
     status,
@@ -217,6 +219,7 @@ function assertProgramPayload(payload) {
     preferenceCount: toPreferenceCount(payload?.preferenceCount),
     features: normalizeFeatures(payload?.features),
     attendanceSchedule: assertAttendanceSchedule(payload?.attendanceSchedule),
+    attendanceQrEnabled: payload?.attendanceQrEnabled === true,
     targetClasses: normalizeProgramTargetClasses(payload?.targetClasses),
     studentVisible: payload?.studentVisible !== false,
     roomLabel: String(payload?.roomLabel || '').trim(),

@@ -2,10 +2,14 @@ import { createSessionToken, db, handleError, json, normalizeEntries, readBody, 
 
 async function validatePublic(token) {
   const payload = verifyPublicToken(token)
-  const ref = db().doc(`schedules/${payload.scheduleId}/attendanceSessions/${payload.sessionId}`); const snap = await ref.get()
+  const ref = db().doc(`schedules/${payload.scheduleId}/attendanceSessions/${payload.sessionId}`)
+  const [snap, accessSnap] = await Promise.all([
+    ref.get(),
+    db().doc(`_attendanceAccess/${payload.programId}`).get(),
+  ])
   if (!snap.exists) throw Object.assign(new Error('출석 회차를 찾을 수 없습니다.'), { status: 404 })
   const record = snap.data()
-  if (!record.publicEnabled || Number(record.tokenVersion) !== Number(payload.version) || record.status === 'closed') throw Object.assign(new Error('중지되었거나 종료된 출석 링크입니다.'), { status: 410 })
+  if (accessSnap.data()?.enabled !== true || !record.publicEnabled || Number(record.tokenVersion) !== Number(payload.version) || record.status === 'closed') throw Object.assign(new Error('중지되었거나 종료된 출석 링크입니다.'), { status: 410 })
   return { payload, ref, record }
 }
 
