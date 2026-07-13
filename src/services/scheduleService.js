@@ -448,11 +448,11 @@ export async function deleteClubRoom(roomId, options = {}) {
 
 export async function createSchedule(payload, options = {}) {
   const actor = assertActor(options?.actor)
-  if (actor.role !== 'admin' && actor.role !== 'teacher') {
+  if (actor.role !== 'admin' && actor.role !== 'teacher' && actor.role !== 'homeroom') {
     throw new Error('동아리 개설은 관리자 또는 교사만 가능합니다.')
   }
 
-  const teacherUids = actor.role === 'teacher'
+  const teacherUids = actor.role === 'teacher' || actor.role === 'homeroom'
     ? [actor.uid]
     : normalizeUidList(payload?.teacherUids ?? payload?.teacherUid)
 

@@ -1,6 +1,7 @@
 import { createHmac, createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import { cert, getApps, initializeApp } from 'firebase-admin/app'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
+import { getStorage } from 'firebase-admin/storage'
 
 export function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
@@ -15,9 +16,17 @@ export function db() {
   if (!getApps().length) {
     const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || ''
     if (!raw) throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON 환경변수가 필요합니다.')
-    initializeApp({ credential: cert(JSON.parse(raw)) })
+    const serviceAccount = JSON.parse(raw)
+    const storageBucket = process.env.FIREBASE_STORAGE_BUCKET
+      || (serviceAccount.project_id ? `${serviceAccount.project_id}.firebasestorage.app` : '')
+    initializeApp({ credential: cert(serviceAccount), ...(storageBucket ? { storageBucket } : {}) })
   }
   return getFirestore()
+}
+
+export function storageBucket() {
+  db()
+  return getStorage().bucket()
 }
 
 function base64url(value) { return Buffer.from(value).toString('base64url') }
@@ -94,5 +103,5 @@ export function timestamp() { return FieldValue.serverTimestamp() }
 
 export function handleError(error) {
   console.error(error)
-  return json({ error: error instanceof Error ? error.message : '출석부 서버 오류가 발생했습니다.' }, Number(error?.status) || 500)
+  return json({ error: error instanceof Error ? error.message : '서버 요청을 처리하지 못했습니다.' }, Number(error?.status) || 500)
 }

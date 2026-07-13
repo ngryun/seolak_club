@@ -3,6 +3,7 @@ import { listUsers } from './userService'
 import { listClubMembers, listCurrentCycleApplications } from './applicationService'
 import { listPrograms } from './programService'
 import { exportAttendanceData } from './attendanceService'
+import { exportActivityRecordData } from './activityRecordService'
 
 let xlsxModulePromise = null
 
@@ -39,11 +40,12 @@ function toStatusLabel(status) {
 export async function exportFullBackup() {
   const XLSX = await getXlsx()
 
-  const [clubs, users, programs, attendanceData] = await Promise.all([
+  const [clubs, users, programs, attendanceData, activityRecordData] = await Promise.all([
     listSchedules({ includeLegacy: true }),
     listUsers(),
     listPrograms({ includeArchived: true }),
     exportAttendanceData(),
+    exportActivityRecordData(),
   ])
 
   // 프로그램별 현재 사이클 신청 내역을 모두 수집
@@ -71,12 +73,15 @@ export async function exportFullBackup() {
     p.features?.interview ? 'O' : '',
     p.features?.attendance ? 'O' : '',
     (p.attendanceSchedule || []).map((row) => `${row.date} ${row.period}교시${row.active === false ? '(보관)' : ''}${row.label ? ` ${row.label}` : ''}`).join(' / '),
+    formatDate(p.activityRecordStartAt),
+    formatDate(p.activityRecordEndAt),
+    (p.activityRecordQuestions || []).map((row) => `${row.active === false ? '[사용중지] ' : ''}${row.title}${row.required ? '(필수)' : ''}`).join(' / '),
     Array.isArray(p.targetClasses) && p.targetClasses.length > 0 ? p.targetClasses.join(', ') : '전체',
     p.status === 'archived' ? '보관' : '운영중',
     p.cycleId,
     p.id,
   ])
-  const programHeaders = ['프로그램명', '개설단위', '지망수', '대표학생', '계획서', '장소', '면접', '출석부', '출석일정', '신청대상학급', '상태', '사이클ID', 'ID']
+  const programHeaders = ['프로그램명', '개설단위', '지망수', '대표학생', '계획서', '장소', '면접', '출석부', '출석일정', '활동기록시작', '활동기록종료', '활동기록추가질문', '신청대상학급', '상태', '사이클ID', 'ID']
 
   // 1. 동아리 목록 시트
   const clubRows = clubs.map((c) => [
@@ -173,6 +178,38 @@ export async function exportFullBackup() {
   })
   const attendanceEntryHeaders = ['프로그램', '수업', '날짜', '교시', '학번', '학생명', '출결', '수정일시', '수정주체']
 
+  // 6. 학생 활동 기록 및 교사 생활기록부 작성 내용
+  const activityRecords = Array.isArray(activityRecordData?.records) ? activityRecordData.records : []
+  const activityRecordRows = activityRecords.map((record) => {
+    const club = clubs.find((row) => row.id === record.clubId)
+    const program = programs.find((row) => row.id === (record.programId || club?.programId))
+    const questionMap = new Map((record.questionSnapshot || []).map((row) => [row.id, row.title]))
+    const additional = Object.entries(record.additionalAnswers || {})
+      .map(([id, answer]) => `${questionMap.get(id) || id}: ${answer}`)
+      .join(' / ')
+    return [
+      program?.name || record.programId || '',
+      club?.clubName || record.clubId || '',
+      record.studentNo || '',
+      record.studentName || '',
+      record.studentStatus || 'unsubmitted',
+      record.commonAnswers?.activity || '',
+      record.commonAnswers?.contribution || '',
+      record.commonAnswers?.learning || '',
+      record.commonAnswers?.change || '',
+      record.commonAnswers?.followUp || '',
+      additional,
+      (record.attachments || []).map((row) => row.name).join(', '),
+      record.observationNote || '',
+      record.studentRecordText || '',
+      record.teacherStatus || '',
+      formatDate(record.submittedAt),
+      formatDate(record.teacherUpdatedAt),
+      record.cycleId || '',
+    ]
+  })
+  const activityRecordHeaders = ['프로그램', '수업', '학번', '학생명', '학생상태', '활동내용', '역할과기여', '배운점', '느낀점과변화', '후속활동', '추가답변', '첨부파일', '교사관찰메모', '생활기록부작성내용', '교사상태', '학생제출일시', '교사수정일시', '사이클ID']
+
   // 워크북 생성
   const wb = XLSX.utils.book_new()
 
@@ -204,6 +241,10 @@ export async function exportFullBackup() {
   wsAttendanceEntries['!cols'] = attendanceEntryHeaders.map(() => ({ wch: 16 }))
   XLSX.utils.book_append_sheet(wb, wsAttendanceEntries, '출결내역')
 
+  const wsActivityRecords = XLSX.utils.aoa_to_sheet([activityRecordHeaders, ...activityRecordRows])
+  wsActivityRecords['!cols'] = activityRecordHeaders.map((header) => ({ wch: ['활동내용', '역할과기여', '배운점', '느낀점과변화', '후속활동', '추가답변', '교사관찰메모', '생활기록부작성내용'].includes(header) ? 36 : 16 }))
+  XLSX.utils.book_append_sheet(wb, wsActivityRecords, '학생활동기록')
+
   const now = new Date()
   const dateStr = [
     now.getFullYear(),
@@ -222,5 +263,6 @@ export async function exportFullBackup() {
     userCount: userRows.length,
     attendanceSessionCount: attendanceSessionRows.length,
     attendanceEntryCount: attendanceEntryRows.length,
+    activityRecordCount: activityRecordRows.length,
   }
 }

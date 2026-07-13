@@ -27,6 +27,7 @@ import {
   DEFAULT_CYCLE_ID,
   DEFAULT_PROGRAM_ID,
   MAX_PREFERENCE_COUNT,
+  getStudentClassKey,
   getProgramById,
   isStudentEligibleForProgram,
   listPrograms,
@@ -43,6 +44,7 @@ const MEMBERS_SUBCOLLECTION = 'members'
 const ASSIGNMENTS = 'recruitmentAssignments'
 const LEADER_AUTO_SOURCE = 'leader_auto'
 const ADMIN_FORCE_SOURCE = 'admin_force'
+const HOMEROOM_FORCE_SOURCE = 'homeroom_force'
 
 const STATUS = {
   WAITING: 'waiting_round',
@@ -61,6 +63,7 @@ const REJECT_REASON = {
   APPROVAL_REVOKED: 'approval_revoked',
   LEADER_ASSIGNED: 'leader_assigned',
   ADMIN_FORCE_ASSIGNED: 'admin_force_assigned',
+  HOMEROOM_FORCE_ASSIGNED: 'homeroom_force_assigned',
 }
 
 let localApplications = []
@@ -457,6 +460,7 @@ function isSyntheticAssignedApplication(app) {
     && source !== 'interview_manual'
     && source !== LEADER_AUTO_SOURCE
     && source !== ADMIN_FORCE_SOURCE
+    && source !== HOMEROOM_FORCE_SOURCE
   ) {
     return false
   }
@@ -493,6 +497,7 @@ function assertActor(actor) {
     role,
     name: String(actor?.name || '').trim(),
     studentNo: String(actor?.studentNo || '').trim(),
+    homeroomClass: String(actor?.homeroomClass || '').trim(),
   }
 }
 
@@ -2675,10 +2680,15 @@ export async function directAssignStudentToClub(payload) {
   })
 }
 
-export async function adminForceAssignStudentToClub(payload) {
-  const actor = assertActor(payload?.actor)
-  if (actor.role !== 'admin') {
-    throw new Error('강제 배정은 관리자만 가능합니다.')
+export async function forceAssignStudentToClub(payload) {
+  const claimedActor = assertActor(payload?.actor)
+  const actorProfile = await getUserProfile(claimedActor.uid)
+  if (!actorProfile) {
+    throw new Error('사용자 계정을 확인할 수 없습니다.')
+  }
+  const actor = assertActor({ ...claimedActor, ...actorProfile, uid: claimedActor.uid })
+  if (actor.role !== 'admin' && actor.role !== 'homeroom') {
+    throw new Error('강제 배정은 관리자 또는 담임교사만 가능합니다.')
   }
 
   const reason = String(payload?.reason || '').trim()
@@ -2686,15 +2696,36 @@ export async function adminForceAssignStudentToClub(payload) {
     throw new Error('강제 배정 사유를 입력해주세요.')
   }
 
-  return directAssignMemberInternal(payload, {
-    source: ADMIN_FORCE_SOURCE,
+  if (actor.role === 'homeroom') {
+    if (!actor.homeroomClass) {
+      throw new Error('담임교사의 담당 학급이 설정되지 않았습니다.')
+    }
+    const student = await getUserProfile(payload?.studentUid)
+    if (!student || student.role !== 'student') {
+      throw new Error('학생 계정을 찾을 수 없습니다.')
+    }
+    if (getStudentClassKey(student.studentNo || student.loginId) !== actor.homeroomClass) {
+      throw new Error('담당 학급 학생만 강제 배정할 수 있습니다.')
+    }
+  }
+
+  const isHomeroom = actor.role === 'homeroom'
+
+  return directAssignMemberInternal({ ...payload, actor }, {
+    source: isHomeroom ? HOMEROOM_FORCE_SOURCE : ADMIN_FORCE_SOURCE,
     requireInterview: false,
     requireLeader: false,
     overrideApproved: true,
-    overrideRejectReason: REJECT_REASON.ADMIN_FORCE_ASSIGNED,
+    overrideRejectReason: isHomeroom
+      ? REJECT_REASON.HOMEROOM_FORCE_ASSIGNED
+      : REJECT_REASON.ADMIN_FORCE_ASSIGNED,
     decisionNote: reason,
     ignoreCapacity: true,
   })
+}
+
+export async function adminForceAssignStudentToClub(payload) {
+  return forceAssignStudentToClub(payload)
 }
 
 export async function directSelectInterviewMember(payload) {

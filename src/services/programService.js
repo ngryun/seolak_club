@@ -16,6 +16,7 @@ export const DEFAULT_PROGRAM_ID = 'club-default'
 // 기존 recruitmentCycles 문서 ID. 기본 프로그램만 이 값을 유지하고, 새 프로그램은 programId를 cycleId로 사용합니다.
 export const DEFAULT_CYCLE_ID = 'current'
 export const MAX_PREFERENCE_COUNT = 3
+export const MAX_ACTIVITY_RECORD_QUESTIONS = 3
 
 const PROGRAM_STATUS = new Set(['active', 'archived'])
 
@@ -34,6 +35,9 @@ function buildDefaultProgramData() {
     },
     attendanceSchedule: [],
     attendanceQrEnabled: false,
+    activityRecordStartAt: '',
+    activityRecordEndAt: '',
+    activityRecordQuestions: [],
     targetClasses: [],
     status: 'active',
     sortOrder: 0,
@@ -107,6 +111,50 @@ function assertAttendanceSchedule(value) {
   return normalizeAttendanceSchedule(rows)
 }
 
+function normalizeActivityRecordDateTime(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const parsed = new Date(raw)
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString()
+}
+
+function normalizeActivityRecordQuestions(value) {
+  const rows = Array.isArray(value) ? value : []
+  const seen = new Set()
+  return rows.map((row, index) => {
+    const id = String(row?.id || '').trim() || `question-${index + 1}`
+    const title = String(row?.title || '').trim().slice(0, 120)
+    if (!id || !title || seen.has(id)) return null
+    seen.add(id)
+    return {
+      id,
+      title,
+      helpText: String(row?.helpText || '').trim().slice(0, 240),
+      required: row?.required === true,
+      active: row?.active !== false,
+    }
+  }).filter(Boolean)
+}
+
+function assertActivityRecordSettings(payload) {
+  const startAt = normalizeActivityRecordDateTime(payload?.activityRecordStartAt)
+  const endAt = normalizeActivityRecordDateTime(payload?.activityRecordEndAt)
+  if (Boolean(startAt) !== Boolean(endAt)) {
+    throw new Error('학생 활동 기록 시작·종료 일시를 모두 입력하거나 모두 비워주세요.')
+  }
+  if (startAt && new Date(startAt).getTime() >= new Date(endAt).getTime()) {
+    throw new Error('학생 활동 기록 종료 일시는 시작 일시보다 뒤여야 합니다.')
+  }
+  const questions = normalizeActivityRecordQuestions(payload?.activityRecordQuestions).map((row, index) => ({
+    ...row,
+    id: row.id.startsWith('draft-') ? `question-${Date.now()}-${index + 1}` : row.id,
+  }))
+  if (questions.filter((row) => row.active).length > MAX_ACTIVITY_RECORD_QUESTIONS) {
+    throw new Error(`프로그램별 추가 질문은 최대 ${MAX_ACTIVITY_RECORD_QUESTIONS}개까지 사용할 수 있습니다.`)
+  }
+  return { startAt, endAt, questions }
+}
+
 function normalizeClassKey(value) {
   const matched = String(value || '').trim().match(/^([1-3])-0*([1-9]\d?)$/u)
   if (!matched) return ''
@@ -156,6 +204,9 @@ export function normalizeProgram(id, data) {
     features: normalizeFeatures(data?.features),
     attendanceSchedule: normalizeAttendanceSchedule(data?.attendanceSchedule),
     attendanceQrEnabled: data?.attendanceQrEnabled === true,
+    activityRecordStartAt: normalizeActivityRecordDateTime(data?.activityRecordStartAt),
+    activityRecordEndAt: normalizeActivityRecordDateTime(data?.activityRecordEndAt),
+    activityRecordQuestions: normalizeActivityRecordQuestions(data?.activityRecordQuestions),
     // 비어 있으면 전체 학급, 값이 있으면 해당 학급 학생만 신청할 수 있습니다.
     targetClasses: normalizeProgramTargetClasses(data?.targetClasses),
     status,
@@ -213,6 +264,8 @@ function assertProgramPayload(payload) {
     throw new Error('프로그램 이름은 필수입니다.')
   }
 
+  const activityRecord = assertActivityRecordSettings(payload)
+
   return {
     name,
     unitLabel: String(payload?.unitLabel || '').trim() || '동아리',
@@ -220,6 +273,9 @@ function assertProgramPayload(payload) {
     features: normalizeFeatures(payload?.features),
     attendanceSchedule: assertAttendanceSchedule(payload?.attendanceSchedule),
     attendanceQrEnabled: payload?.attendanceQrEnabled === true,
+    activityRecordStartAt: activityRecord.startAt,
+    activityRecordEndAt: activityRecord.endAt,
+    activityRecordQuestions: activityRecord.questions,
     targetClasses: normalizeProgramTargetClasses(payload?.targetClasses),
     studentVisible: payload?.studentVisible !== false,
     roomLabel: String(payload?.roomLabel || '').trim(),
@@ -390,6 +446,13 @@ export async function updateProgram(programId, payload, options = {}) {
   }
 
   const data = assertProgramPayload({ ...existing, ...payload })
+  if (Object.hasOwn(payload || {}, 'activityRecordQuestions')) {
+    const incomingIds = new Set(data.activityRecordQuestions.map((row) => row.id))
+    const preserved = (existing.activityRecordQuestions || [])
+      .filter((row) => !incomingIds.has(row.id))
+      .map((row) => ({ ...row, active: false }))
+    data.activityRecordQuestions = [...data.activityRecordQuestions, ...preserved]
+  }
   const status = PROGRAM_STATUS.has(String(payload?.status || '').trim())
     ? String(payload.status).trim()
     : existing.status

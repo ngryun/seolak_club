@@ -31,6 +31,11 @@ service cloud.firestore {
           allow read, write: if false;
         }
       }
+
+      // 학생 활동 기록과 교사 전용 생활기록부 초안은 서버에서 역할·담당 수업을 검증합니다.
+      match /activityRecords/{recordId} {
+        allow read, write: if false;
+      }
     }
 
     match /applications/{applicationId} {

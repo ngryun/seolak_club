@@ -257,7 +257,7 @@ function assertRequestCardPayload(payload) {
 
 function ensureAdminOrTeacher(actor) {
   const user = assertActor(actor)
-  if (user.role !== 'admin' && user.role !== 'teacher') {
+  if (user.role !== 'admin' && user.role !== 'teacher' && user.role !== 'homeroom') {
     throw new Error('교사 또는 관리자만 사용할 수 있습니다.')
   }
   return user
@@ -272,10 +272,10 @@ function ensureCardOwnerOrAdmin(actor, card) {
 
 function ensureEligibleApplicant(card, actor) {
   const user = assertActor(actor)
-  if (user.role !== 'student' && user.role !== 'teacher' && user.role !== 'admin') {
+  if (user.role !== 'student' && user.role !== 'teacher' && user.role !== 'homeroom' && user.role !== 'admin') {
     throw new Error('학생, 교사, 관리자만 신청할 수 있습니다.')
   }
-  const normalizedRole = user.role === 'admin' ? 'teacher' : user.role
+  const normalizedRole = user.role === 'admin' || user.role === 'homeroom' ? 'teacher' : user.role
   if (normalizedRole !== card.targetRole) {
     throw new Error(card.targetRole === 'student'
       ? '학생 대상 신청 카드입니다.'

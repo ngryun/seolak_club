@@ -8,13 +8,13 @@ import {
   NOTIFICATION_TYPE,
 } from "../../services/notificationService";
 import {
-  adminForceAssignStudentToClub,
   advanceRecruitmentRound,
   approveApplication,
   cancelStudentPreferenceDraft,
   directAssignStudentToClub,
   directSelectInterviewMember,
   finalizeCurrentCycleDraftsIfNeeded,
+  forceAssignStudentToClub,
   getRecruitmentCycle,
   getRoundStatsByClubIds,
   listCurrentCycleApplications,
@@ -90,6 +90,7 @@ import { exportFullBackup } from "../../services/backupService";
 import { isAiAvailable, generateClubOverview, generateLessonActivities } from "../../services/aiService";
 import {
   DEFAULT_PROGRAM_ID,
+  MAX_ACTIVITY_RECORD_QUESTIONS,
   MAX_PREFERENCE_COUNT,
   archiveProgram,
   createProgram,
@@ -105,6 +106,7 @@ import {
 import { downloadProgramTemplate, parseProgramExcel } from "../../services/programExcelService";
 import { downloadClubTemplate, parseClubExcel, resolveClubExcelRows } from "../../services/clubExcelService";
 import { AttendancePanel } from "../attendance/AttendancePages";
+import { StudentActivityRecordPage, TeacherActivityRecordPage } from "../activityRecords/ActivityRecordPages";
 import { configureProgramAttendanceQr, getProgramAttendanceQrSetting } from "../../services/attendanceService";
 import { isFirebaseEnabled } from "../../lib/firebase";
 import educationOfficeBi from "../../../logo_img/심벌타이포조합/심벌타이포조합사용.png";
@@ -174,6 +176,10 @@ function roleLabel(role) {
   return "학생";
 }
 
+function isTeachingRole(role) {
+  return role === "teacher" || role === "homeroom";
+}
+
 function rejectReasonLabel(value) {
   if (value === "manual") return "수동 반려";
   if (value === "random_unselected") return "무작위 선발 미선정";
@@ -183,6 +189,7 @@ function rejectReasonLabel(value) {
   if (value === "approval_revoked") return "승인 취소";
   if (value === "leader_assigned") return "동아리장 자동 배정";
   if (value === "admin_force_assigned") return "관리자 강제 배정 이동";
+  if (value === "homeroom_force_assigned") return "담임교사 강제 배정 이동";
   return "";
 }
 
@@ -193,6 +200,7 @@ function selectionSourceLabel(value) {
   if (value === "interview_manual") return "직접 선발";
   if (value === "leader_auto") return "동아리장 자동 배정";
   if (value === "admin_force") return "관리자 강제 배정";
+  if (value === "homeroom_force") return "담임교사 강제 배정";
   return "";
 }
 
@@ -284,6 +292,14 @@ function formatTime(value) {
     minute: "2-digit",
     hour12: false,
   });
+}
+
+function toDateTimeLocalValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000);
+  return local.toISOString().slice(0, 16);
 }
 
 function toDatetimeLocalValue(value) {
@@ -1952,6 +1968,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
       ...(useRoomFeature ? [{ key: "clubRooms", label: `${roomLabel} 관리` }] : []),
       { key: "studentStatus", label: "학생 신청 현황" },
       ...(useAttendanceFeature ? [{ key: "attendance", label: "출석부" }] : []),
+      { key: "activityRecords", label: "학생 활동 기록" },
       { key: "round", label: `${unitLabel} 선발 진행` },
       { type: "group", label: "신청카드" },
       { key: "extraRequests", label: "신청카드 목록" },
@@ -1968,6 +1985,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
       ...(useRoomFeature ? [{ key: "clubRooms", label: `${roomLabel} 현황` }] : []),
       { key: "studentStatus", label: "학생 신청 현황" },
       ...(useAttendanceFeature ? [{ key: "attendance", label: "출석부" }] : []),
+      { key: "activityRecords", label: "학생 활동 기록" },
       { type: "group", label: "신청카드" },
       { key: "extraRequests", label: "신청카드 목록" },
       { key: "requestCards", label: "신청카드 관리" },
@@ -1975,9 +1993,19 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
       { key: "profile", label: "내 정보" },
     ],
     homeroom: [
+      { type: "group", label: "선택한 프로그램 업무" },
+      { key: "myClubs", label: `내 ${unitLabel}` },
+      { key: "clubOverview", label: `${unitLabel} 개설현황` },
+      ...(useRoomFeature ? [{ key: "clubRooms", label: `${roomLabel} 현황` }] : []),
+      { key: "studentStatus", label: "학생 신청 현황" },
+      ...(useAttendanceFeature ? [{ key: "attendance", label: "출석부" }] : []),
+      { key: "activityRecords", label: "학생 활동 기록" },
       { type: "group", label: "학급 관리" },
-      { key: "studentStatus", label: "우리 반 신청 현황" },
+      { key: "classStatus", label: "우리 반 신청 현황" },
       { key: "users", label: "우리 반 학생 관리" },
+      { type: "group", label: "신청카드" },
+      { key: "extraRequests", label: "신청카드 목록" },
+      { key: "requestCards", label: "신청카드 관리" },
       { type: "group", label: "설정" },
       { key: "profile", label: "내 정보" },
     ],
@@ -1987,6 +2015,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
         { key: "apply", label: `${unitLabel} 신청` },
         { key: "my", label: "신청 현황" },
         { key: "clubOverview", label: `${unitLabel} 개설현황` },
+        { key: "activityRecord", label: "나의 활동 기록" },
         { key: "clubs", label: `${unitLabel} 수정(${getProgramLabels(activeProgram).leader})` },
         { type: "group", label: "신청카드" },
         { key: "extraRequests", label: "신청카드 목록" },
@@ -1998,6 +2027,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
         { key: "apply", label: `${unitLabel} 신청` },
         { key: "my", label: "신청 현황" },
         { key: "clubOverview", label: `${unitLabel} 개설현황` },
+        { key: "activityRecord", label: "나의 활동 기록" },
         { type: "group", label: "신청카드" },
         { key: "extraRequests", label: "신청카드 목록" },
         { type: "group", label: "설정" },
@@ -2201,7 +2231,7 @@ function ClubForm({
   clubs,
   program,
 }) {
-  const teachers = users.filter((u) => u.role === "teacher" || u.role === "admin");
+  const teachers = users.filter((u) => isTeachingRole(u.role) || u.role === "admin");
   const students = users.filter((u) => u.role === "student");
   const isAdmin = actor?.role === "admin";
   const labels = getProgramLabels(program);
@@ -4763,7 +4793,7 @@ function HomeroomApplicationStatusPanel({
             {filteredRows.map((row) => {
               const appliedPreferences = row.preferences.filter((item) => item.clubId);
               return (
-                <tr key={row.studentUid} onClick={() => onOpenDetail(row.studentUid)} style={{ cursor: appliedPreferences.length ? "pointer" : "default" }}>
+                <tr key={row.studentUid} onClick={() => onOpenDetail(row.studentUid)} style={{ cursor: "pointer" }}>
                   <td style={{ padding: "11px 8px", borderBottom: `1px solid ${t.border}`, verticalAlign: "top", fontSize: 13 }}>{row.studentNo || "-"}</td>
                   <td style={{ padding: "11px 8px", borderBottom: `1px solid ${t.border}`, verticalAlign: "top", fontSize: 13, fontWeight: 700 }}>{row.studentName || "-"}</td>
                   <td style={{ padding: "8px", borderBottom: `1px solid ${t.border}`, verticalAlign: "top" }}>
@@ -4809,9 +4839,9 @@ function HomeroomApplicationStatusPanel({
           </tbody>
         </table>
       </div>
-      {stats.applied > 0 ? (
-        <div style={{ marginTop: 10, color: t.textSub, fontSize: 11 }}>신청한 학생 행을 누르면 활동 계획과 처리 상태까지 확인할 수 있습니다.</div>
-      ) : null}
+      <div style={{ marginTop: 10, color: t.textSub, fontSize: 11 }}>
+        학생 행을 누르면 신청 내용과 처리 상태를 확인하고 담당 학급 학생을 강제 배정할 수 있습니다.
+      </div>
     </section>
   );
 }
@@ -5200,7 +5230,8 @@ function StudentApplicationDetailDialog({
   cycle,
   submissionState,
   clubs,
-  isAdmin,
+  canForceAssign,
+  forceActorLabel,
   loading,
   onClose,
   onForceAssign,
@@ -5274,9 +5305,9 @@ function StudentApplicationDetailDialog({
             </div>
           </div>
 
-          {isAdmin ? (
+          {canForceAssign ? (
             <div style={{ ...cardStyle, background: "#fff7f2", borderColor: "#f2d7c4" }}>
-              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>관리자 강제 배정</div>
+              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>{forceActorLabel} 강제 배정</div>
               <div style={{ display: "grid", gap: 10 }}>
                 <Field label="동아리 선택">
                   <Select value={forceClubId} onChange={(e) => setForceClubId(e.target.value)}>
@@ -5288,12 +5319,12 @@ function StudentApplicationDetailDialog({
                     ))}
                   </Select>
                 </Field>
-                <Field label="강제 배정 사유" hint="학생 원본 신청서는 유지되고, 관리자 조정 기록만 추가됩니다.">
+                <Field label="강제 배정 사유" hint={`학생 원본 신청서는 유지되고, ${forceActorLabel} 조정 기록만 추가됩니다.`}>
                   <textarea
                     value={forceReason}
                     onChange={(e) => setForceReason(e.target.value)}
                     style={{ ...inputBase, minHeight: 78, resize: "vertical" }}
-                    placeholder="예: 상담 결과에 따른 관리자 조정"
+                    placeholder={`예: 상담 결과에 따른 ${forceActorLabel} 조정`}
                   />
                 </Field>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -5322,7 +5353,7 @@ function StudentApplicationDetailDialog({
                     {cycle?.status === "closed"
                       ? "모집 종료 후에는 강제 배정할 수 없습니다."
                       : submissionState?.selectionReady === false
-                        ? "신청 기간 중 강제 배정 시 학생 신청 내용과 충돌할 수 있으니 주의하세요."
+                        ? "학생 신청 기간이 끝난 뒤 강제 배정할 수 있습니다."
                         : "기존 승인 동아리가 있으면 선택한 동아리로 이동 처리합니다."}
                   </span>
                 </div>
@@ -6195,7 +6226,7 @@ function RequestCardUserSection({
   onCancel,
   onViewApplicants,
 }) {
-  const isTeacherOrAdmin = user?.role === "admin" || user?.role === "teacher";
+  const isTeacherOrAdmin = user?.role === "admin" || isTeachingRole(user?.role);
   const [listMode, setListMode] = useState("all");
   const [subTab, setSubTab] = useState(isTeacherOrAdmin ? "teacher" : "student");
   const [showArchivedCards, setShowArchivedCards] = useState(false);
@@ -6779,8 +6810,11 @@ function UserManagementPanel({
     homeroomClass: "",
   });
 
-  const teacherUsers = users.filter((u) => u.role === "teacher" || u.role === "homeroom" || u.role === "admin");
-  const studentUsers = users.filter((u) => u.role === "student");
+  const scopedUsers = isHomeroomManager
+    ? users.filter((row) => row.role === "student" && getStudentClassKey(row.studentNo || row.loginId) === String(currentUser.homeroomClass || "").trim())
+    : users;
+  const teacherUsers = scopedUsers.filter((u) => u.role === "teacher" || u.role === "homeroom" || u.role === "admin");
+  const studentUsers = scopedUsers.filter((u) => u.role === "student");
   const homeroomClassOptions = Array.from(new Set([
     ...(Array.isArray(classOptions) ? classOptions : []),
     ...teacherUsers.map((row) => String(row.homeroomClass || "").trim()).filter(Boolean),
@@ -7366,7 +7400,7 @@ function ProfilePanel({ user, onSave, onChangePassword, loading, passwordLoading
 function newClubForm(user, defaultRoom = "미정") {
   return {
     clubName: "",
-    teacherUids: user?.role === "teacher" ? [user.uid] : [],
+    teacherUids: isTeachingRole(user?.role) ? [user.uid] : [],
     leaderUid: "",
     targetGrades: [1],
     description: "",
@@ -7391,6 +7425,9 @@ function newProgramForm() {
     preferenceCount: 1,
     features: { leader: false, plan: false, room: false, interview: false, attendance: false },
     attendanceSchedule: [],
+    activityRecordStartAt: "",
+    activityRecordEndAt: "",
+    activityRecordQuestions: [],
     targetClasses: [],
     studentVisible: true,
   };
@@ -7512,6 +7549,9 @@ function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUp
       preferenceCount: row.preferenceCount || 3,
       features: { ...row.features },
       attendanceSchedule: Array.isArray(row.attendanceSchedule) ? row.attendanceSchedule.map((item) => ({ ...item })) : [],
+      activityRecordStartAt: toDateTimeLocalValue(row.activityRecordStartAt),
+      activityRecordEndAt: toDateTimeLocalValue(row.activityRecordEndAt),
+      activityRecordQuestions: Array.isArray(row.activityRecordQuestions) ? row.activityRecordQuestions.map((item) => ({ ...item })) : [],
       targetClasses: Array.isArray(row.targetClasses) ? [...row.targetClasses] : [],
       studentVisible: row.studentVisible !== false,
     });
@@ -7529,6 +7569,23 @@ function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUp
         window.alert("같은 날짜와 교시는 중복 등록할 수 없습니다.");
         return;
       }
+    }
+    if (Boolean(form.activityRecordStartAt) !== Boolean(form.activityRecordEndAt)) {
+      window.alert("학생 활동 기록 시작·종료 일시를 모두 입력하거나 모두 비워주세요.");
+      return;
+    }
+    if (form.activityRecordStartAt && new Date(form.activityRecordStartAt).getTime() >= new Date(form.activityRecordEndAt).getTime()) {
+      window.alert("학생 활동 기록 종료 일시는 시작 일시보다 뒤여야 합니다.");
+      return;
+    }
+    const activeQuestions = (form.activityRecordQuestions || []).filter((row) => row.active !== false);
+    if (activeQuestions.length > MAX_ACTIVITY_RECORD_QUESTIONS) {
+      window.alert(`프로그램별 추가 질문은 최대 ${MAX_ACTIVITY_RECORD_QUESTIONS}개까지 사용할 수 있습니다.`);
+      return;
+    }
+    if (activeQuestions.some((row) => !String(row.title || "").trim())) {
+      window.alert("사용 중인 추가 질문의 제목을 입력해주세요.");
+      return;
     }
     const ok = editingId
       ? await onUpdate(editingId, form)
@@ -7820,6 +7877,73 @@ function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUp
             </Field>
           ) : null}
 
+          <section style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, display: "grid", gap: 12, background: "#fbfcff" }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800 }}>학생 활동 기록</div>
+              <div style={{ marginTop: 3, fontSize: 11, color: t.textSub, lineHeight: 1.55 }}>
+                확정 참여 학생이 프로그램 종료 후 한 번 작성합니다. 공통 질문 5개는 모든 프로그램에 자동 적용됩니다.
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+              <Field label="작성 시작 일시">
+                <input type="datetime-local" value={form.activityRecordStartAt || ""} onChange={(e) => setForm((prev) => ({ ...prev, activityRecordStartAt: e.target.value }))} style={inputBase} />
+              </Field>
+              <Field label="작성 종료 일시">
+                <input type="datetime-local" value={form.activityRecordEndAt || ""} onChange={(e) => setForm((prev) => ({ ...prev, activityRecordEndAt: e.target.value }))} style={inputBase} />
+              </Field>
+            </div>
+            <Field label="프로그램별 추가 질문" hint={`서술형 질문을 최대 ${MAX_ACTIVITY_RECORD_QUESTIONS}개까지 사용합니다. 기존 질문은 삭제 대신 사용 중지하여 답변을 보존합니다.`}>
+              <div style={{ display: "grid", gap: 8 }}>
+                {(form.activityRecordQuestions || []).map((question, index) => (
+                  <div key={question.id || index} style={{ border: `1px solid ${t.border}`, borderRadius: 9, padding: 10, display: "grid", gap: 8, opacity: question.active === false ? 0.58 : 1 }}>
+                    <input
+                      value={question.title || ""}
+                      disabled={question.active === false}
+                      maxLength={120}
+                      placeholder="추가 질문 제목"
+                      onChange={(e) => setForm((prev) => ({ ...prev, activityRecordQuestions: prev.activityRecordQuestions.map((row, rowIndex) => rowIndex === index ? { ...row, title: e.target.value } : row) }))}
+                      style={inputBase}
+                    />
+                    <input
+                      value={question.helpText || ""}
+                      disabled={question.active === false}
+                      maxLength={240}
+                      placeholder="학생에게 보여줄 도움말(선택)"
+                      onChange={(e) => setForm((prev) => ({ ...prev, activityRecordQuestions: prev.activityRecordQuestions.map((row, rowIndex) => rowIndex === index ? { ...row, helpText: e.target.value } : row) }))}
+                      style={inputBase}
+                    />
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+                      <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12, color: t.textSub }}>
+                        <input type="checkbox" checked={question.required === true} disabled={question.active === false} onChange={(e) => setForm((prev) => ({ ...prev, activityRecordQuestions: prev.activityRecordQuestions.map((row, rowIndex) => rowIndex === index ? { ...row, required: e.target.checked } : row) }))} />
+                        필수 답변
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setForm((prev) => ({
+                          ...prev,
+                          activityRecordQuestions: String(question.id || "").startsWith("draft-")
+                            ? prev.activityRecordQuestions.filter((_, rowIndex) => rowIndex !== index)
+                            : prev.activityRecordQuestions.map((row, rowIndex) => rowIndex === index ? { ...row, active: row.active === false } : row),
+                        }))}
+                        style={{ ...buttonBase, padding: "6px 10px", background: question.active === false ? "#eefbf2" : "#fff3f3", color: question.active === false ? t.ok : t.danger, fontSize: 12 }}
+                      >
+                        {question.active === false ? "다시 사용" : String(question.id || "").startsWith("draft-") ? "삭제" : "사용 중지"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  disabled={(form.activityRecordQuestions || []).filter((row) => row.active !== false).length >= MAX_ACTIVITY_RECORD_QUESTIONS}
+                  onClick={() => setForm((prev) => ({ ...prev, activityRecordQuestions: [...(prev.activityRecordQuestions || []), { id: `draft-${Date.now()}-${prev.activityRecordQuestions?.length || 0}`, title: "", helpText: "", required: false, active: true }] }))}
+                  style={{ ...buttonBase, justifySelf: "start", background: "#edf4ff", color: t.accent, fontWeight: 700, opacity: (form.activityRecordQuestions || []).filter((row) => row.active !== false).length >= MAX_ACTIVITY_RECORD_QUESTIONS ? 0.5 : 1 }}
+                >
+                  + 추가 질문
+                </button>
+              </div>
+            </Field>
+          </section>
+
           <Field
             label="신청 대상 학급"
             hint="전체 학급 또는 일부 학급을 선택합니다. 학급 목록은 회원 관리에 등록된 학생 학번을 기준으로 자동 구성됩니다."
@@ -7959,7 +8083,7 @@ function BackupPanel({ onBackup, onStampPrograms, loading }) {
           color: t.ok,
           lineHeight: 1.6,
         }}>
-          백업 완료 — 동아리 {result.clubCount}개, 신청 {result.applicationCount}건, 확정부원 {result.memberCount}명, 회원 {result.userCount}명
+          백업 완료 — 동아리 {result.clubCount}개, 신청 {result.applicationCount}건, 확정부원 {result.memberCount}명, 회원 {result.userCount}명, 활동기록 {result.activityRecordCount || 0}건
         </div>
       ) : null}
 
@@ -8008,7 +8132,7 @@ const TAB_QUERY_KEY = "tab";
 function getDefaultTabForRole(role) {
   if (role === "admin") return "clubs";
   if (role === "teacher") return "myClubs";
-  if (role === "homeroom") return "studentStatus";
+  if (role === "homeroom") return "classStatus";
   return "apply";
 }
 
@@ -8018,10 +8142,10 @@ function isTabAllowedForRole(tab, role, options = {}) {
   const isStudentLeader = options.isStudentLeader === true;
 
   const allowedTabsByRole = {
-    admin: new Set(["clubs", "studentStatus", "attendance", "round", "programs", "users", "extraRequests", "requestCards", "backup", "profile"]),
-    teacher: new Set(["myClubs", "clubOverview", "studentStatus", "attendance", "extraRequests", "requestCards", "profile"]),
-    homeroom: new Set(["studentStatus", "users", "profile"]),
-    student: new Set(["apply", "my", "clubOverview", "clubs", "extraRequests", "profile"]),
+    admin: new Set(["clubs", "studentStatus", "attendance", "activityRecords", "round", "programs", "users", "extraRequests", "requestCards", "backup", "profile"]),
+    teacher: new Set(["myClubs", "clubOverview", "studentStatus", "attendance", "activityRecords", "extraRequests", "requestCards", "profile"]),
+    homeroom: new Set(["myClubs", "clubOverview", "clubRooms", "studentStatus", "classStatus", "attendance", "activityRecords", "users", "extraRequests", "requestCards", "profile"]),
+    student: new Set(["apply", "my", "clubOverview", "activityRecord", "clubs", "extraRequests", "profile"]),
   };
 
   if (!normalizedTab) return false;
@@ -8068,6 +8192,10 @@ export default function PrototypeApp({ studentOnly = false }) {
   const guardedSetTab = (nextTab) => {
     if (tab === "attendance" && nextTab !== "attendance" && attendanceDirtyRef.current
       && !window.confirm("저장되지 않은 출결 변경이 있습니다. 탭을 이동하면 입력한 내용이 사라집니다. 계속할까요?")) return;
+    if (["studentStatus", "classStatus"].includes(nextTab) && nextTab !== tab) {
+      setStudentStatusRows([]);
+      setStudentStatusDialog({ open: false, studentUid: "" });
+    }
     setTab(nextTab);
   };
   const [loading, setLoading] = useState(false);
@@ -8149,25 +8277,17 @@ export default function PrototypeApp({ studentOnly = false }) {
       .map((row) => getStudentClassKey(row.studentNo || row.loginId))
       .filter(Boolean),
   )).sort(compareClassKeys), [users]);
-  // 역할별로 보이는 프로그램: 학생과 담임에게는 대상 학급이 아닌 프로그램을 숨김
+  // 학생에게만 신청 대상 프로그램을 제한하고, 교사 권한을 가진 계정은 전체 운영 프로그램을 봅니다.
   const rolePrograms = useMemo(() => {
     const active = programs.filter((row) => row.status === "active");
     if (user?.role === "student") {
       const studentNo = user.studentNo || user.loginId;
       return active.filter((row) => row.studentVisible !== false && isStudentEligibleForProgram(row, studentNo));
     }
-    if (user?.role === "homeroom") {
-      const homeroomClass = String(user.homeroomClass || "").trim();
-      return active.filter((row) => {
-        const targetClasses = Array.isArray(row.targetClasses) ? row.targetClasses : [];
-        return row.studentVisible !== false
-          && (targetClasses.length === 0 || targetClasses.includes(homeroomClass));
-      });
-    }
     return active;
-  }, [programs, user?.homeroomClass, user?.loginId, user?.role, user?.studentNo]);
+  }, [programs, user?.loginId, user?.role, user?.studentNo]);
   const activeProgram = useMemo(() => {
-    const source = user?.role === "student" || user?.role === "homeroom" ? rolePrograms : programs;
+    const source = user?.role === "student" ? rolePrograms : programs;
     return source.find((row) => row.id === activeProgramId)
       || source.find((row) => row.status === "active")
       || source[0]
@@ -8257,7 +8377,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   }
 
   async function refreshUsers({ forceRefresh = false } = {}) {
-    const rows = await listUsers({ forceRefresh, actor: user });
+    const rows = await listUsers({ forceRefresh, actor: user, includeTeachingDirectory: user?.role === "homeroom" });
     setUsers(rows);
     setUsersLoaded(true);
     return rows;
@@ -8302,7 +8422,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   }
 
   async function refreshMyRequestCardApplications() {
-    if (user?.role !== "student" && user?.role !== "teacher" && user?.role !== "admin") {
+    if (user?.role !== "student" && !isTeachingRole(user?.role) && user?.role !== "admin") {
       setMyRequestCardApplications([]);
       setMyRequestCardApplicationsLoaded(true);
       return [];
@@ -8313,18 +8433,19 @@ export default function PrototypeApp({ studentOnly = false }) {
     return rows;
   }
 
-  async function refreshStudentStatusRows(studentUsers = null, clubRows = null, programInput = null) {
+  async function refreshStudentStatusRows(studentUsers = null, clubRows = null, programInput = null, options = {}) {
     if (user?.role !== "admin" && user?.role !== "teacher" && user?.role !== "homeroom") {
       setStudentStatusRows([]);
       return [];
     }
 
     const program = programInput || activeProgram;
+    const homeroomOnly = options.homeroomOnly ?? (user?.role === "homeroom" && tab === "classStatus");
     const studentSource = Array.isArray(studentUsers) ? studentUsers : users;
     const baseStudents = studentSource.filter((row) => {
       if (row.role !== "student") return false;
       if (program?.id && !isStudentEligibleForProgram(program, row.studentNo || row.loginId)) return false;
-      if (user?.role === "homeroom") {
+      if (user?.role === "homeroom" && homeroomOnly) {
         return getStudentClassKey(row.studentNo || row.loginId) === String(user.homeroomClass || "").trim();
       }
       return true;
@@ -8351,9 +8472,10 @@ export default function PrototypeApp({ studentOnly = false }) {
 
   async function refreshRecruitmentViews(clubRows = clubs, cycleInfo = cycle, studentUsers = users, programInput = null) {
     const tasks = [refreshStudentStatusRows(studentUsers, clubRows, programInput)];
-    if (user?.role !== "homeroom") {
-      tasks.push(refreshRoundStats(clubRows, cycleInfo, programInput));
-    }
+    const statsClubs = isTeachingRole(user?.role)
+      ? (clubRows || []).filter((club) => isClubTeacher(club, user?.uid || ""))
+      : clubRows;
+    tasks.push(refreshRoundStats(statsClubs, cycleInfo, programInput));
     await Promise.all(tasks);
   }
 
@@ -8388,18 +8510,12 @@ export default function PrototypeApp({ studentOnly = false }) {
       const activeRows = programRows.filter((row) => row.status === "active");
       const visibleRows = user.role === "student"
         ? activeRows.filter((row) => row.studentVisible !== false && isStudentEligibleForProgram(row, user.studentNo || user.loginId))
-        : user.role === "homeroom"
-          ? activeRows.filter((row) => {
-            const targetClasses = Array.isArray(row.targetClasses) ? row.targetClasses : [];
-            return row.studentVisible !== false
-              && (targetClasses.length === 0 || targetClasses.includes(String(user.homeroomClass || "").trim()));
-          })
-          : activeRows;
+        : activeRows;
       const currentProgram = visibleRows.find((row) => row.id === activeProgramId)
         || visibleRows[0]
-        || (user.role === "student" || user.role === "homeroom" ? null : activeRows[0] || programRows[0])
+        || (user.role === "student" ? null : activeRows[0] || programRows[0])
         || null;
-      if (!currentProgram && (user.role === "student" || user.role === "homeroom")) {
+      if (!currentProgram && user.role === "student") {
         setActiveProgramId("");
         setClubs([]);
         setMyApplications([]);
@@ -8407,9 +8523,6 @@ export default function PrototypeApp({ studentOnly = false }) {
         setRoundStats({});
         setStudentStatusRows([]);
         setCycle({ id: "", currentRound: 1, status: "closed" });
-        if (user.role === "homeroom") {
-          await refreshUsers({ forceRefresh: true });
-        }
         setMessage({ type: "", text: "" });
         return;
       }
@@ -8446,22 +8559,21 @@ export default function PrototypeApp({ studentOnly = false }) {
         ]);
         await refreshRoundStats(clubRows, cycleInfo, currentProgram);
         setStudentStatusRows([]);
-      } else if (user.role === "teacher") {
-        await Promise.all([
-          refreshClubRooms(),
-          ...studentTasks,
-        ]);
+      } else if (isTeachingRole(user.role)) {
+        const homeroomStudents = user.role === "homeroom"
+          ? await refreshUsers({ forceRefresh: true })
+          : null;
+        await Promise.all([refreshClubRooms(), ...studentTasks]);
         await refreshRoundStats(
           clubRows.filter((club) => isClubTeacher(club, user.uid || "")),
           cycleInfo,
           currentProgram,
         );
-        setStudentStatusRows([]);
-      } else if (user.role === "homeroom") {
-        const homeroomStudents = await refreshUsers({ forceRefresh: true });
-        setClubRooms([]);
-        setRoundStats({});
-        await refreshStudentStatusRows(homeroomStudents, clubRows, currentProgram);
+        if (user.role === "homeroom") {
+          await refreshStudentStatusRows(homeroomStudents, clubRows, currentProgram, { homeroomOnly: true });
+        } else {
+          setStudentStatusRows([]);
+        }
       } else {
         setUsers([]);
         setClubRooms([]);
@@ -8544,15 +8656,6 @@ export default function PrototypeApp({ studentOnly = false }) {
       withMessageError(new Error("현재 학급은 이 프로그램의 신청 대상이 아닙니다."), "프로그램을 선택할 수 없습니다.");
       return;
     }
-    if (user?.role === "homeroom") {
-      const targetClasses = Array.isArray(target.targetClasses) ? target.targetClasses : [];
-      const homeroomClass = String(user.homeroomClass || "").trim();
-      if (target.studentVisible === false || (targetClasses.length > 0 && !targetClasses.includes(homeroomClass))) {
-        withMessageError(new Error("담당 학급은 이 프로그램의 신청 대상이 아닙니다."), "프로그램을 선택할 수 없습니다.");
-        return;
-      }
-    }
-
     // 이전 프로그램 컨텍스트로 열린 작업 창을 모두 닫음 (다른 프로그램으로의 오저장 방지)
     if (clubFormDialogOpen) closeClubFormDialog();
     if (applicantDialog.open) setApplicantDialog({ open: false, club: null, rows: [], loading: false });
@@ -8565,15 +8668,22 @@ export default function PrototypeApp({ studentOnly = false }) {
     try {
       const [cycleInfo] = await Promise.all([
         refreshCycle(target),
-        user?.role === "admin" || user?.role === "teacher"
+        user?.role === "admin" || isTeachingRole(user?.role)
           ? refreshClubRooms()
           : Promise.resolve([]),
       ]);
       const scopedClubs = clubs.filter((club) => !club.legacy && club.programId === target.id);
-      await refreshRoundStats(scopedClubs, cycleInfo, target);
-      setStudentStatusRows([]);
+      const statsClubs = isTeachingRole(user?.role)
+        ? scopedClubs.filter((club) => isClubTeacher(club, user?.uid || ""))
+        : scopedClubs;
+      await refreshRoundStats(statsClubs, cycleInfo, target);
       if (user?.role === "student") {
         await Promise.all([refreshMyDraft(target), refreshMyApplications(target)]);
+      } else if (user?.role === "homeroom") {
+        const homeroomStudents = await refreshUsers({ forceRefresh: true });
+        await refreshStudentStatusRows(homeroomStudents, scopedClubs, target, { homeroomOnly: tab === "classStatus" });
+      } else {
+        setStudentStatusRows([]);
       }
     } catch (error) {
       withMessageError(error, "프로그램 전환에 실패했습니다.");
@@ -9435,7 +9545,7 @@ export default function PrototypeApp({ studentOnly = false }) {
     }
   }
 
-  async function handleAdminForceAssign({ studentUid, clubId, reason }) {
+  async function handleForceAssign({ studentUid, clubId, reason }) {
     const targetStudent = users.find((row) => row.uid === studentUid);
     const targetClub = clubs.find((row) => row.id === clubId);
 
@@ -9456,7 +9566,7 @@ export default function PrototypeApp({ studentOnly = false }) {
 
     setForceAssignLoading(true);
     try {
-      await adminForceAssignStudentToClub({
+      await forceAssignStudentToClub({
         studentUid,
         clubId,
         reason,
@@ -9959,7 +10069,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   );
   const isStudentLeader = user?.role === "student" && leaderEditableClubs.length > 0;
   const clubsForManageTab = user?.role === "student" ? leaderEditableClubs : visibleClubs;
-  const canCreateClub = user?.role === "admin" || user?.role === "teacher" || user?.loginId === "admin";
+  const canCreateClub = user?.role === "admin" || isTeachingRole(user?.role) || user?.loginId === "admin";
   const visibleClubIdsKey = [...visibleClubs].map((club) => club.id).sort().join(",");
   const leaderEditableClubIdsKey = [...leaderEditableClubs].map((club) => club.id).sort().join(",");
   const teacherOwnedClubIdsKey = [...teacherOwnedClubs].map((club) => club.id).sort().join(",");
@@ -10081,7 +10191,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   ]);
 
   useEffect(() => {
-    if (!isAuthenticated || user?.role !== "teacher") return;
+    if (!isAuthenticated || !isTeachingRole(user?.role)) return;
 
     const wantsOverview = tab === "clubOverview";
     const targetKey = wantsOverview ? visibleClubIdsKey : teacherOwnedClubIdsKey;
@@ -10121,7 +10231,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   useEffect(() => {
     if (!isAuthenticated || !user) return;
 
-    const needsAdminCards = tab === "requestCards" && (user.role === "admin" || user.role === "teacher");
+    const needsAdminCards = tab === "requestCards" && (user.role === "admin" || isTeachingRole(user.role));
     const needsUserCards = tab === "extraRequests";
     if (!needsAdminCards && !needsUserCards) return;
 
@@ -10158,7 +10268,7 @@ export default function PrototypeApp({ studentOnly = false }) {
 
   useEffect(() => {
     if (!isAuthenticated || (user?.role !== "admin" && user?.role !== "teacher" && user?.role !== "homeroom")) return;
-    if (tab !== "studentStatus" || studentStatusRows.length > 0) return;
+    if (!["studentStatus", "classStatus"].includes(tab) || studentStatusRows.length > 0) return;
 
     let mounted = true;
     setStudentStatusLoading(true);
@@ -10247,7 +10357,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         ) : null
       ) : null}
 
-      {tab === "clubRooms" && (user.role === "admin" || user.role === "teacher") && activeProgram?.features?.room !== false ? (
+      {tab === "clubRooms" && (user.role === "admin" || isTeachingRole(user.role)) && activeProgram?.features?.room !== false ? (
         <ClubRoomManagementPage
           roomLabel={getProgramLabels(activeProgram).room}
           unitLabel={getProgramLabels(activeProgram).unit}
@@ -10273,7 +10383,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         />
       ) : null}
 
-      {tab === "attendance" && (user.role === "admin" || user.role === "teacher") && activeProgram?.features?.attendance === true ? (
+      {tab === "attendance" && (user.role === "admin" || isTeachingRole(user.role)) && activeProgram?.features?.attendance === true ? (
         <AttendancePanel
           user={user}
           program={activeProgram}
@@ -10283,7 +10393,11 @@ export default function PrototypeApp({ studentOnly = false }) {
         />
       ) : null}
 
-      {tab === "requestCards" && (user.role === "admin" || user.role === "teacher") ? (
+      {tab === "activityRecords" && (user.role === "admin" || isTeachingRole(user.role)) && activeProgram ? (
+        <TeacherActivityRecordPage key={`${activeProgram.id}:${activeProgram.cycleId}`} user={user} program={activeProgram} />
+      ) : null}
+
+      {tab === "requestCards" && (user.role === "admin" || isTeachingRole(user.role)) ? (
         <RequestCardAdminPanel
           cards={requestCards}
           form={requestCardForm}
@@ -10309,7 +10423,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         />
       ) : null}
 
-      {tab === "myClubs" && user.role === "teacher" ? (
+      {tab === "myClubs" && isTeachingRole(user.role) ? (
         <ClubTable
           actor={user}
           clubs={teacherOwnedClubs}
@@ -10328,7 +10442,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         />
       ) : null}
 
-      {tab === "clubOverview" && (user.role === "teacher" || user.role === "student") ? (
+      {tab === "clubOverview" && (isTeachingRole(user.role) || user.role === "student") ? (
         <ClubTable
           actor={user}
           clubs={visibleClubs}
@@ -10403,61 +10517,60 @@ export default function PrototypeApp({ studentOnly = false }) {
 
       {tab === "studentStatus" && (user.role === "admin" || user.role === "teacher" || user.role === "homeroom") ? (
         activeProgram ? (
-          user.role === "homeroom" ? (
-            <HomeroomApplicationStatusPanel
-              rows={studentStatusRows}
-              program={activeProgram}
-              homeroomClass={user.homeroomClass}
-              submissionState={submissionState}
-              loading={studentStatusLoading || loading}
-              onRefresh={async () => {
-                setStudentStatusLoading(true);
-                try {
-                  const [clubRows, userRows, cycleInfo] = await Promise.all([
-                    refreshClubs({ forceRefresh: true }),
-                    refreshUsers({ forceRefresh: true }),
-                    refreshCycle(),
-                  ]);
-                  await refreshRecruitmentViews(clubRows, cycleInfo, userRows);
-                  setMessage({ type: "ok", text: "우리 반 신청 현황을 새로고침했습니다." });
-                } catch (error) {
-                  withMessageError(error, "우리 반 신청 현황을 새로고침하지 못했습니다.");
-                } finally {
-                  setStudentStatusLoading(false);
-                }
-              }}
-              onOpenDetail={(studentUid) => setStudentStatusDialog({ open: true, studentUid })}
-            />
-          ) : (
-            <StudentApplicationStatusPanel
-              rows={studentStatusRows}
-              clubs={visibleClubs}
-              loading={studentStatusLoading || loading}
-              onRefresh={async () => {
-                setStudentStatusLoading(true);
-                try {
-                  const [clubRows, userRows, cycleInfo] = await Promise.all([
-                    refreshClubs(),
-                    refreshUsers(),
-                    refreshCycle(),
-                  ]);
-                  await refreshRecruitmentViews(clubRows, cycleInfo, userRows);
-                  setMessage({ type: "ok", text: "학생 신청 현황을 새로고침했습니다." });
-                } catch (error) {
-                  withMessageError(error, "학생 신청 현황을 새로고침하지 못했습니다.");
-                } finally {
-                  setStudentStatusLoading(false);
-                }
-              }}
-              onOpenDetail={(studentUid) => setStudentStatusDialog({ open: true, studentUid })}
-            />
-          )
+          <StudentApplicationStatusPanel
+            rows={studentStatusRows}
+            clubs={visibleClubs}
+            loading={studentStatusLoading || loading}
+            onRefresh={async () => {
+              setStudentStatusLoading(true);
+              try {
+                const [clubRows, userRows, cycleInfo] = await Promise.all([
+                  refreshClubs(),
+                  refreshUsers(),
+                  refreshCycle(),
+                ]);
+                await refreshRecruitmentViews(clubRows, cycleInfo, userRows);
+                setMessage({ type: "ok", text: "학생 신청 현황을 새로고침했습니다." });
+              } catch (error) {
+                withMessageError(error, "학생 신청 현황을 새로고침하지 못했습니다.");
+              } finally {
+                setStudentStatusLoading(false);
+              }
+            }}
+            onOpenDetail={(studentUid) => setStudentStatusDialog({ open: true, studentUid })}
+          />
         ) : (
           <section style={{ ...cardStyle, background: "#fff8e1", borderColor: "#f3dfb9" }}>
-            <h2 style={{ fontSize: 17, margin: "0 0 6px" }}>현재 담당 학급이 참여할 프로그램이 없습니다.</h2>
-            <div style={{ fontSize: 13, color: t.textSub }}>운영 프로그램의 신청 대상 학급 설정을 관리자에게 확인해주세요.</div>
+            <h2 style={{ fontSize: 17, margin: "0 0 6px" }}>현재 운영 프로그램이 없습니다.</h2>
           </section>
         )
+      ) : null}
+
+      {tab === "classStatus" && user.role === "homeroom" && activeProgram ? (
+        <HomeroomApplicationStatusPanel
+          rows={studentStatusRows}
+          program={activeProgram}
+          homeroomClass={user.homeroomClass}
+          submissionState={submissionState}
+          loading={studentStatusLoading || loading}
+          onRefresh={async () => {
+            setStudentStatusLoading(true);
+            try {
+              const [clubRows, userRows] = await Promise.all([
+                refreshClubs({ forceRefresh: true }),
+                refreshUsers({ forceRefresh: true }),
+                refreshCycle(),
+              ]);
+              await refreshStudentStatusRows(userRows, clubRows, activeProgram, { homeroomOnly: true });
+              setMessage({ type: "ok", text: "우리 반 신청 현황을 새로고침했습니다." });
+            } catch (error) {
+              withMessageError(error, "우리 반 신청 현황을 새로고침하지 못했습니다.");
+            } finally {
+              setStudentStatusLoading(false);
+            }
+          }}
+          onOpenDetail={(studentUid) => setStudentStatusDialog({ open: true, studentUid })}
+        />
       ) : null}
 
       {tab === "users" && (user.role === "admin" || user.role === "homeroom") ? (
@@ -10517,7 +10630,11 @@ export default function PrototypeApp({ studentOnly = false }) {
         <StudentMyPanel apps={myApplications} />
       ) : null}
 
-      {tab === "extraRequests" && (user.role === "admin" || user.role === "teacher" || user.role === "student") ? (
+      {tab === "activityRecord" && user.role === "student" && activeProgram ? (
+        <StudentActivityRecordPage key={`${activeProgram.id}:${activeProgram.cycleId}`} user={user} program={activeProgram} />
+      ) : null}
+
+      {tab === "extraRequests" && (user.role === "admin" || isTeachingRole(user.role) || user.role === "student") ? (
         <RequestCardUserSection
           user={user}
           cards={requestCards}
@@ -10533,7 +10650,7 @@ export default function PrototypeApp({ studentOnly = false }) {
           }}
           onApply={handleApplyRequestCard}
           onCancel={handleCancelRequestCard}
-          onViewApplicants={(user.role === "admin" || user.role === "teacher") ? openRequestCardDialog : undefined}
+          onViewApplicants={(user.role === "admin" || isTeachingRole(user.role)) ? openRequestCardDialog : undefined}
         />
       ) : null}
 
@@ -10692,10 +10809,11 @@ export default function PrototypeApp({ studentOnly = false }) {
         cycle={cycle}
         submissionState={submissionState}
         clubs={visibleClubs}
-        isAdmin={user.role === "admin"}
+        canForceAssign={user.role === "admin" || (user.role === "homeroom" && tab === "classStatus")}
+        forceActorLabel={user.role === "homeroom" ? "담임교사" : "관리자"}
         loading={forceAssignLoading}
         onClose={() => setStudentStatusDialog({ open: false, studentUid: "" })}
-        onForceAssign={handleAdminForceAssign}
+        onForceAssign={handleForceAssign}
       />
     </Layout>
   );

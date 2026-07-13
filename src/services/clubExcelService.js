@@ -121,7 +121,7 @@ export async function downloadClubTemplate({ program, users = [], rooms = [] } =
   const labels = getLabels(program)
   const features = getFeatures(program)
   const headers = buildHeaders(program)
-  const teacher = users.find((user) => user.role === 'teacher' || user.role === 'admin')
+  const teacher = users.find((user) => user.role === 'teacher' || user.role === 'homeroom' || user.role === 'admin')
   const student = users.find((user) => user.role === 'student')
   const room = rooms.find((item) => String(item?.name || '').trim() && item.name !== '미정')
 
@@ -145,7 +145,7 @@ export async function downloadClubTemplate({ program, users = [], rooms = [] } =
   const guideRows = [
     ['항목', '작성 방법'],
     [`${labels.unit}명`, '필수. 현재 프로그램 안에서 중복되지 않게 입력합니다.'],
-    ['담당교사 아이디', '필수. 회원 관리에 등록된 교사/관리자 아이디를 입력합니다. 여러 명은 쉼표로 구분합니다.'],
+    ['담당교사 아이디', '필수. 회원 관리에 등록된 교사/담임교사/관리자 아이디를 입력합니다. 여러 명은 쉼표로 구분합니다.'],
     ...(features.leader ? [[`${labels.leader} 학번`, '선택. 회원 관리에 등록된 학생 학번을 입력합니다.']] : []),
     ['대상학년', '선택. 1,2,3처럼 쉼표로 구분합니다. 비워두면 전 학년으로 등록됩니다.'],
     ...(features.room ? [[labels.room, `선택. ${labels.room} 관리에 등록된 이름을 입력합니다. 비워두면 미정입니다.`]] : []),
@@ -157,8 +157,8 @@ export async function downloadClubTemplate({ program, users = [], rooms = [] } =
   guide['!cols'] = [{ wch: 22 }, { wch: 86 }]
 
   const teacherRows = users
-    .filter((user) => user.role === 'teacher' || user.role === 'admin')
-    .map((user) => [user.loginId, user.name, user.role === 'admin' ? '관리자' : '교사'])
+    .filter((user) => user.role === 'teacher' || user.role === 'homeroom' || user.role === 'admin')
+    .map((user) => [user.loginId, user.name, user.role === 'admin' ? '관리자' : user.role === 'homeroom' ? '담임교사' : '교사'])
   const teacherSheet = XLSX.utils.aoa_to_sheet([['아이디', '이름', '역할'], ...teacherRows])
   teacherSheet['!cols'] = [{ wch: 22 }, { wch: 16 }, { wch: 12 }]
 
@@ -249,7 +249,7 @@ export function resolveClubExcelRows(rows, { program, users = [], rooms = [] } =
   const features = getFeatures(program)
   const teacherMap = new Map(
     users
-      .filter((user) => user.role === 'teacher' || user.role === 'admin')
+      .filter((user) => user.role === 'teacher' || user.role === 'homeroom' || user.role === 'admin')
       .map((user) => [normalizeKey(user.loginId), user]),
   )
   const studentMap = new Map()

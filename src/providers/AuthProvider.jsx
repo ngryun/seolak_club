@@ -182,13 +182,11 @@ export function AuthProvider({ children }) {
         assertLoginPolicy(account, { loginRole, studentName })
 
         let attendanceSessionError = ''
-        if (account.role === 'admin' || account.role === 'teacher') {
-          try {
-            await createAttendanceApiSession(normalizedId, rawPassword)
-          } catch (error) {
-            clearAttendanceApiSession()
-            attendanceSessionError = error instanceof Error ? error.message : '출석부 보안 세션 발급에 실패했습니다.'
-          }
+        try {
+          await createAttendanceApiSession(normalizedId, rawPassword)
+        } catch (error) {
+          clearAttendanceApiSession()
+          attendanceSessionError = error instanceof Error ? error.message : '보안 세션 발급에 실패했습니다.'
         }
 
         recordLastLogin(account.uid).catch(() => {})

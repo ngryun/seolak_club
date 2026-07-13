@@ -15,7 +15,7 @@ export default async (req) => {
     if (!doc) return json({ error: '아이디 또는 비밀번호가 올바르지 않습니다.' }, 401)
     const user = { uid: doc.id, ...doc.data() }
     const valid = user.passwordHash ? user.passwordHash === passwordHash(user.loginId, password) : String(user.password || '') === password
-    if (!valid || !['admin', 'teacher'].includes(user.role)) return json({ error: '출석부를 사용할 수 없는 계정입니다.' }, 401)
+    if (!valid || !['admin', 'teacher', 'homeroom', 'student'].includes(user.role)) return json({ error: '보안 기능을 사용할 수 없는 계정입니다.' }, 401)
     return json({ token: createSessionToken(user), expiresIn: 28800 })
   } catch (error) { return handleError(error) }
 }

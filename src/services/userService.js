@@ -677,9 +677,9 @@ export async function getUserProfile(uid) {
 const _listUsersCache = { data: null, ts: 0 }
 const LIST_USERS_TTL = Infinity // 명시적 새로고침/데이터 변경 시만 무효화
 
-export async function listUsers({ forceRefresh = false, actor = null } = {}) {
+export async function listUsers({ forceRefresh = false, actor = null, includeTeachingDirectory = false } = {}) {
   const scopeRows = (rows) => {
-    if (normalizeRole(actor?.role) !== 'homeroom') return rows
+    if (normalizeRole(actor?.role) !== 'homeroom' || includeTeachingDirectory) return rows
     const manager = assertUserManagementActor(actor)
     return rows.filter((row) => {
       if (row.role !== 'student') return false

@@ -7,6 +7,7 @@ import { listSchedules } from '../services/scheduleService'
 const roleLabel = (role) => {
   if (role === 'admin') return '관리자'
   if (role === 'teacher') return '교사'
+  if (role === 'homeroom') return '담임교사'
   return '학생'
 }
 
