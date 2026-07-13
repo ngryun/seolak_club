@@ -184,4 +184,3 @@ export default async (req) => {
   } catch (error) { return handleError(error) }
 }
 
-export const config = { path: '/.netlify/functions/attendance-api' }

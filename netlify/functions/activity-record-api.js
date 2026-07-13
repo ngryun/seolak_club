@@ -164,11 +164,11 @@ function teacherUids(club) {
 
 async function findStudentMembership(program, studentUid) {
   const clubs = await listProgramClubs(program.id)
-  for (const club of clubs) {
+  const memberships = await Promise.all(clubs.map(async (club) => {
     const member = await db().doc(`schedules/${club.id}/members/${studentUid}`).get()
-    if (member.exists) return { club, member: { id: member.id, ...member.data() } }
-  }
-  return null
+    return member.exists ? { club, member: { id: member.id, ...member.data() } } : null
+  }))
+  return memberships.find(Boolean) || null
 }
 
 async function authorizeTeacher(actorUser, clubId, programId) {
@@ -379,8 +379,7 @@ async function teacherList(actorUser, program) {
     const value = row.data()
     return [`${clean(value.clubId, 160)}::${clean(value.studentUid, 160)}`, value]
   }))
-  const rows = []
-  for (const club of clubs) {
+  const rows = (await Promise.all(clubs.map(async (club) => {
     const [memberSnapshot, recordSnapshot] = await Promise.all([
       db().collection(`schedules/${club.id}/members`).get(),
       db().collection(`schedules/${club.id}/activityRecords`).where('cycleId', '==', program.cycleId).get(),
@@ -388,6 +387,7 @@ async function teacherList(actorUser, program) {
     const recordMap = new Map(recordSnapshot.docs.map((row) => [clean(row.data().studentUid, 160), { id: row.id, ...row.data() }]))
     const studentUids = memberSnapshot.docs.map((row) => clean(row.data().studentUid || row.id, 160))
     const clubAttendance = await attendanceSummaries(program, club.id, studentUids)
+    const clubRows = []
     for (const memberDoc of memberSnapshot.docs) {
       const member = { id: memberDoc.id, ...memberDoc.data() }
       const studentUid = clean(member.studentUid || memberDoc.id, 160)
@@ -408,7 +408,7 @@ async function teacherList(actorUser, program) {
         record.attachments = []
       }
       const application = applicationMap.get(`${club.id}::${studentUid}`) || {}
-      rows.push({
+      clubRows.push({
         ...record,
         clubName: clean(club.clubName, 160),
         application: {
@@ -419,7 +419,8 @@ async function teacherList(actorUser, program) {
         attendance: clubAttendance.get(studentUid) || { present: 0, absent: 0, unchecked: 0, total: 0 },
       })
     }
-  }
+    return clubRows
+  }))).flat()
   rows.sort((left, right) => left.clubName.localeCompare(right.clubName, 'ko') || left.studentNo.localeCompare(right.studentNo, 'ko', { numeric: true }))
   return { window: getWindowState(program), clubs: clubs.map((club) => ({ id: club.id, clubName: clean(club.clubName, 160) })), rows }
 }
@@ -486,5 +487,3 @@ export default async (req) => {
     return handleError(error)
   }
 }
-
-export const config = { path: '/.netlify/functions/activity-record-api' }
