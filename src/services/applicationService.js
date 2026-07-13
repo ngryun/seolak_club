@@ -1045,7 +1045,7 @@ export async function saveStudentPreferenceDraft(payload) {
   const existingApps = await getApplicationsByStudent(studentUid, program)
   const alreadyFinalized = existingApps.some((row) => row.cycleId === cycle.id)
   if (alreadyFinalized) {
-    throw new Error('이미 신청이 확정되어 더 이상 수정할 수 없습니다.')
+    throw new Error('이미 신청이 확정되어 신청 프로그램과 지망 순서는 변경할 수 없습니다. 작성 내용은 내 신청 현황에서 수정해주세요.')
   }
 
   const normalizedPreferences = await normalizeStudentPreferences(studentNo, preferences, program)
@@ -1083,6 +1083,143 @@ export async function saveStudentPreferenceDraft(payload) {
     { merge: true },
   )
   return getStudentDraftByCycle(cycle.id, studentUid)
+}
+
+function normalizeStudentContentEntries(entries) {
+  const rows = Array.isArray(entries) ? entries : []
+  if (rows.length === 0) {
+    throw new Error('수정할 신청 내용을 찾을 수 없습니다.')
+  }
+
+  return rows.map((row, index) => {
+    const applicationId = String(row?.applicationId || row?.id || '').trim()
+    const clubId = String(row?.clubId || '').trim()
+    const preferenceRank = Number(row?.preferenceRank || index + 1)
+    const applyReason = String(row?.applyReason || '').trim()
+    const wantedActivity = String(row?.wantedActivity || '').trim()
+    if (!applyReason || !wantedActivity) {
+      throw new Error(`${preferenceRank}지망의 신청사유와 하고 싶은 활동을 모두 입력해주세요.`)
+    }
+    if (applyReason.length > 100) {
+      throw new Error(`${preferenceRank}지망 신청사유는 100자 이내로 입력해주세요.`)
+    }
+    if (wantedActivity.length > 100) {
+      throw new Error(`${preferenceRank}지망 하고 싶은 활동은 100자 이내로 입력해주세요.`)
+    }
+    return { applicationId, clubId, preferenceRank, applyReason, wantedActivity }
+  })
+}
+
+function findStudentContentEntry(entries, application) {
+  return entries.find((row) => row.applicationId && row.applicationId === application.id)
+    || entries.find((row) => row.clubId === application.clubId && row.preferenceRank === Number(application.preferenceRank))
+}
+
+// 선발 결과·지망 순서는 유지하고 학생이 작성한 서술 내용만 본인이 수정합니다.
+// 신청 기간과 모집 사이클 종료 여부는 제한하지 않습니다.
+export async function updateStudentApplicationContent(payload) {
+  const claimedActor = assertActor(payload?.actor)
+  const actorProfile = await getUserProfile(claimedActor.uid)
+  if (!actorProfile || actorProfile.role !== 'student') {
+    throw new Error('학생 계정만 신청 내용을 수정할 수 있습니다.')
+  }
+
+  const studentUid = String(payload?.studentUid || claimedActor.uid).trim()
+  if (!studentUid || studentUid !== claimedActor.uid) {
+    throw new Error('본인의 신청 내용만 수정할 수 있습니다.')
+  }
+
+  const careerGoal = String(payload?.careerGoal || '').trim()
+  if (!careerGoal) {
+    throw new Error('진로희망을 입력해주세요.')
+  }
+  if (careerGoal.length > 100) {
+    throw new Error('진로희망은 100자 이내로 입력해주세요.')
+  }
+
+  const entries = normalizeStudentContentEntries(payload?.entries)
+  const program = await resolveProgram(payload?.program)
+  const cycle = await getRecruitmentCycle(program)
+  const applications = (await getApplicationsByStudent(studentUid, program))
+    .filter((row) => row.cycleId === cycle.id)
+
+  if (applications.length > 0) {
+    const patches = applications.map((application) => {
+      const entry = findStudentContentEntry(entries, application)
+      if (!entry) {
+        throw new Error(`${application.preferenceRank}지망 신청 내용을 찾을 수 없습니다.`)
+      }
+      return {
+        id: application.id,
+        careerGoal,
+        applyReason: entry.applyReason,
+        wantedActivity: entry.wantedActivity,
+      }
+    })
+
+    if (!isFirebaseEnabled()) {
+      const patchMap = new Map(patches.map((row) => [row.id, row]))
+      localApplications = localApplications.map((row) => {
+        const content = patchMap.get(row.id)
+        return content
+          ? { ...row, ...content, studentContentUpdatedAt: nowIso(), updatedAt: nowIso() }
+          : row
+      })
+    } else {
+      for (const rows of chunk(patches, 400)) {
+        const batch = writeBatch(db)
+        rows.forEach((row) => {
+          batch.update(doc(db, APPLICATIONS, row.id), {
+            careerGoal: row.careerGoal,
+            applyReason: row.applyReason,
+            wantedActivity: row.wantedActivity,
+            studentContentUpdatedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          })
+        })
+        await batch.commit()
+      }
+    }
+    invalidateApplicationCache()
+    return { updated: patches.length, source: 'applications' }
+  }
+
+  const draft = await getStudentDraftByCycle(cycle.id, studentUid)
+  if (!draft?.preferences?.length) {
+    throw new Error('수정할 신청 내역이 없습니다.')
+  }
+  const nextPreferences = draft.preferences.map((preference) => {
+    const entry = findStudentContentEntry(entries, {
+      id: `draft__${draft.id}__${preference.preferenceRank}`,
+      clubId: preference.clubId,
+      preferenceRank: preference.preferenceRank,
+    })
+    if (!entry) {
+      throw new Error(`${preference.preferenceRank}지망 신청 내용을 찾을 수 없습니다.`)
+    }
+    return {
+      ...preference,
+      careerGoal,
+      applyReason: entry.applyReason,
+      wantedActivity: entry.wantedActivity,
+    }
+  })
+
+  if (!isFirebaseEnabled()) {
+    localDrafts.set(draft.id, {
+      ...draft,
+      preferences: nextPreferences,
+      studentContentUpdatedAt: nowIso(),
+      updatedAt: nowIso(),
+    })
+  } else {
+    await updateDoc(doc(db, DRAFTS, draft.id), {
+      preferences: nextPreferences,
+      studentContentUpdatedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+  }
+  return { updated: nextPreferences.length, source: 'draft' }
 }
 
 export async function cancelStudentPreferenceDraft(payload) {

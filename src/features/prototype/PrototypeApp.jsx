@@ -34,6 +34,7 @@ import {
   saveStudentPreferenceDraft,
   startNewRecruitmentCycle,
   syncLeaderAssignmentForClub,
+  updateStudentApplicationContent,
   updateRecruitmentPreAssignmentWindow,
   updateRecruitmentSubmissionWindow,
   invalidateApplicationCache,
@@ -50,6 +51,9 @@ import {
   listRequestCards,
   updateRequestCard,
   setRequestCardAdminStatus,
+  decideFreeRequestCardApplication,
+  finalizeFreeRequestCardResults,
+  REQUEST_CARD_RESULT,
   REQUEST_CARD_TYPE,
   REQUEST_CARD_TYPE_META,
 } from "../../services/requestCardService";
@@ -417,7 +421,7 @@ function requestCardPhaseMeta(state) {
   return { label: "미설정", bg: "#f3f4f6", border: "#d6dae3", color: t.textSub };
 }
 
-function requestCardResultMeta(status, state) {
+function requestCardResultMeta(status, state, cardType = "") {
   if (state?.phase === "cancelled") {
     return { label: "폐강", bg: "#eceff1", color: t.textSub };
   }
@@ -425,10 +429,10 @@ function requestCardResultMeta(status, state) {
     return { label: "선정취소", bg: "#fff4e5", color: t.warn };
   }
   if (status === "selected") {
-    return { label: "선정", bg: "#e8f5e9", color: t.ok };
+    return { label: cardType === "free" ? "승인" : "선정", bg: "#e8f5e9", color: t.ok };
   }
   if (status === "not_selected") {
-    return { label: "미선정", bg: "#ffebee", color: t.danger };
+    return { label: cardType === "free" ? "반려" : "미선정", bg: "#ffebee", color: t.danger };
   }
   if (status === "applied") {
     return { label: "신청 완료", bg: "#edf4ff", color: t.accent };
@@ -469,17 +473,30 @@ function getRequestCardStatusText(card, state, application) {
     };
   }
 
+  if (isFree && state.phase !== "drawn"
+    && (application?.status === "selected" || application?.status === "not_selected")) {
+    return {
+      label: "결과 대기",
+      description: "관리자가 신청 결과를 검토하고 있습니다.",
+      note: "모든 신청자 처리가 끝난 뒤 결과가 공개됩니다.",
+    };
+  }
+
   if (application?.status === "selected") {
     return {
-      label: isFcfs ? "신청 확정" : "선정",
-      description: isFcfs ? "선착순 신청이 확정되었습니다." : "최종 선정되었습니다. 일정과 장소를 확인해 주세요.",
+      label: isFcfs ? "신청 확정" : isFree ? "승인" : "선정",
+      description: isFcfs
+        ? "선착순 신청이 확정되었습니다."
+        : isFree
+          ? "신청이 승인되었습니다. 안내 내용을 확인해 주세요."
+          : "최종 선정되었습니다. 일정과 장소를 확인해 주세요.",
       note: drawExecutedAt ? `결과 안내: ${formatTime(drawExecutedAt)}` : null,
     };
   }
   if (application?.status === "not_selected") {
     return {
-      label: "미선정",
-      description: "이번 신청에서는 선정되지 않았습니다.",
+      label: isFree ? "반려" : "미선정",
+      description: isFree ? "이번 신청은 승인되지 않았습니다." : "이번 신청에서는 선정되지 않았습니다.",
       note: drawExecutedAt ? `결과 안내: ${formatTime(drawExecutedAt)}` : null,
     };
   }
@@ -492,6 +509,13 @@ function getRequestCardStatusText(card, state, application) {
       };
     }
     if (isFree) {
+      if (state.phase === "closed") {
+        return {
+          label: "결과 대기",
+          description: "관리자가 신청 결과를 검토하고 있습니다.",
+          note: "모든 신청자 처리가 끝난 뒤 결과가 공개됩니다.",
+        };
+      }
       return {
         label: "참여 완료",
         description: "참여 의사가 등록되었습니다.",
@@ -1365,7 +1389,7 @@ async function exportRequestCardApplicationsToExcel(card, rows) {
   const state = getRequestCardState(card);
   const headers = ["신청자", "아이디", "학번", "역할", "상태", "신청시각"];
   const dataRows = normalizedRows.map((row) => {
-    const resultMeta = requestCardResultMeta(row.status, state);
+    const resultMeta = requestCardResultMeta(row.status, state, card.cardType);
     return [
       String(row.applicantName || "").trim() || "-",
       String(row.applicantLoginId || "").trim() || "-",
@@ -5416,7 +5440,7 @@ function StudentApplyPanel({
 
   const showForm = canEdit || hasDraft || finalized || (cycle?.status === "open" && submissionState?.phase === "open");
   const statusPalette = finalized
-    ? { bg: "#edf4ff", border: "#c8dcff", title: "신청이 확정되었습니다.", body: "이제 학생 화면에서는 수정할 수 없습니다." }
+    ? { bg: "#edf4ff", border: "#c8dcff", title: "신청이 확정되었습니다.", body: "신청 프로그램과 지망 순서는 고정됩니다. 진로희망·신청사유·하고 싶은 활동은 내 신청 현황에서 수정할 수 있습니다." }
     : hasDraft && canEdit
       ? { bg: "#edf4ff", border: "#c8dcff", title: "제출이 완료되었습니다.", body: "마감 전까지 수정 저장 또는 제출 취소가 가능합니다." }
       : cycle?.status !== "open"
@@ -5657,19 +5681,71 @@ function AssignSourceChip({ source }) {
   return <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "2px 8px", fontSize: 10, fontWeight: 600, background: "#e3f2fd", color: "#1565c0", marginLeft: 6 }}>{label}</span>;
 }
 
-function StudentMyPanel({ apps }) {
+function StudentMyPanel({ apps, program, saving, onSaveDetails }) {
   const sharedCareerGoal = apps[0]?.careerGoal || "-";
   const approvedApp = apps.find((row) => row.status === "approved");
+  const [editing, setEditing] = useState(false);
+  const [careerGoal, setCareerGoal] = useState(apps[0]?.careerGoal || "");
+  const [contentRows, setContentRows] = useState(() => apps.map((row) => ({
+    applicationId: row.id,
+    clubId: row.clubId,
+    preferenceRank: row.preferenceRank,
+    applyReason: row.applyReason || "",
+    wantedActivity: row.wantedActivity || "",
+  })));
+
+  const startEditing = () => {
+    setCareerGoal(apps[0]?.careerGoal || "");
+    setContentRows(apps.map((row) => ({
+      applicationId: row.id,
+      clubId: row.clubId,
+      preferenceRank: row.preferenceRank,
+      applyReason: row.applyReason || "",
+      wantedActivity: row.wantedActivity || "",
+    })));
+    setEditing(true);
+  };
+
+  const saveDetails = async () => {
+    const saved = await onSaveDetails?.({ careerGoal, entries: contentRows });
+    if (saved) setEditing(false);
+  };
 
   return (
     <section style={cardStyle}>
-      <h2 style={{ fontSize: 17, marginBottom: 12 }}>내 신청 현황</h2>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ fontSize: 17, margin: 0 }}>{program?.name ? `${program.name} 내 신청 현황` : "내 신청 현황"}</h2>
+          {apps.length > 0 ? (
+            <div style={{ fontSize: 12, color: t.textSub, marginTop: 5 }}>
+              신청 기간이 끝난 뒤에도 진로희망·신청사유·하고 싶은 활동을 수정할 수 있습니다.
+            </div>
+          ) : null}
+        </div>
+        {apps.length > 0 && !editing ? (
+          <button type="button" onClick={startEditing} disabled={saving} style={{ ...buttonBase, background: t.accent, color: "#fff", fontWeight: 700 }}>
+            신청 내용 수정
+          </button>
+        ) : null}
+      </div>
 
       {apps.length > 0 ? (
         <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
           <div style={{ fontSize: 13, padding: "8px 10px", background: "#f5f7fa", borderRadius: 6 }}>
             <span style={{ color: t.textSub }}>진로희망: </span>
-            <span style={{ fontWeight: 600 }}>{sharedCareerGoal}</span>
+            {editing ? (
+              <>
+                <input
+                  value={careerGoal}
+                  onChange={(event) => setCareerGoal(event.target.value)}
+                  maxLength={100}
+                  disabled={saving}
+                  style={{ ...inputBase, marginTop: 6 }}
+                  placeholder="예: 방송기획자, 디자이너"
+                />
+                <div style={{ textAlign: "right", marginTop: 3, fontSize: 11, color: careerGoal.length >= 100 ? t.danger : t.textSub }}>{careerGoal.length}/100</div>
+              </>
+            ) : <span style={{ fontWeight: 600 }}>{sharedCareerGoal}</span>}
           </div>
 
           <div style={{
@@ -5699,7 +5775,7 @@ function StudentMyPanel({ apps }) {
         </div>
       ) : (
         <div style={{ display: "grid", gap: 10 }}>
-          {apps.map((row) => (
+          {apps.map((row, index) => (
             <div
               key={row.id}
               style={{
@@ -5719,15 +5795,52 @@ function StudentMyPanel({ apps }) {
               <div style={{ display: "grid", gap: 6 }}>
                 <div>
                   <div style={{ fontSize: 11, color: t.textSub, fontWeight: 600, marginBottom: 2 }}>신청사유</div>
-                  <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{row.applyReason || "-"}</div>
+                  {editing ? (
+                    <>
+                      <textarea
+                        value={contentRows[index]?.applyReason || ""}
+                        onChange={(event) => setContentRows((prev) => prev.map((item, rowIndex) => rowIndex === index ? { ...item, applyReason: event.target.value } : item))}
+                        maxLength={100}
+                        disabled={saving}
+                        style={{ ...inputBase, minHeight: 72, resize: "vertical" }}
+                      />
+                      <div style={{ textAlign: "right", fontSize: 11, color: (contentRows[index]?.applyReason || "").length >= 100 ? t.danger : t.textSub }}>{(contentRows[index]?.applyReason || "").length}/100</div>
+                    </>
+                  ) : <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{row.applyReason || "-"}</div>}
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: t.textSub, fontWeight: 600, marginBottom: 2 }}>활동계획</div>
-                  <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{row.wantedActivity || "-"}</div>
+                  <div style={{ fontSize: 11, color: t.textSub, fontWeight: 600, marginBottom: 2 }}>하고 싶은 활동</div>
+                  {editing ? (
+                    <>
+                      <textarea
+                        value={contentRows[index]?.wantedActivity || ""}
+                        onChange={(event) => setContentRows((prev) => prev.map((item, rowIndex) => rowIndex === index ? { ...item, wantedActivity: event.target.value } : item))}
+                        maxLength={100}
+                        disabled={saving}
+                        style={{ ...inputBase, minHeight: 72, resize: "vertical" }}
+                      />
+                      <div style={{ textAlign: "right", fontSize: 11, color: (contentRows[index]?.wantedActivity || "").length >= 100 ? t.danger : t.textSub }}>{(contentRows[index]?.wantedActivity || "").length}/100</div>
+                    </>
+                  ) : <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{row.wantedActivity || "-"}</div>}
                 </div>
               </div>
             </div>
           ))}
+          {editing ? (
+            <div style={{ ...cardStyle, background: "#fff8e1", borderColor: "#f3dfb9" }}>
+              <div style={{ fontSize: 12, color: t.textSub, marginBottom: 10 }}>
+                지망 순서, 신청 프로그램, 선발·배정 결과는 변경되지 않으며 작성 내용만 저장됩니다.
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" onClick={saveDetails} disabled={saving} style={{ ...buttonBase, background: saving ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 700 }}>
+                  {saving ? "저장 중..." : "수정 내용 저장"}
+                </button>
+                <button type="button" onClick={() => setEditing(false)} disabled={saving} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}>
+                  취소
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
     </section>
@@ -5739,12 +5852,23 @@ function RequestCardApplicationsDialog({
   card,
   rows,
   loading,
+  canManage,
+  onDecision,
+  onFinalize,
   onExport,
   onClose,
 }) {
   if (!open) return null;
 
   const cardState = card ? getRequestCardState(card) : null;
+  const isFree = card?.cardType === "free";
+  const canDecide = Boolean(isFree && canManage && cardState?.phase === "closed");
+  const isFinalized = cardState?.phase === "drawn";
+  const pendingCount = rows.filter((row) => row.status === REQUEST_CARD_RESULT.APPLIED).length;
+  const approvedCount = rows.filter((row) => row.status === REQUEST_CARD_RESULT.SELECTED).length;
+  const rejectedCount = rows.filter((row) => row.status === REQUEST_CARD_RESULT.NOT_SELECTED).length;
+  const canFinalize = canDecide && rows.length > 0 && pendingCount === 0;
+  const columnCount = isFree ? 7 : 6;
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 12, overflowY: "auto" }}>
@@ -5753,10 +5877,22 @@ function RequestCardApplicationsDialog({
           <div>
             <div style={{ fontSize: 18, fontWeight: 800 }}>{card?.title || "신청 카드"} 신청 현황</div>
             <div style={{ fontSize: 12, color: t.textSub }}>
-              {requestCardTargetLabel(card?.targetRole)} · 모집인원 {card?.capacity || 0}명 · 현재 신청인원 {card?.applicantCount || 0}명
+              {requestCardTargetLabel(card?.targetRole)}
+              {isFree ? "" : ` · 모집인원 ${card?.capacity || 0}명`}
+              {` · 현재 신청인원 ${card?.applicantCount || 0}명`}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {isFree && canManage && !isFinalized ? (
+              <button
+                onClick={() => onFinalize(card)}
+                disabled={loading || !canFinalize}
+                title={pendingCount > 0 ? `미처리 신청자 ${pendingCount}명을 먼저 처리해주세요.` : "승인 결과를 신청자에게 공개합니다."}
+                style={{ ...buttonBase, background: (loading || !canFinalize) ? "#cfd8e3" : t.ok, color: "#fff", fontWeight: 700 }}
+              >
+                결과 확정
+              </button>
+            ) : null}
             <button
               onClick={onExport}
               disabled={loading || rows.length === 0}
@@ -5768,11 +5904,28 @@ function RequestCardApplicationsDialog({
           </div>
         </div>
 
+        {isFree ? (
+          <div style={{ ...cardStyle, padding: "10px 12px", marginBottom: 12, background: isFinalized ? "#f3f4f6" : "#f8fbff" }}>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", fontSize: 13 }}>
+              <span>미처리 <b style={{ color: t.accent }}>{pendingCount}</b>명</span>
+              <span>승인 <b style={{ color: t.ok }}>{approvedCount}</b>명</span>
+              <span>반려 <b style={{ color: t.danger }}>{rejectedCount}</b>명</span>
+              <span style={{ color: t.textSub, fontSize: 12 }}>
+                {isFinalized
+                  ? "결과가 확정되어 신청자에게 공개되었습니다."
+                  : cardState?.phase === "closed"
+                    ? "각 신청자를 승인 또는 반려한 뒤 결과를 확정하세요. 확정 전에는 신청자에게 결과가 보이지 않습니다."
+                    : "신청 마감 후 승인·반려 처리를 할 수 있습니다."}
+              </span>
+            </div>
+          </div>
+        ) : null}
+
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
             <thead>
               <tr>
-                {["신청자", "아이디", "학번", "역할", "상태", "신청시각"].map((head) => (
+                {["신청자", "아이디", "학번", "역할", "상태", "신청시각", ...(isFree ? ["승인 처리"] : [])].map((head) => (
                   <th
                     key={head}
                     style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}
@@ -5784,7 +5937,7 @@ function RequestCardApplicationsDialog({
             </thead>
             <tbody>
               {rows.map((row) => {
-                const resultMeta = requestCardResultMeta(row.status, cardState);
+                const resultMeta = requestCardResultMeta(row.status, cardState, card?.cardType);
                 return (
                   <tr key={row.id}>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 13 }}>{row.applicantName || "-"}</td>
@@ -5797,19 +5950,57 @@ function RequestCardApplicationsDialog({
                       </span>
                     </td>
                     <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: t.textSub }}>{formatTime(row.createdAt)}</td>
+                    {isFree ? (
+                      <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
+                        {canDecide ? (
+                          <div style={{ display: "flex", gap: 5, flexWrap: "wrap", minWidth: 166 }}>
+                            <button
+                              type="button"
+                              onClick={() => onDecision(row, REQUEST_CARD_RESULT.SELECTED)}
+                              disabled={loading || row.status === REQUEST_CARD_RESULT.SELECTED}
+                              style={{ ...buttonBase, padding: "5px 9px", fontSize: 11, background: row.status === REQUEST_CARD_RESULT.SELECTED ? "#cfd8e3" : "#e8f5e9", color: row.status === REQUEST_CARD_RESULT.SELECTED ? "#6b7280" : t.ok, fontWeight: 700 }}
+                            >
+                              승인
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onDecision(row, REQUEST_CARD_RESULT.NOT_SELECTED)}
+                              disabled={loading || row.status === REQUEST_CARD_RESULT.NOT_SELECTED}
+                              style={{ ...buttonBase, padding: "5px 9px", fontSize: 11, background: row.status === REQUEST_CARD_RESULT.NOT_SELECTED ? "#cfd8e3" : "#ffebee", color: row.status === REQUEST_CARD_RESULT.NOT_SELECTED ? "#6b7280" : t.danger, fontWeight: 700 }}
+                            >
+                              반려
+                            </button>
+                            {row.status !== REQUEST_CARD_RESULT.APPLIED ? (
+                              <button
+                                type="button"
+                                onClick={() => onDecision(row, REQUEST_CARD_RESULT.APPLIED)}
+                                disabled={loading}
+                                style={{ ...buttonBase, padding: "5px 9px", fontSize: 11, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+                              >
+                                미처리로
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: 12, color: t.textSub }}>
+                            {isFinalized ? "확정됨" : cardState?.phase === "closed" ? "권한 없음" : "마감 후 처리"}
+                          </span>
+                        )}
+                      </td>
+                    ) : null}
                   </tr>
                 );
               })}
               {!loading && rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
+                  <td colSpan={columnCount} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
                     신청 내역이 없습니다.
                   </td>
                 </tr>
               ) : null}
               {loading ? (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
+                  <td colSpan={columnCount} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>
                     신청 현황을 불러오는 중...
                   </td>
                 </tr>
@@ -5835,7 +6026,11 @@ function AdminCardContextMenu({ card, state, loading, canManage, onAction }) {
   const canResetStatus = state.adminStatus && state.adminStatus !== "normal";
   const isLotteryOrFcfs = card.cardType === "lottery" || card.cardType === "fcfs";
   const items = [];
-  items.push({ key: "view", label: "신청현황", action: () => onAction("view", card) });
+  items.push({
+    key: "view",
+    label: card.cardType === "free" && state.phase === "closed" ? "승인 관리" : "신청현황",
+    action: () => onAction("view", card),
+  });
   if (canManage) {
     if (isLotteryOrFcfs && state.canDraw) items.push({ key: "draw", label: card.cardType === "fcfs" ? "결과 확정" : "랜덤 추첨", action: () => onAction("draw", card), accent: t.warn });
     items.push({ key: "edit", label: "수정", action: () => onAction("edit", card), accent: t.accent });
@@ -6111,7 +6306,12 @@ function RequestCardAdminPanel({
                         ) : null}
                       </span>
                     ) : (
-                      <span>참여 <b style={{ color: t.text }}>{applicantCount}</b>명</span>
+                      <span>
+                        참여 <b style={{ color: t.text }}>{applicantCount}</b>명
+                        {card.cardType === "free" && card.selectedCount > 0 ? (
+                          <span style={{ marginLeft: 4 }}>· 승인 <b style={{ color: t.ok }}>{card.selectedCount}</b>명</span>
+                        ) : null}
+                      </span>
                     )}
                   </div>
                   {isLotteryOrFcfs && capacity > 0 ? (
@@ -6126,7 +6326,7 @@ function RequestCardAdminPanel({
                     disabled={loading}
                     style={{ ...buttonBase, padding: "6px 12px", background: "#edf4ff", color: t.accent, fontWeight: 700, fontSize: 12 }}
                   >
-                    현황
+                    {card.cardType === "free" && state.phase === "closed" ? "승인 관리" : "현황"}
                   </button>
                   {canManageCard(card) && isLotteryOrFcfs && state.canDraw ? (
                     <button
@@ -6349,7 +6549,14 @@ function RequestCardUserSection({
         const phaseMeta = requestCardPhaseMeta(state);
         const typeColor = requestCardTypeColor(card.cardType);
         const myApplication = appMap.get(card.id) || null;
-        const resultMeta = requestCardResultMeta(myApplication?.status, state);
+        const isFree = card.cardType === "free";
+        const resultPending = isFree && state.phase !== "drawn"
+          && (myApplication?.status === REQUEST_CARD_RESULT.SELECTED
+            || myApplication?.status === REQUEST_CARD_RESULT.NOT_SELECTED);
+        const visibleApplication = resultPending
+          ? { ...myApplication, status: REQUEST_CARD_RESULT.APPLIED }
+          : myApplication;
+        const resultMeta = requestCardResultMeta(visibleApplication?.status, state, card.cardType);
         const statusText = getRequestCardStatusText(card, state, myApplication);
         const canApply = !myApplication && state.phase === "open";
         const canCancel = myApplication?.status === "applied" && state.phase === "open";
@@ -6357,7 +6564,6 @@ function RequestCardUserSection({
         const applicantCount = Math.max(0, Number(card?.applicantCount || 0));
         const isLotteryOrFcfs = card.cardType === "lottery" || card.cardType === "fcfs";
         const isSurvey = card.cardType === "survey";
-        const isFree = card.cardType === "free";
         const isFcfs = card.cardType === "fcfs";
         const isExpanded = expandedCardId === card.id;
         const fillRatio = capacity > 0 ? Math.min(applicantCount / capacity, 1) : 0;
@@ -9267,6 +9473,84 @@ export default function PrototypeApp({ studentOnly = false }) {
     }
   }
 
+  async function handleDecideFreeRequestCardApplication(row, status) {
+    const card = requestCardDialog.card;
+    if (!card?.id || !row?.id) return;
+
+    setRequestCardLoading(true);
+    try {
+      await decideFreeRequestCardApplication({
+        cardId: card.id,
+        applicationId: row.id,
+        status,
+        actor: user,
+      });
+      const actionLabel = status === REQUEST_CARD_RESULT.SELECTED
+        ? "승인"
+        : status === REQUEST_CARD_RESULT.NOT_SELECTED
+          ? "반려"
+          : "미처리로 변경";
+      setMessage({
+        type: "ok",
+        text: `${row.applicantName || "신청자"}님을 ${actionLabel}했습니다.`,
+      });
+      await reloadRequestCardDialog(card);
+    } catch (error) {
+      withMessageError(error, "신청자 승인 처리에 실패했습니다.");
+    } finally {
+      setRequestCardLoading(false);
+    }
+  }
+
+  async function handleFinalizeFreeRequestCard(card) {
+    if (!card?.id) return;
+    const rows = requestCardDialog.card?.id === card.id ? requestCardDialog.rows : [];
+    const approvedCount = rows.filter((row) => row.status === REQUEST_CARD_RESULT.SELECTED).length;
+    const rejectedCount = rows.filter((row) => row.status === REQUEST_CARD_RESULT.NOT_SELECTED).length;
+    const confirmMessage = [
+      `'${card.title}' 승인 결과를 확정할까요?`,
+      `승인 ${approvedCount}명 / 반려 ${rejectedCount}명`,
+      "확정하면 신청자에게 결과가 공개되며 더 이상 변경할 수 없습니다.",
+    ].join("\n");
+    if (!window.confirm(confirmMessage)) return;
+
+    setRequestCardLoading(true);
+    try {
+      const result = await finalizeFreeRequestCardResults({ cardId: card.id, actor: user });
+      setMessage({
+        type: "ok",
+        text: `승인 결과 확정 완료: 총 ${result.applicantCount}명 중 ${result.selectedCount}명 승인`,
+      });
+
+      try {
+        const appRows = await listRequestCardApplicationsByCard(card.id);
+        const notificationItems = appRows.map((row) => ({
+          recipientUid: row.applicantUid,
+          type: row.status === REQUEST_CARD_RESULT.SELECTED
+            ? NOTIFICATION_TYPE.APPLICATION_APPROVED
+            : NOTIFICATION_TYPE.APPLICATION_REJECTED,
+          title: row.status === REQUEST_CARD_RESULT.SELECTED
+            ? `'${card.title}' 신청이 승인되었습니다.`
+            : `'${card.title}' 신청 결과 안내`,
+          message: row.status === REQUEST_CARD_RESULT.SELECTED
+            ? "신청이 승인되었습니다. 카드의 안내 내용을 확인해 주세요."
+            : "이번 신청은 승인되지 않았습니다.",
+          relatedId: card.id,
+        }));
+        createNotificationBatch(notificationItems).catch(() => {});
+      } catch { /* 알림 실패는 결과 확정을 되돌리지 않습니다. */ }
+
+      await Promise.all([refreshRequestCards(), refreshMyRequestCardApplications()]);
+      if (requestCardDialog.open && requestCardDialog.card?.id === card.id) {
+        await reloadRequestCardDialog(card);
+      }
+    } catch (error) {
+      withMessageError(error, "승인 결과 확정에 실패했습니다.");
+    } finally {
+      setRequestCardLoading(false);
+    }
+  }
+
   async function handleApplyRequestCard(cardId, choiceKey) {
     setRequestCardLoading(true);
     try {
@@ -9865,6 +10149,27 @@ export default function PrototypeApp({ studentOnly = false }) {
       setMessage({ type: "ok", text: "제출한 신청서를 취소했습니다." });
     } catch (error) {
       withMessageError(error, "신청서 취소에 실패했습니다.");
+    } finally {
+      setStudentSubmitLoading(false);
+    }
+  }
+
+  async function handleUpdateStudentApplicationDetails({ careerGoal, entries }) {
+    setStudentSubmitLoading(true);
+    try {
+      await updateStudentApplicationContent({
+        actor: user,
+        studentUid: user.uid,
+        program: activeProgram,
+        careerGoal,
+        entries,
+      });
+      await Promise.all([refreshMyApplications(), refreshMyDraft()]);
+      setMessage({ type: "ok", text: "신청 작성 내용을 수정했습니다. 지망 순서와 선발 결과는 변경되지 않았습니다." });
+      return true;
+    } catch (error) {
+      withMessageError(error, "신청 내용 수정에 실패했습니다.");
+      return false;
     } finally {
       setStudentSubmitLoading(false);
     }
@@ -10627,7 +10932,13 @@ export default function PrototypeApp({ studentOnly = false }) {
       ) : null}
 
       {tab === "my" && user.role === "student" ? (
-        <StudentMyPanel apps={myApplications} />
+        <StudentMyPanel
+          key={`${activeProgramId}:${myApplications.map((row) => `${row.id}:${row.updatedAt || ""}`).join("|")}`}
+          apps={myApplications}
+          program={activeProgram}
+          saving={studentSubmitLoading}
+          onSaveDetails={handleUpdateStudentApplicationDetails}
+        />
       ) : null}
 
       {tab === "activityRecord" && user.role === "student" && activeProgram ? (
@@ -10792,7 +11103,10 @@ export default function PrototypeApp({ studentOnly = false }) {
         open={requestCardDialog.open}
         card={requestCardDialog.card}
         rows={requestCardDialog.rows}
-        loading={requestCardDialog.loading}
+        loading={requestCardDialog.loading || requestCardLoading}
+        canManage={user.role === "admin" || user.loginId === "admin" || requestCardDialog.card?.createdByUid === user.uid}
+        onDecision={handleDecideFreeRequestCardApplication}
+        onFinalize={handleFinalizeFreeRequestCard}
         onExport={() => handleExportRequestCardApplications(requestCardDialog.card, requestCardDialog.rows)}
         onClose={() => setRequestCardDialog({ open: false, card: null, rows: [], loading: false })}
       />

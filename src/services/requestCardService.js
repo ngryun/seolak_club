@@ -28,7 +28,7 @@ export const REQUEST_CARD_TYPE_META = {
   lottery: { label: '추첨', description: '모집 후 랜덤 추첨으로 선정' },
   fcfs: { label: '선착순', description: '정원 도달 시 자동 마감' },
   survey: { label: '의견조사', description: '선택지 중 하나를 투표' },
-  free: { label: '자유신청', description: '정원 없이 참여 의사 수집' },
+  free: { label: '자유신청', description: '정원 없이 신청 후 개별 승인' },
 }
 
 const REQUEST_CARD_TYPES = new Set(Object.values(REQUEST_CARD_TYPE))
@@ -185,6 +185,8 @@ function normalizeRequestCardApplication(id, data) {
     createdAt: toIsoString(data?.createdAt) || data?.createdAt || null,
     updatedAt: toIsoString(data?.updatedAt) || data?.updatedAt || null,
     drawnAt: toIsoString(data?.drawnAt) || data?.drawnAt || null,
+    decidedAt: toIsoString(data?.decidedAt) || data?.decidedAt || null,
+    decidedByUid: String(data?.decidedByUid || '').trim(),
   }
 }
 
@@ -374,6 +376,7 @@ export function getRequestCardState(card, nowValue = new Date()) {
     }
   }
 
+  const cardType = normalizeCardType(card?.cardType)
   return {
     configured: true,
     phase: 'closed',
@@ -381,7 +384,7 @@ export function getRequestCardState(card, nowValue = new Date()) {
     endAt,
     drawExecutedAt: null,
     canApply: false,
-    canDraw: true,
+    canDraw: cardType === REQUEST_CARD_TYPE.LOTTERY || cardType === REQUEST_CARD_TYPE.FCFS,
     adminStatus,
   }
 }
@@ -816,6 +819,9 @@ export async function drawRequestCardWinners(payload) {
     throw new Error('신청 카드를 찾을 수 없습니다.')
   }
   const actor = ensureCardOwnerOrAdmin(payload?.actor, card)
+  if (card.cardType !== REQUEST_CARD_TYPE.LOTTERY && card.cardType !== REQUEST_CARD_TYPE.FCFS) {
+    throw new Error('추첨 또는 선착순 카드만 추첨 결과를 확정할 수 있습니다.')
+  }
   const state = getRequestCardState(card)
   if (state.phase !== 'closed') {
     throw new Error('신청 기간 종료 후에만 추첨할 수 있습니다.')
@@ -885,4 +891,187 @@ export async function drawRequestCardWinners(payload) {
     selectedCount: selectedRows.length,
     applicantCount: applications.length,
   }
+}
+
+export async function decideFreeRequestCardApplication(payload) {
+  const targetCardId = String(payload?.cardId || '').trim()
+  const targetApplicationId = String(payload?.applicationId || '').trim()
+  const nextStatus = String(payload?.status || '').trim()
+  const allowedStatuses = new Set([
+    REQUEST_CARD_RESULT.APPLIED,
+    REQUEST_CARD_RESULT.SELECTED,
+    REQUEST_CARD_RESULT.NOT_SELECTED,
+  ])
+
+  if (!targetCardId || !targetApplicationId) {
+    throw new Error('처리할 신청 내역을 찾을 수 없습니다.')
+  }
+  if (!allowedStatuses.has(nextStatus)) {
+    throw new Error('승인 상태가 올바르지 않습니다.')
+  }
+
+  const card = await getRequestCardById(targetCardId)
+  if (!card) {
+    throw new Error('신청 카드를 찾을 수 없습니다.')
+  }
+  const actor = ensureCardOwnerOrAdmin(payload?.actor, card)
+  if (card.cardType !== REQUEST_CARD_TYPE.FREE) {
+    throw new Error('자유신청 카드만 개별 승인할 수 있습니다.')
+  }
+  const state = getRequestCardState(card)
+  if (state.phase !== 'closed') {
+    throw new Error('신청 기간 종료 후 결과 확정 전까지만 승인할 수 있습니다.')
+  }
+
+  if (!isFirebaseEnabled()) {
+    const existing = localRequestCardApplications.find((row) => row.id === targetApplicationId)
+    if (!existing || existing.cardId !== targetCardId) {
+      throw new Error('신청 내역을 찾을 수 없습니다.')
+    }
+    const now = nowIso()
+    localRequestCardApplications = localRequestCardApplications.map((row) => {
+      if (row.id !== targetApplicationId) return row
+      return {
+        ...row,
+        status: nextStatus,
+        decidedAt: nextStatus === REQUEST_CARD_RESULT.APPLIED ? null : now,
+        decidedByUid: nextStatus === REQUEST_CARD_RESULT.APPLIED ? '' : actor.uid,
+        drawnAt: null,
+        updatedAt: now,
+      }
+    })
+    return normalizeRequestCardApplication(
+      targetApplicationId,
+      localRequestCardApplications.find((row) => row.id === targetApplicationId),
+    )
+  }
+
+  await runTransaction(db, async (tx) => {
+    const cardRef = doc(db, REQUEST_CARDS, targetCardId)
+    const applicationRef = doc(db, REQUEST_CARD_APPLICATIONS, targetApplicationId)
+    const [cardSnapshot, applicationSnapshot] = await Promise.all([
+      tx.get(cardRef),
+      tx.get(applicationRef),
+    ])
+
+    if (!cardSnapshot.exists()) {
+      throw new Error('신청 카드를 찾을 수 없습니다.')
+    }
+    if (!applicationSnapshot.exists()) {
+      throw new Error('신청 내역을 찾을 수 없습니다.')
+    }
+
+    const liveCard = normalizeRequestCard(cardSnapshot.id, cardSnapshot.data())
+    const application = normalizeRequestCardApplication(
+      applicationSnapshot.id,
+      applicationSnapshot.data(),
+    )
+    ensureCardOwnerOrAdmin(actor, liveCard)
+    if (liveCard.cardType !== REQUEST_CARD_TYPE.FREE) {
+      throw new Error('자유신청 카드만 개별 승인할 수 있습니다.')
+    }
+    if (application.cardId !== targetCardId) {
+      throw new Error('해당 카드의 신청 내역이 아닙니다.')
+    }
+    if (getRequestCardState(liveCard).phase !== 'closed') {
+      throw new Error('신청 기간 종료 후 결과 확정 전까지만 승인할 수 있습니다.')
+    }
+
+    tx.update(applicationRef, {
+      status: nextStatus,
+      decidedAt: nextStatus === REQUEST_CARD_RESULT.APPLIED ? null : serverTimestamp(),
+      decidedByUid: nextStatus === REQUEST_CARD_RESULT.APPLIED ? '' : actor.uid,
+      drawnAt: null,
+      updatedAt: serverTimestamp(),
+    })
+  })
+
+  const updated = await getDoc(doc(db, REQUEST_CARD_APPLICATIONS, targetApplicationId))
+  return normalizeRequestCardApplication(updated.id, updated.data())
+}
+
+export async function finalizeFreeRequestCardResults(payload) {
+  const targetCardId = String(payload?.cardId || '').trim()
+  if (!targetCardId) {
+    throw new Error('결과를 확정할 신청 카드가 없습니다.')
+  }
+
+  const card = await getRequestCardById(targetCardId)
+  if (!card) {
+    throw new Error('신청 카드를 찾을 수 없습니다.')
+  }
+  const actor = ensureCardOwnerOrAdmin(payload?.actor, card)
+  if (card.cardType !== REQUEST_CARD_TYPE.FREE) {
+    throw new Error('자유신청 카드만 승인 결과를 확정할 수 있습니다.')
+  }
+  if (getRequestCardState(card).phase !== 'closed') {
+    throw new Error('신청 기간 종료 후 결과를 확정할 수 있습니다.')
+  }
+
+  const applications = await listRequestCardApplicationsByCard(targetCardId)
+  if (applications.length === 0) {
+    throw new Error('신청자가 없어 결과를 확정할 수 없습니다.')
+  }
+  const pendingCount = applications.filter(
+    (row) => row.status === REQUEST_CARD_RESULT.APPLIED,
+  ).length
+  if (pendingCount > 0) {
+    throw new Error(`미처리 신청자 ${pendingCount}명을 먼저 승인 또는 반려해주세요.`)
+  }
+  const selectedCount = applications.filter(
+    (row) => row.status === REQUEST_CARD_RESULT.SELECTED,
+  ).length
+
+  if (!isFirebaseEnabled()) {
+    const now = nowIso()
+    localRequestCardApplications = localRequestCardApplications.map((row) => (
+      row.cardId === targetCardId
+        ? { ...row, drawnAt: now, updatedAt: now }
+        : row
+    ))
+    localRequestCards = localRequestCards.map((row) => (
+      row.id === targetCardId
+        ? {
+          ...row,
+          selectedCount,
+          drawExecutedAt: now,
+          drawByUid: actor.uid,
+          updatedAt: now,
+        }
+        : row
+    ))
+    return { applicantCount: applications.length, selectedCount }
+  }
+
+  const liveCardRef = doc(db, REQUEST_CARDS, targetCardId)
+  const liveCardSnapshot = await getDoc(liveCardRef)
+  if (!liveCardSnapshot.exists()) {
+    throw new Error('신청 카드를 찾을 수 없습니다.')
+  }
+  const liveCard = normalizeRequestCard(liveCardSnapshot.id, liveCardSnapshot.data())
+  ensureCardOwnerOrAdmin(actor, liveCard)
+  if (liveCard.cardType !== REQUEST_CARD_TYPE.FREE
+    || getRequestCardState(liveCard).phase !== 'closed') {
+    throw new Error('이미 결과가 확정되었거나 현재 확정할 수 없는 카드입니다.')
+  }
+
+  await updateDoc(liveCardRef, {
+    selectedCount,
+    drawExecutedAt: serverTimestamp(),
+    drawByUid: actor.uid,
+    updatedAt: serverTimestamp(),
+  })
+
+  for (let index = 0; index < applications.length; index += 400) {
+    const batch = writeBatch(db)
+    applications.slice(index, index + 400).forEach((row) => {
+      batch.update(doc(db, REQUEST_CARD_APPLICATIONS, row.id), {
+        drawnAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+    })
+    await batch.commit()
+  }
+
+  return { applicantCount: applications.length, selectedCount }
 }
