@@ -4936,13 +4936,19 @@ function StudentApplicationStatusPanel({
   rows,
   clubs,
   program,
+  cycle,
   loading,
   onRefresh,
   onOpenDetail,
+  canForceAssign,
+  forceActorLabel,
+  forceLoading,
+  onForceAssign,
 }) {
   const [query, setQuery] = useState("");
   const [classFilter, setClassFilter] = useState("");
-  const [cardModal, setCardModal] = useState(null); // { label, students }
+  const [assignFilter, setAssignFilter] = useState(""); // "" | unassigned | notApplied | assigned
+  const [forceModal, setForceModal] = useState(null); // { row, clubId, reason }
 
   const classOptions = useMemo(() => {
     const set = new Set();
@@ -4961,13 +4967,22 @@ function StudentApplicationStatusPanel({
     });
   }, [rows]);
 
-  const filteredRows = useMemo(() => {
-    let result = rows;
+  const classScopedRows = useMemo(() => {
+    if (!classFilter) return rows;
+    const [grade, cls] = classFilter.split("-");
+    const prefix = `${grade}${cls.padStart(2, "0")}`;
+    return rows.filter((row) => String(row.studentNo || "").startsWith(prefix));
+  }, [rows, classFilter]);
 
-    if (classFilter) {
-      const [grade, cls] = classFilter.split("-");
-      const prefix = `${grade}${cls.padStart(2, "0")}`;
-      result = result.filter((row) => String(row.studentNo || "").startsWith(prefix));
+  const filteredRows = useMemo(() => {
+    let result = classScopedRows;
+
+    if (assignFilter === "unassigned") {
+      result = result.filter((row) => row.preferences.some((p) => p.clubId) && !row.finalClubName);
+    } else if (assignFilter === "notApplied") {
+      result = result.filter((row) => !row.preferences.some((p) => p.clubId));
+    } else if (assignFilter === "assigned") {
+      result = result.filter((row) => !!row.finalClubName);
     }
 
     const keyword = String(query || "").trim().toLowerCase();
@@ -4986,10 +5001,10 @@ function StudentApplicationStatusPanel({
     }
 
     return result;
-  }, [rows, query, classFilter]);
+  }, [classScopedRows, query, assignFilter]);
 
   const stats = useMemo(() => {
-    const base = classFilter ? filteredRows : rows;
+    const base = classScopedRows;
     const total = base.length;
     const applied = base.filter((r) => r.preferences.some((p) => p.clubId)).length;
     const notApplied = total - applied;
@@ -5001,20 +5016,14 @@ function StudentApplicationStatusPanel({
     const remaining = totalCapacity - totalMembers;
     const assignRate = total > 0 ? Math.round((assigned / total) * 100) : 0;
     return { total, applied, notApplied, assigned, unassigned, totalCapacity, totalMembers, remaining, assignRate, filtered: !!classFilter };
-  }, [rows, clubs, classFilter, filteredRows]);
-
-  const base = classFilter ? filteredRows : rows;
-  const notAppliedStudents = base.filter((r) => !r.preferences.some((p) => p.clubId));
-  const assignedStudents = base.filter((r) => r.finalClubName);
-  const appliedStudents = base.filter((r) => r.preferences.some((p) => p.clubId));
-  const unassignedStudents = appliedStudents.filter((r) => !r.finalClubName);
+  }, [clubs, classFilter, classScopedRows]);
 
   const dashboardCards = [
-    { label: stats.filtered ? "해당 학급" : "전체 학생", value: stats.total, accent: t.accent, bg: "#edf4ff", border: "#c8dcff" },
+    { label: stats.filtered ? "해당 학급" : "전체 학생", value: stats.total, accent: t.accent, bg: "#edf4ff", border: "#c8dcff", filterValue: "" },
     { label: "신청 완료", value: stats.applied, accent: t.accent, bg: "#edf4ff", border: "#c8dcff" },
-    { label: "미신청", value: stats.notApplied, accent: stats.notApplied > 0 ? t.warn : t.textSub, bg: stats.notApplied > 0 ? "#fff8e1" : "#f3f4f6", border: stats.notApplied > 0 ? "#f3dfb9" : "#d6dae3", clickable: true, students: notAppliedStudents },
-    { label: "배정 완료", value: stats.assigned, accent: t.ok, bg: "#eef7ee", border: "#cbe6cd", clickable: true, students: assignedStudents },
-    { label: "미배정", value: stats.unassigned, accent: stats.unassigned > 0 ? t.danger : t.textSub, bg: stats.unassigned > 0 ? "#fff1f1" : "#f3f4f6", border: stats.unassigned > 0 ? "#f3c7c7" : "#d6dae3", clickable: true, students: unassignedStudents },
+    { label: "미신청", value: stats.notApplied, accent: stats.notApplied > 0 ? t.warn : t.textSub, bg: stats.notApplied > 0 ? "#fff8e1" : "#f3f4f6", border: stats.notApplied > 0 ? "#f3dfb9" : "#d6dae3", filterValue: "notApplied" },
+    { label: "배정 완료", value: stats.assigned, accent: t.ok, bg: "#eef7ee", border: "#cbe6cd", filterValue: "assigned" },
+    { label: "미배정", value: stats.unassigned, accent: stats.unassigned > 0 ? t.danger : t.textSub, bg: stats.unassigned > 0 ? "#fff1f1" : "#f3f4f6", border: stats.unassigned > 0 ? "#f3c7c7" : "#d6dae3", filterValue: "unassigned" },
     { label: "잔여석", value: stats.remaining, sub: `/ ${stats.totalCapacity}`, accent: t.accent, bg: "#edf4ff", border: "#c8dcff" },
   ];
 
@@ -5022,9 +5031,9 @@ function StudentApplicationStatusPanel({
     <section style={cardStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
         <div>
-          <h2 style={{ fontSize: 17 }}>학생 동아리 신청 현황</h2>
+          <h2 style={{ fontSize: 17 }}>학생 신청 현황</h2>
           <div style={{ fontSize: 12, color: t.textSub, marginTop: 4 }}>
-            학생 행을 클릭하면 지원 사유와 배정 이력을 확인할 수 있습니다.
+            학생 행을 클릭하면 지원 사유와 배정 이력을, 상단 카드를 클릭하면 해당 상태의 학생만 볼 수 있습니다.
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -5038,6 +5047,16 @@ function StudentApplicationStatusPanel({
               const [grade, cls] = opt.split("-");
               return <option key={opt} value={opt}>{grade}학년 {cls}반</option>;
             })}
+          </select>
+          <select
+            value={assignFilter}
+            onChange={(e) => setAssignFilter(e.target.value)}
+            style={{ ...inputBase, width: "auto", minWidth: 100, paddingRight: 28 }}
+          >
+            <option value="">전체 상태</option>
+            <option value="unassigned">미배정</option>
+            <option value="notApplied">미신청</option>
+            <option value="assigned">배정 완료</option>
           </select>
           <input
             value={query}
@@ -5053,7 +5072,7 @@ function StudentApplicationStatusPanel({
               const clubMap = new Map((Array.isArray(clubs) ? clubs : []).map((c) => [c.id, c]));
               const page = buildClassStatusPageHtml({
                 classKey: classFilter,
-                rows: filteredRows,
+                rows: classScopedRows,
                 clubMap,
                 unitLabel: labels.unit,
                 roomLabel: labels.room,
@@ -5114,30 +5133,35 @@ function StudentApplicationStatusPanel({
           borderRadius: t.radius,
           overflow: "hidden",
         }}>
-          {dashboardCards.map((card, i) => (
-            <div
-              key={card.label}
-              onClick={card.clickable && card.value > 0 ? () => setCardModal({ label: card.label, students: card.students }) : undefined}
-              style={{
-                padding: "14px 10px",
-                borderRight: i < dashboardCards.length - 1 ? `1px solid ${t.border}` : "none",
-                background: card.bg,
-                textAlign: "center",
-                cursor: card.clickable && card.value > 0 ? "pointer" : "default",
-                transition: "filter 0.15s",
-              }}
-              onMouseEnter={(e) => { if (card.clickable && card.value > 0) e.currentTarget.style.filter = "brightness(0.95)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.filter = ""; }}
-            >
-              <div style={{ fontSize: 11, color: t.textSub, fontWeight: 600, marginBottom: 6, letterSpacing: "0.02em" }}>
-                {card.label}
+          {dashboardCards.map((card, i) => {
+            const clickable = card.filterValue !== undefined && (card.filterValue === "" || card.value > 0);
+            const active = !!assignFilter && assignFilter === card.filterValue;
+            return (
+              <div
+                key={card.label}
+                onClick={clickable ? () => setAssignFilter(assignFilter === card.filterValue ? "" : card.filterValue) : undefined}
+                style={{
+                  padding: "14px 10px",
+                  borderRight: i < dashboardCards.length - 1 ? `1px solid ${t.border}` : "none",
+                  background: card.bg,
+                  textAlign: "center",
+                  cursor: clickable ? "pointer" : "default",
+                  transition: "filter 0.15s",
+                  boxShadow: active ? `inset 0 0 0 2px ${card.accent}` : undefined,
+                }}
+                onMouseEnter={(e) => { if (clickable) e.currentTarget.style.filter = "brightness(0.95)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.filter = ""; }}
+              >
+                <div style={{ fontSize: 11, color: t.textSub, fontWeight: 600, marginBottom: 6, letterSpacing: "0.02em" }}>
+                  {card.label}
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: card.accent, letterSpacing: "-0.5px" }}>
+                  {card.value}
+                  {card.sub ? <span style={{ fontSize: 12, fontWeight: 500, color: t.textSub }}>{card.sub}</span> : null}
+                </div>
               </div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: card.accent, letterSpacing: "-0.5px" }}>
-                {card.value}
-                {card.sub ? <span style={{ fontSize: 12, fontWeight: 500, color: t.textSub }}>{card.sub}</span> : null}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -5227,7 +5251,32 @@ function StudentApplicationStatusPanel({
                       })()}
                     </div>
                   ) : (
-                    <span style={{ color: t.textSub }}>-</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ color: t.textSub }}>-</span>
+                      {canForceAssign && cycle?.status !== "closed" ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setForceModal({
+                              row,
+                              clubId: row.preferences.find((p) => p.clubId)?.clubId || "",
+                              reason: "",
+                            });
+                          }}
+                          style={{
+                            ...buttonBase,
+                            padding: "3px 8px",
+                            fontSize: 11,
+                            fontWeight: 700,
+                            background: "#fff7f2",
+                            border: "1px solid #f2d7c4",
+                            color: "#d97706",
+                          }}
+                        >
+                          강제배정
+                        </button>
+                      ) : null}
+                    </div>
                   )}
                 </td>
               </tr>
@@ -5243,64 +5292,84 @@ function StudentApplicationStatusPanel({
         </table>
       </div>
 
-      {/* 카드 클릭 모달 */}
-      {cardModal ? (
+      {/* 강제배정 모달 */}
+      {forceModal ? (
         <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 16, overflowY: "auto" }}
-          onClick={(e) => { if (e.target === e.currentTarget) setCardModal(null); }}>
-          <div style={{ maxWidth: 600, margin: "40px auto", ...cardStyle, padding: 0 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderBottom: `1px solid ${t.border}` }}>
-              <div style={{ fontSize: 16, fontWeight: 800 }}>
-                {cardModal.label} 학생 목록
-                <span style={{ fontSize: 13, fontWeight: 500, color: t.textSub, marginLeft: 8 }}>{cardModal.students.length}명</span>
-              </div>
-              <button onClick={() => setCardModal(null)} style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}>닫기</button>
+          onClick={(e) => { if (e.target === e.currentTarget && !forceLoading) setForceModal(null); }}>
+          <div style={{ maxWidth: 460, margin: "60px auto", ...cardStyle, background: "#fff7f2", borderColor: "#f2d7c4" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontSize: 15, fontWeight: 800 }}>{forceActorLabel || "관리자"} 강제 배정</div>
+              <button
+                onClick={() => setForceModal(null)}
+                disabled={forceLoading}
+                style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}` }}
+              >
+                닫기
+              </button>
             </div>
-            <div style={{ maxHeight: "60vh", overflowY: "auto", padding: "0 4px" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>
-                    {["학번", "이름", ...(cardModal.label === "배정 완료" ? ["배정 동아리"] : cardModal.label === "미배정" ? ["1지망", "2지망", "3지망"] : [])].map((h) => (
-                      <th key={h} style={{ textAlign: "left", padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub, position: "sticky", top: 0, background: "#fff" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {cardModal.students.map((s) => (
-                    <tr key={s.studentUid || s.studentNo}>
-                      <td style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 13 }}>{s.studentNo || "-"}</td>
-                      <td style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 13, fontWeight: 600 }}>{s.studentName || "-"}</td>
-                      {cardModal.label === "배정 완료" ? (
-                        <td style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 13 }}>
-                          {s.finalClubName || "-"}
-                          {s.finalSource ? <span style={{ fontSize: 10, marginLeft: 6, padding: "1px 5px", borderRadius: 4, background: "#e5e7eb", color: t.textSub }}>{s.finalSource}</span> : null}
-                        </td>
-                      ) : null}
-                      {cardModal.label === "미배정" ? (
-                        <>
-                          {[0, 1, 2].map((idx) => {
-                            const pref = s.preferences[idx];
-                            const clubName = pref?.clubName || "";
-                            const status = pref?.status || "";
-                            return (
-                              <td key={idx} style={{ padding: "8px 10px", borderBottom: `1px solid ${t.border}`, fontSize: 12 }}>
-                                {clubName ? (
-                                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{clubName}</span>
-                                    {status ? <StudentMyStatusChip status={status} rejectReason={pref?.rejectReason} /> : null}
-                                  </div>
-                                ) : "-"}
-                              </td>
-                            );
-                          })}
-                        </>
-                      ) : null}
-                    </tr>
-                  ))}
-                  {cardModal.students.length === 0 ? (
-                    <tr><td colSpan={5} style={{ textAlign: "center", padding: 16, fontSize: 13, color: t.textSub }}>해당 학생이 없습니다.</td></tr>
-                  ) : null}
-                </tbody>
-              </table>
+            <div style={{ fontSize: 13, marginBottom: 12 }}>
+              <span style={{ fontWeight: 700 }}>{forceModal.row.studentNo} {forceModal.row.studentName}</span>
+              <span style={{ color: t.textSub }}> 학생을 아래 동아리로 배정합니다.</span>
+            </div>
+            <div style={{ display: "grid", gap: 10 }}>
+              <Field label="동아리 선택">
+                {(() => {
+                  const isFull = (club) => (Number(club.memberCount) || 0) >= (Number(club.maxMembers) || 0);
+                  const selectable = (clubs || []).filter((club) => !club.legacy);
+                  const clubOption = (club) => (
+                    <option key={club.id} value={club.id}>
+                      {club.clubName} ({club.memberCount}/{club.maxMembers}{club.isInterviewSelection ? " · 면접" : ""})
+                    </option>
+                  );
+                  const withSeats = selectable.filter((club) => !isFull(club));
+                  const fullClubs = selectable.filter(isFull);
+                  return (
+                    <Select
+                      value={forceModal.clubId}
+                      onChange={(e) => setForceModal({ ...forceModal, clubId: e.target.value })}
+                    >
+                      <option value="">동아리 선택</option>
+                      {withSeats.length > 0 ? <optgroup label="잔여석 있음">{withSeats.map(clubOption)}</optgroup> : null}
+                      {fullClubs.length > 0 ? <optgroup label="정원 마감">{fullClubs.map(clubOption)}</optgroup> : null}
+                    </Select>
+                  );
+                })()}
+              </Field>
+              {(() => {
+                const selected = (clubs || []).find((club) => club.id === forceModal.clubId);
+                return selected && (Number(selected.memberCount) || 0) >= (Number(selected.maxMembers) || 0) ? (
+                  <div style={{ fontSize: 12, fontWeight: 600, color: t.danger, padding: "8px 10px", background: "#fff1f1", border: "1px solid #f3c7c7", borderRadius: 6 }}>
+                    정원이 가득 찬 동아리입니다. 강제 배정하면 정원을 초과하여 등록됩니다.
+                  </div>
+                ) : null;
+              })()}
+              <Field label="강제 배정 사유" hint={`학생 원본 신청서는 유지되고, ${forceActorLabel || "관리자"} 조정 기록만 추가됩니다.`}>
+                <textarea
+                  value={forceModal.reason}
+                  onChange={(e) => setForceModal({ ...forceModal, reason: e.target.value })}
+                  style={{ ...inputBase, minHeight: 70, resize: "vertical" }}
+                  placeholder={`예: 미배정 학생 ${forceActorLabel || "관리자"} 조정`}
+                />
+              </Field>
+              <button
+                onClick={async () => {
+                  const success = await onForceAssign({
+                    studentUid: forceModal.row.studentUid,
+                    clubId: forceModal.clubId,
+                    reason: forceModal.reason,
+                  });
+                  if (success) setForceModal(null);
+                }}
+                disabled={forceLoading || !forceModal.row.studentUid || !forceModal.clubId || !String(forceModal.reason || "").trim()}
+                style={{
+                  ...buttonBase,
+                  background: forceLoading || !forceModal.clubId || !String(forceModal.reason || "").trim() ? "#cfd8e3" : "#d97706",
+                  color: "#fff",
+                  fontWeight: 700,
+                }}
+              >
+                {forceLoading ? "배정 중..." : "강제 배정 실행"}
+              </button>
             </div>
           </div>
         </div>
@@ -10884,10 +10953,16 @@ export default function PrototypeApp({ studentOnly = false }) {
       {tab === "studentStatus" && (user.role === "admin" || user.role === "teacher" || user.role === "homeroom") ? (
         activeProgram ? (
           <StudentApplicationStatusPanel
+            key={activeProgram.id}
             rows={studentStatusRows}
             clubs={visibleClubs}
             program={activeProgram}
+            cycle={cycle}
             loading={studentStatusLoading || loading}
+            canForceAssign={user.role === "admin"}
+            forceActorLabel="관리자"
+            forceLoading={forceAssignLoading}
+            onForceAssign={handleForceAssign}
             onRefresh={async () => {
               setStudentStatusLoading(true);
               try {
