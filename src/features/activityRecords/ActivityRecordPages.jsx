@@ -310,7 +310,8 @@ function TeacherRecordEditor({ row, program, actor, onSaved, onError }) {
 }
 
 export function TeacherActivityRecordPage({ user, program }) {
-  const [data, setData] = useState(null)
+  const [meta, setMeta] = useState(null)
+  const [rowsByClub, setRowsByClub] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -321,26 +322,58 @@ export function TeacherActivityRecordPage({ user, program }) {
 
   useEffect(() => {
     let active = true
-    listTeacherActivityRecords({ program, actor: user })
-      .then((next) => { if (active) setData(next) })
+    listTeacherActivityRecords({ program, actor: user, metaOnly: true })
+      .then((next) => {
+        if (!active) return
+        setMeta(next)
+        if ((next.clubs || []).length === 1) setClubId(next.clubs[0].id)
+      })
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : '학생 활동 기록을 불러오지 못했습니다.') })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [program, user])
 
-  const rows = useMemo(() => data?.rows || [], [data?.rows])
+  const rowsLoading = Boolean(clubId) && !(clubId in rowsByClub)
+
+  useEffect(() => {
+    if (!clubId || clubId in rowsByClub) return
+    let active = true
+    listTeacherActivityRecords({ program, actor: user, clubId })
+      .then((next) => {
+        if (!active) return
+        setRowsByClub((prev) => ({ ...prev, [clubId]: next.rows }))
+        setMeta((prev) => (prev ? { ...prev, window: next.window } : next))
+        setError('')
+      })
+      .catch((reason) => {
+        if (!active) return
+        setRowsByClub((prev) => ({ ...prev, [clubId]: [] }))
+        setError(reason instanceof Error ? reason.message : '학생 활동 기록을 불러오지 못했습니다.')
+      })
+    return () => { active = false }
+  }, [clubId, program, user, rowsByClub])
+
+  const rows = useMemo(() => (clubId ? rowsByClub[clubId] || [] : []), [clubId, rowsByClub])
   const filtered = useMemo(() => rows.filter((row) => {
-    if (clubId && row.clubId !== clubId) return false
     if (status !== 'all' && statusMeta(row).label !== status) return false
     const token = `${row.studentNo} ${row.studentName} ${row.clubName}`.toLowerCase()
     return token.includes(query.trim().toLowerCase())
-  }), [clubId, query, rows, status])
+  }), [query, rows, status])
   const selected = filtered.find((row) => `${row.clubId}::${row.studentUid}` === selectedKey) || filtered[0] || null
 
   function onSaved(next, text) {
-    setData(next)
+    if (clubId) setRowsByClub((prev) => ({ ...prev, [clubId]: next.rows }))
     setMessage(text)
     setError('')
+  }
+
+  function refreshCurrentClub() {
+    if (!clubId || rowsLoading) return
+    setRowsByClub((prev) => {
+      const next = { ...prev }
+      delete next[clubId]
+      return next
+    })
   }
 
   if (loading) return <section style={card}>학생 활동 기록을 불러오는 중입니다.</section>
@@ -349,39 +382,48 @@ export function TeacherActivityRecordPage({ user, program }) {
     <div style={{ display: 'grid', gap: 12 }}>
       <section style={card}>
         <h2 style={{ margin: '0 0 6px', fontSize: 18 }}>{program.name} 학생 활동 기록</h2>
-        <div style={{ fontSize: 13, color: color.sub }}>{windowMessage(data?.window)} · 담당 수업의 확정 학생만 표시됩니다.</div>
+        <div style={{ fontSize: 13, color: color.sub }}>{windowMessage(meta?.window)} · 담당 수업의 확정 학생만 표시됩니다.</div>
         {message ? <div style={{ marginTop: 9, color: color.ok, fontSize: 13 }}>{message}</div> : null}
         {error ? <div style={{ marginTop: 9, color: color.danger, fontSize: 13 }}>{error}</div> : null}
       </section>
 
       <section style={{ ...card, display: 'grid', gap: 10 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8 }}>
+          <select value={clubId} onChange={(event) => { setClubId(event.target.value); setSelectedKey(''); setMessage('') }} style={input}><option value="">수업을 선택하세요</option>{(meta?.clubs || []).map((club) => <option key={club.id} value={club.id}>{club.clubName}</option>)}</select>
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="학번·이름 검색" style={input} />
-          <select value={clubId} onChange={(event) => setClubId(event.target.value)} style={input}><option value="">전체 수업</option>{(data?.clubs || []).map((club) => <option key={club.id} value={club.id}>{club.clubName}</option>)}</select>
           <select value={status} onChange={(event) => setStatus(event.target.value)} style={input}><option value="all">전체 상태</option>{['학생 미작성', '학생 작성 완료', '교사 검토 중', '작성 완료'].map((label) => <option key={label} value={label}>{label}</option>)}</select>
+          <button type="button" disabled={!clubId || rowsLoading} onClick={refreshCurrentClub} style={{ ...button, background: '#fff', border: `1px solid ${color.border}`, color: color.sub, opacity: !clubId || rowsLoading ? 0.5 : 1 }}>새로고침</button>
         </div>
-        <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', fontSize: 12 }}>
-          {['학생 미작성', '학생 작성 완료', '교사 검토 중', '작성 완료'].map((label) => <span key={label} style={{ padding: '4px 8px', background: '#f8fafc', borderRadius: 999 }}>{label} {rows.filter((row) => statusMeta(row).label === label).length}명</span>)}
-        </div>
+        {clubId ? (
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', fontSize: 12 }}>
+            {['학생 미작성', '학생 작성 완료', '교사 검토 중', '작성 완료'].map((label) => <span key={label} style={{ padding: '4px 8px', background: '#f8fafc', borderRadius: 999 }}>{label} {rows.filter((row) => statusMeta(row).label === label).length}명</span>)}
+          </div>
+        ) : null}
       </section>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: 12, alignItems: 'start' }}>
-        <section style={{ ...card, padding: 9, display: 'grid', gap: 5, maxHeight: '72vh', overflow: 'auto' }}>
-          {filtered.map((row) => {
-            const key = `${row.clubId}::${row.studentUid}`
-            const active = selected && selected.clubId === row.clubId && selected.studentUid === row.studentUid
-            return (
-              <button key={key} type="button" onClick={() => setSelectedKey(key)} style={{ ...button, padding: 10, textAlign: 'left', background: active ? '#edf4ff' : '#fff', border: `1px solid ${active ? '#bfd4f7' : color.border}` }}>
-                <div style={{ fontSize: 13, fontWeight: 800 }}>{row.studentNo} {row.studentName}</div>
-                <div style={{ marginTop: 3, fontSize: 11, color: color.sub }}>{row.clubName}</div>
-                <div style={{ marginTop: 6 }}><StatusBadge record={row} /></div>
-              </button>
-            )
-          })}
-          {filtered.length === 0 ? <div style={{ padding: 12, fontSize: 12, color: color.sub }}>조건에 맞는 학생이 없습니다.</div> : null}
-        </section>
-        {selected ? <TeacherRecordEditor key={`${selected.clubId}:${selected.studentUid}:${selected.studentUpdatedAt || ''}:${selected.teacherUpdatedAt || ''}`} row={selected} program={program} actor={user} onSaved={onSaved} onError={setError} /> : <section style={card}>학생을 선택해주세요.</section>}
-      </div>
+      {!clubId ? (
+        <section style={{ ...card, color: color.sub, fontSize: 13 }}>수업을 선택하면 해당 수업 학생들의 활동 기록을 불러옵니다.</section>
+      ) : rowsLoading ? (
+        <section style={{ ...card, color: color.sub, fontSize: 13 }}>선택한 수업의 학생 활동 기록을 불러오는 중입니다.</section>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: 12, alignItems: 'start' }}>
+          <section style={{ ...card, padding: 9, display: 'grid', gap: 5, maxHeight: '72vh', overflow: 'auto' }}>
+            {filtered.map((row) => {
+              const key = `${row.clubId}::${row.studentUid}`
+              const active = selected && selected.clubId === row.clubId && selected.studentUid === row.studentUid
+              return (
+                <button key={key} type="button" onClick={() => setSelectedKey(key)} style={{ ...button, padding: 10, textAlign: 'left', background: active ? '#edf4ff' : '#fff', border: `1px solid ${active ? '#bfd4f7' : color.border}` }}>
+                  <div style={{ fontSize: 13, fontWeight: 800 }}>{row.studentNo} {row.studentName}</div>
+                  <div style={{ marginTop: 3, fontSize: 11, color: color.sub }}>{row.clubName}</div>
+                  <div style={{ marginTop: 6 }}><StatusBadge record={row} /></div>
+                </button>
+              )
+            })}
+            {filtered.length === 0 ? <div style={{ padding: 12, fontSize: 12, color: color.sub }}>조건에 맞는 학생이 없습니다.</div> : null}
+          </section>
+          {selected ? <TeacherRecordEditor key={`${selected.clubId}:${selected.studentUid}:${selected.studentUpdatedAt || ''}:${selected.teacherUpdatedAt || ''}`} row={selected} program={program} actor={user} onSaved={onSaved} onError={setError} /> : <section style={card}>학생을 선택해주세요.</section>}
+        </div>
+      )}
     </div>
   )
 }

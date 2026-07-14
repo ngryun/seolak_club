@@ -366,7 +366,7 @@ async function attendanceSummaries(program, clubId, studentUids) {
   return summaries
 }
 
-async function teacherList(actorUser, program) {
+async function teacherList(actorUser, program, options = {}) {
   if (!['admin', 'teacher', 'homeroom'].includes(actorUser.role) && actorUser.loginId !== 'admin') {
     throw Object.assign(new Error('담당교사 또는 관리자만 학생 활동 기록을 볼 수 있습니다.'), { status: 403 })
   }
@@ -374,12 +374,22 @@ async function teacherList(actorUser, program) {
   const clubs = actorUser.role === 'admin' || actorUser.loginId === 'admin'
     ? allClubs
     : allClubs.filter((club) => teacherUids(club).includes(actorUser.uid))
-  const applicationSnapshot = await db().collection('applications').where('cycleId', '==', program.cycleId).get()
+  const clubSummaries = clubs.map((club) => ({ id: club.id, clubName: clean(club.clubName, 160) }))
+  if (options.metaOnly) return { window: getWindowState(program), clubs: clubSummaries, rows: [] }
+  const clubId = clean(options.clubId, 160)
+  let targetClubs = clubs
+  if (clubId) {
+    targetClubs = clubs.filter((club) => club.id === clubId)
+    if (targetClubs.length === 0) throw Object.assign(new Error('이 수업의 학생 활동 기록 권한이 없습니다.'), { status: 403 })
+  }
+  let applicationQuery = db().collection('applications').where('cycleId', '==', program.cycleId)
+  if (clubId) applicationQuery = applicationQuery.where('clubId', '==', clubId)
+  const applicationSnapshot = await applicationQuery.get()
   const applicationMap = new Map(applicationSnapshot.docs.filter((row) => row.data().status === 'approved').map((row) => {
     const value = row.data()
     return [`${clean(value.clubId, 160)}::${clean(value.studentUid, 160)}`, value]
   }))
-  const rows = (await Promise.all(clubs.map(async (club) => {
+  const rows = (await Promise.all(targetClubs.map(async (club) => {
     const [memberSnapshot, recordSnapshot] = await Promise.all([
       db().collection(`schedules/${club.id}/members`).get(),
       db().collection(`schedules/${club.id}/activityRecords`).where('cycleId', '==', program.cycleId).get(),
@@ -422,7 +432,7 @@ async function teacherList(actorUser, program) {
     return clubRows
   }))).flat()
   rows.sort((left, right) => left.clubName.localeCompare(right.clubName, 'ko') || left.studentNo.localeCompare(right.studentNo, 'ko', { numeric: true }))
-  return { window: getWindowState(program), clubs: clubs.map((club) => ({ id: club.id, clubName: clean(club.clubName, 160) })), rows }
+  return { window: getWindowState(program), clubs: clubSummaries, rows }
 }
 
 async function teacherSave(actorUser, program, body) {
@@ -457,7 +467,7 @@ async function teacherSave(actorUser, program, body) {
     createdAt: existing.createdAt || timestamp(),
     updatedAt: timestamp(),
   }, { merge: true })
-  return teacherList(actorUser, program)
+  return teacherList(actorUser, program, { clubId: club.id })
 }
 
 async function exportRecords(actorUser) {
@@ -480,7 +490,7 @@ export default async (req) => {
     if (body.action === 'upload-attachment') return json(await uploadAttachment(actorUser, program, body))
     if (body.action === 'remove-attachment') return json(await removeAttachment(actorUser, program, body))
     if (body.action === 'download-attachment') return json(await downloadAttachment(actorUser, program, body))
-    if (body.action === 'teacher-list') return json(await teacherList(actorUser, program))
+    if (body.action === 'teacher-list') return json(await teacherList(actorUser, program, { clubId: body.clubId, metaOnly: body.metaOnly === true }))
     if (body.action === 'teacher-save') return json(await teacherSave(actorUser, program, body))
     return json({ error: '지원하지 않는 작업입니다.' }, 400)
   } catch (error) {

@@ -4870,9 +4870,72 @@ function HomeroomApplicationStatusPanel({
   );
 }
 
+function classKeyFromStudentNo(studentNo) {
+  const no = String(studentNo || "");
+  if (no.length < 3) return "";
+  const grade = no[0];
+  const cls = no.substring(1, 3).replace(/^0/, "");
+  return `${grade}-${cls}`;
+}
+
+function buildClassStatusPageHtml({ classKey, rows, clubMap, unitLabel, roomLabel, programName }) {
+  const [grade, cls] = classKey.split("-");
+  const sorted = [...rows].sort((a, b) => {
+    const an = Number(String(a.studentNo || "").slice(-2)) || 0;
+    const bn = Number(String(b.studentNo || "").slice(-2)) || 0;
+    return an - bn;
+  });
+  const assignedCount = sorted.filter((r) => r.finalClubName).length;
+  const td = "border:1px solid #ccc;padding:5px 10px;font-size:12px;";
+  const tableRows = sorted.map((row, i) => {
+    const number = Number(String(row.studentNo || "").slice(-2)) || "";
+    const name = row.studentName || "-";
+    const clubName = row.finalClubName || "";
+    const clubObj = row.finalClubId ? clubMap.get(row.finalClubId) : null;
+    const room = clubObj?.room || "";
+    const bg = i % 2 === 0 ? "#fff" : "#f7f8fb";
+    return `<tr style="background:${bg}"><td style="${td}text-align:center;color:#555;">${number}</td><td style="${td}font-weight:600;">${name}</td><td style="${td}text-align:center;${clubName ? "color:#16a34a;font-weight:600;" : "color:#bbb;"}">${clubName || "미배정"}</td><td style="${td}text-align:center;color:#555;">${room || "-"}</td></tr>`;
+  }).join("");
+  const th = "border:1px solid #ccc;padding:6px 10px;font-size:11px;color:#475569;";
+  return `<section class="class-page">
+<div style="text-align:center;margin-bottom:14px;">
+<h1 style="font-size:18px;margin:0 0 4px;">${grade}학년 ${cls}반 ${programName ? `${programName} ` : ""}배정 현황</h1>
+<p style="font-size:11px;color:#888;margin:0;">인쇄일: ${new Date().toLocaleDateString("ko-KR")} · 총 ${sorted.length}명 · 배정 ${assignedCount}명 · 미배정 ${sorted.length - assignedCount}명</p>
+</div>
+<table>
+<thead><tr style="background:#edf0f5;">
+<th style="${th}text-align:center;width:8%;">번호</th>
+<th style="${th}text-align:left;width:22%;">학생명</th>
+<th style="${th}text-align:center;width:40%;">${unitLabel}명</th>
+<th style="${th}text-align:center;width:30%;">${roomLabel}</th>
+</tr></thead>
+<tbody>${tableRows}</tbody>
+</table>
+</section>`;
+}
+
+function buildClassStatusPrintDocument(docTitle, pagesHtml) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${docTitle}</title>
+<style>
+@media print{@page{size:A4 portrait;margin:12mm 15mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.class-page{page-break-after:always;}.class-page:last-of-type{page-break-after:auto;}}
+@media screen{.class-page{margin-bottom:40px;padding-bottom:24px;border-bottom:1px dashed #ccc;}.class-page:last-of-type{border-bottom:none;}}
+body{font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif;color:#1a1a1a;line-height:1.4;max-width:700px;margin:0 auto;padding:20px;}
+table{width:100%;border-collapse:collapse;}
+</style></head><body>${pagesHtml}</body></html>`;
+}
+
+function openStatusPrintWindow(html) {
+  const printWin = window.open("", "_blank");
+  if (!printWin) { alert("팝업이 차단되었습니다. 팝업 차단을 해제해 주세요."); return; }
+  printWin.document.write(html);
+  printWin.document.close();
+  printWin.onload = () => { printWin.print(); };
+}
+
 function StudentApplicationStatusPanel({
   rows,
   clubs,
+  program,
   loading,
   onRefresh,
   onOpenDetail,
@@ -4986,52 +5049,50 @@ function StudentApplicationStatusPanel({
             onClick={() => {
               if (!classFilter) { alert("학급을 선택한 후 인쇄할 수 있습니다."); return; }
               const [grade, cls] = classFilter.split("-");
-              const title = `${grade}학년 ${cls}반 동아리 배정 현황`;
-              const clubMap = new Map();
-              (Array.isArray(clubs) ? clubs : []).forEach((c) => clubMap.set(c.id, c));
-              const sorted = [...filteredRows].sort((a, b) => {
-                const an = Number(String(a.studentNo || "").slice(-2)) || 0;
-                const bn = Number(String(b.studentNo || "").slice(-2)) || 0;
-                return an - bn;
+              const labels = getProgramLabels(program);
+              const clubMap = new Map((Array.isArray(clubs) ? clubs : []).map((c) => [c.id, c]));
+              const page = buildClassStatusPageHtml({
+                classKey: classFilter,
+                rows: filteredRows,
+                clubMap,
+                unitLabel: labels.unit,
+                roomLabel: labels.room,
+                programName: program?.name || "",
               });
-              const assignedCount = sorted.filter((r) => r.finalClubName).length;
-              const td = "border:1px solid #ccc;padding:5px 10px;font-size:12px;";
-              const tableRows = sorted.map((row, i) => {
-                const name = row.studentName || "-";
-                const clubName = row.finalClubName || "";
-                const clubObj = row.finalClubId ? clubMap.get(row.finalClubId) : null;
-                const room = clubObj?.room || "";
-                const bg = i % 2 === 0 ? "#fff" : "#f7f8fb";
-                return `<tr style="background:${bg}"><td style="${td}font-weight:600;">${name}</td><td style="${td}text-align:center;${clubName ? "color:#16a34a;font-weight:600;" : "color:#bbb;"}">${clubName || "미배정"}</td><td style="${td}text-align:center;color:#555;">${room || "-"}</td></tr>`;
-              }).join("");
-              const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
-<style>
-@media print{@page{size:A4 portrait;margin:12mm 15mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
-body{font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif;color:#1a1a1a;line-height:1.4;max-width:700px;margin:0 auto;padding:20px;}
-table{width:100%;border-collapse:collapse;}
-</style></head><body>
-<div style="text-align:center;margin-bottom:14px;">
-<h1 style="font-size:18px;margin:0 0 4px;">${title}</h1>
-<p style="font-size:11px;color:#888;margin:0;">인쇄일: ${new Date().toLocaleDateString("ko-KR")} · 총 ${sorted.length}명 · 배정 ${assignedCount}명 · 미배정 ${sorted.length - assignedCount}명</p>
-</div>
-<table>
-<thead><tr style="background:#edf0f5;">
-<th style="border:1px solid #ccc;padding:6px 10px;font-size:11px;color:#475569;text-align:left;width:25%;">학생명</th>
-<th style="border:1px solid #ccc;padding:6px 10px;font-size:11px;color:#475569;text-align:center;width:40%;">동아리명</th>
-<th style="border:1px solid #ccc;padding:6px 10px;font-size:11px;color:#475569;text-align:center;width:35%;">동아리실</th>
-</tr></thead>
-<tbody>${tableRows}</tbody>
-</table>
-</body></html>`;
-              const printWin = window.open("", "_blank");
-              if (!printWin) { alert("팝업이 차단되었습니다. 팝업 차단을 해제해 주세요."); return; }
-              printWin.document.write(html);
-              printWin.document.close();
-              printWin.onload = () => { printWin.print(); };
+              openStatusPrintWindow(buildClassStatusPrintDocument(`${grade}학년 ${cls}반 ${program?.name ? `${program.name} ` : ""}배정 현황`, page));
             }}
             style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
           >
             학급별 인쇄
+          </button>
+          <button
+            onClick={() => {
+              const labels = getProgramLabels(program);
+              const clubMap = new Map((Array.isArray(clubs) ? clubs : []).map((c) => [c.id, c]));
+              const grouped = new Map();
+              rows.forEach((row) => {
+                const key = classKeyFromStudentNo(row.studentNo);
+                if (!key) return;
+                if (!grouped.has(key)) grouped.set(key, []);
+                grouped.get(key).push(row);
+              });
+              if (grouped.size === 0) { alert("인쇄할 학급 정보가 없습니다."); return; }
+              const pages = [...grouped.keys()]
+                .sort(compareClassKeys)
+                .map((key) => buildClassStatusPageHtml({
+                  classKey: key,
+                  rows: grouped.get(key),
+                  clubMap,
+                  unitLabel: labels.unit,
+                  roomLabel: labels.room,
+                  programName: program?.name || "",
+                }))
+                .join("");
+              openStatusPrintWindow(buildClassStatusPrintDocument(`${program?.name || "프로그램"} 학급별 배정 현황`, pages));
+            }}
+            style={{ ...buttonBase, background: "#fff", border: `1px solid ${t.border}`, color: t.textSub }}
+          >
+            전체 학급 PDF 저장
           </button>
           <button
             onClick={onRefresh}
@@ -10825,6 +10886,7 @@ export default function PrototypeApp({ studentOnly = false }) {
           <StudentApplicationStatusPanel
             rows={studentStatusRows}
             clubs={visibleClubs}
+            program={activeProgram}
             loading={studentStatusLoading || loading}
             onRefresh={async () => {
               setStudentStatusLoading(true);

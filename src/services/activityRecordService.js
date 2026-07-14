@@ -244,17 +244,27 @@ function localAttendanceSummary(attendanceRecords, program, clubId, studentUid) 
   }, { present: 0, absent: 0, unchecked: 0, total: sessions.length })
 }
 
-export async function listTeacherActivityRecords({ program, actor }) {
-  if (isFirebaseEnabled()) return api('teacher-list', { programId: program.id })
-  const [clubs, applications, attendanceData] = await Promise.all([
-    listSchedules(),
+export async function listTeacherActivityRecords({ program, actor, clubId = '', metaOnly = false }) {
+  if (isFirebaseEnabled()) {
+    return api('teacher-list', {
+      programId: program.id,
+      ...(clubId ? { clubId } : {}),
+      ...(metaOnly ? { metaOnly: true } : {}),
+    })
+  }
+  const clubs = await listSchedules()
+  const allowedClubs = clubs.filter((club) => club.programId === program.id && !club.legacy && (actor.role === 'admin' || getClubTeacherUids(club).includes(actor.uid)))
+  const clubSummaries = allowedClubs.map((club) => ({ id: club.id, clubName: club.clubName }))
+  if (metaOnly) return { window: getWindowState(program), clubs: clubSummaries, rows: [] }
+  const targetClubs = clubId ? allowedClubs.filter((club) => club.id === clubId) : allowedClubs
+  if (clubId && targetClubs.length === 0) throw new Error('이 수업의 학생 활동 기록 권한이 없습니다.')
+  const [applications, attendanceData] = await Promise.all([
     listCurrentCycleApplications({ program }),
     exportAttendanceData(),
   ])
-  const allowedClubs = clubs.filter((club) => club.programId === program.id && !club.legacy && (actor.role === 'admin' || getClubTeacherUids(club).includes(actor.uid)))
   const store = readStore()
   const rows = []
-  for (const club of allowedClubs) {
+  for (const club of targetClubs) {
     const members = await listClubMembers(club.id)
     for (const member of members) {
       const key = getRecordKey(program, club.id, member.studentUid)
@@ -273,12 +283,12 @@ export async function listTeacherActivityRecords({ program, actor }) {
     }
   }
   rows.sort((left, right) => left.clubName.localeCompare(right.clubName, 'ko') || left.studentNo.localeCompare(right.studentNo, 'ko', { numeric: true }))
-  return { window: getWindowState(program), clubs: allowedClubs.map((club) => ({ id: club.id, clubName: club.clubName })), rows }
+  return { window: getWindowState(program), clubs: clubSummaries, rows }
 }
 
 export async function saveTeacherActivityRecord({ program, actor, clubId, studentUid, observationNote, studentRecordText, teacherStatus }) {
   if (isFirebaseEnabled()) return api('teacher-save', { programId: program.id, clubId, studentUid, observationNote, studentRecordText, teacherStatus })
-  const current = await listTeacherActivityRecords({ program, actor })
+  const current = await listTeacherActivityRecords({ program, actor, clubId })
   const row = current.rows.find((item) => item.clubId === clubId && item.studentUid === studentUid)
   if (!row) throw new Error('확정 참여 학생을 찾을 수 없습니다.')
   if (teacherStatus === 'completed' && row.studentStatus !== 'submitted') throw new Error('학생이 활동 기록을 제출한 뒤 작성 완료로 처리할 수 있습니다.')
@@ -289,7 +299,7 @@ export async function saveTeacherActivityRecord({ program, actor, clubId, studen
   const now = new Date().toISOString()
   store.records = { ...(store.records || {}), [key]: { ...existing, observationNote: clean(observationNote, 2000), studentRecordText: clean(studentRecordText, 3000), teacherStatus: teacherStatus === 'completed' ? 'completed' : 'reviewing', teacherUpdatedAt: now, reviewedByUid: actor.uid, studentUpdatedAfterReview: false, updatedAt: now } }
   writeStore(store)
-  return listTeacherActivityRecords({ program, actor })
+  return listTeacherActivityRecords({ program, actor, clubId })
 }
 
 export async function exportActivityRecordData() {
