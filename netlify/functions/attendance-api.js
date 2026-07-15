@@ -5,12 +5,45 @@ function refs(clubId, sessionId) {
   return { session, entries: session.collection('entries') }
 }
 
-async function readRecord(clubId, sessionId, create = true, programId = '', origin = '') {
+function normalizeRosterRow(doc) {
+  const data = doc.data() || {}
+  return {
+    studentUid: String(data.studentUid || data.uid || doc.id || '').trim(),
+    studentNo: String(data.studentNo || data.loginId || '').trim(),
+    name: String(data.name || data.studentName || '').trim(),
+  }
+}
+
+function sortRoster(rows) {
+  const seen = new Set()
+  return rows
+    .filter((row) => row.studentUid && !seen.has(row.studentUid) && seen.add(row.studentUid))
+    .sort((a, b) => a.studentNo.localeCompare(b.studentNo, 'ko', { numeric: true }) || a.name.localeCompare(b.name, 'ko'))
+}
+
+async function loadClubRoster(clubId, program = {}) {
+  const memberSnap = await db().collection(`schedules/${clubId}/members`).get()
+  const memberRoster = sortRoster(memberSnap.docs.map(normalizeRosterRow))
+  if (memberRoster.length) return memberRoster
+
+  // 과거 데이터에서 members 문서가 누락된 경우에도 현재 사이클의 승인 학생으로 복구합니다.
+  const applicationSnap = await db().collection('applications').where('clubId', '==', clubId).get()
+  const cycleId = String(program.cycleId || '').trim()
+  return sortRoster(applicationSnap.docs
+    .map((doc) => ({ ...doc.data(), id: doc.id }))
+    .filter((row) => row.status === 'approved' && (!cycleId || String(row.cycleId || '') === cycleId))
+    .map((row) => ({
+      studentUid: String(row.studentUid || '').trim(),
+      studentNo: String(row.studentNo || '').trim(),
+      name: String(row.studentName || row.name || '').trim(),
+    })))
+}
+
+async function readRecord(clubId, sessionId, create = true, programId = '', origin = '', fallbackRoster = null, program = {}) {
   const { session, entries } = refs(clubId, sessionId)
   let sessionSnap = await session.get()
   if (!sessionSnap.exists && create) {
-    const memberSnap = await db().collection(`schedules/${clubId}/members`).get()
-    const rosterSnapshot = memberSnap.docs.map((doc) => ({ studentUid: String(doc.data().studentUid || doc.id), studentNo: String(doc.data().studentNo || ''), name: String(doc.data().name || '') })).sort((a, b) => a.studentNo.localeCompare(b.studentNo, 'ko', { numeric: true }))
+    const rosterSnapshot = fallbackRoster || await loadClubRoster(clubId, program)
     const accessSnap = programId ? await db().doc(`_attendanceAccess/${programId}`).get() : null
     const publicEnabled = accessSnap?.data()?.enabled === true
     const tokenVersion = 1
@@ -24,8 +57,20 @@ async function readRecord(clubId, sessionId, create = true, programId = '', orig
     sessionSnap = await session.get()
   }
   if (!sessionSnap.exists) throw Object.assign(new Error('출석 회차를 찾을 수 없습니다.'), { status: 404 })
-  const entrySnap = await entries.get(); const entryMap = Object.fromEntries(entrySnap.docs.map((doc) => [doc.id, doc.data()]))
   let data = sessionSnap.data()
+  let rosterSnapshot = Array.isArray(data.rosterSnapshot) ? data.rosterSnapshot : []
+  if (!rosterSnapshot.length) {
+    const currentRoster = fallbackRoster || await loadClubRoster(clubId, program)
+    if (currentRoster.length) {
+      const batch = db().batch()
+      batch.set(session, { rosterSnapshot: currentRoster, updatedAt: timestamp() }, { merge: true })
+      for (const student of currentRoster) batch.set(entries.doc(student.studentUid), { status: 'unchecked', updatedAt: timestamp(), updatedBy: 'system' }, { merge: true })
+      await batch.commit()
+      data = { ...data, rosterSnapshot: currentRoster }
+      rosterSnapshot = currentRoster
+    }
+  }
+  const entrySnap = await entries.get(); const entryMap = Object.fromEntries(entrySnap.docs.map((doc) => [doc.id, doc.data()]))
   // 프로그램 단위 설정을 기준으로 기존·지연 생성 회차의 QR 상태도 동기화합니다.
   // 일괄 처리 중 일부 회차가 새로 만들어지거나 재시도되는 경우에도 상태가 어긋나지 않습니다.
   if (programId) {
@@ -48,7 +93,6 @@ async function readRecord(clubId, sessionId, create = true, programId = '', orig
       data = { ...data, ...responsePatch }
     }
   }
-  const rosterSnapshot = Array.isArray(data.rosterSnapshot) ? data.rosterSnapshot : []
   return { clubId, sessionId, ...data, rosterSnapshot, entries: Object.fromEntries(rosterSnapshot.map((row) => [row.studentUid, entryMap[row.studentUid] || { status: 'unchecked' }])) }
 }
 
@@ -97,7 +141,7 @@ export default async (req) => {
       let closedCount = 0
       for (const club of clubs) {
         for (const sessionConfig of sessions) {
-          const record = await readRecord(club.id, String(sessionConfig.id), true, programId, origin)
+          const record = await readRecord(club.id, String(sessionConfig.id), true, programId, origin, null, program)
           if (record.status === 'closed') { closedCount += 1; continue }
           const version = (Number(record.tokenVersion) || 1) + (body.rotate === true ? 1 : 0)
           const enabled = body.enabled === true
@@ -130,10 +174,20 @@ export default async (req) => {
     const programSnap = await db().doc(`programs/${body.programId}`).get(); const program = programSnap.data()
     if (!programSnap.exists || program.features?.attendance !== true) return json({ error: '출석부 기능이 활성화되지 않은 프로그램입니다.' }, 400)
     const sessionConfig = (program.attendanceSchedule || []).find((row) => String(row.id) === sessionId)
-    if (!sessionConfig) return json({ error: '프로그램에 등록되지 않은 출석 회차입니다.' }, 400)
     const origin = new URL(req.url).origin
-    if (action === 'get') return json(await readRecord(clubId, sessionId, true, String(body.programId || ''), origin))
-    const record = await readRecord(clubId, sessionId, true, String(body.programId || ''), origin); const { session, entries } = refs(clubId, sessionId)
+    if (action === 'get-batch') {
+      const sessionIds = Array.from(new Set((Array.isArray(body.sessionIds) ? body.sessionIds : [])
+        .map((id) => String(id || '').trim()).filter(Boolean)))
+      if (!sessionIds.length || sessionIds.some((id) => !(program.attendanceSchedule || []).some((row) => String(row.id) === id))) {
+        return json({ error: '프로그램에 등록되지 않은 출석 회차가 포함되어 있습니다.' }, 400)
+      }
+      const roster = await loadClubRoster(clubId, program)
+      const records = await Promise.all(sessionIds.map((id) => readRecord(clubId, id, true, String(body.programId || ''), origin, roster, program)))
+      return json({ records })
+    }
+    if (!sessionConfig) return json({ error: '프로그램에 등록되지 않은 출석 회차입니다.' }, 400)
+    if (action === 'get') return json(await readRecord(clubId, sessionId, true, String(body.programId || ''), origin, null, program))
+    const record = await readRecord(clubId, sessionId, true, String(body.programId || ''), origin, null, program); const { session, entries } = refs(clubId, sessionId)
     if (action === 'set-status') {
       const status = body.status === 'closed' ? 'closed' : 'open'
       let publicPatch = { publicEnabled: false, publicUrl: '' }
@@ -159,8 +213,7 @@ export default async (req) => {
     }
     if (action === 'sync-roster') {
       if (Object.values(record.entries).some((row) => row.status && row.status !== 'unchecked')) return json({ error: '출결 입력이 시작된 회차는 명단을 동기화할 수 없습니다.' }, 409)
-      const memberSnap = await db().collection(`schedules/${clubId}/members`).get()
-      const rosterSnapshot = memberSnap.docs.map((doc) => ({ studentUid: String(doc.data().studentUid || doc.id), studentNo: String(doc.data().studentNo || ''), name: String(doc.data().name || '') })).sort((a, b) => a.studentNo.localeCompare(b.studentNo, 'ko', { numeric: true }))
+      const rosterSnapshot = await loadClubRoster(clubId, program)
       const oldEntries = await entries.get(); const batch = db().batch()
       for (const doc of oldEntries.docs) batch.delete(doc.ref)
       for (const student of rosterSnapshot) batch.set(entries.doc(student.studentUid), { status: 'unchecked', updatedAt: timestamp(), updatedBy: actor.uid })
@@ -183,4 +236,3 @@ export default async (req) => {
     return json({ error: '지원하지 않는 작업입니다.' }, 400)
   } catch (error) { return handleError(error) }
 }
-

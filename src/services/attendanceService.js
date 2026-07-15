@@ -108,6 +108,19 @@ export async function getAttendanceRecord({ program, club, session, roster = [] 
   return current
 }
 
+export async function getAttendanceRecords({ program, club, sessions = [], roster = [] }) {
+  const targetSessions = Array.isArray(sessions) ? sessions.filter((session) => session?.id) : []
+  if (isFirebaseEnabled()) {
+    const data = await api('attendance-api', 'get-batch', {
+      programId: program.id,
+      clubId: club.id,
+      sessionIds: targetSessions.map((session) => session.id),
+    })
+    return Array.isArray(data?.records) ? data.records : []
+  }
+  return Promise.all(targetSessions.map((session) => getAttendanceRecord({ program, club, session, roster })))
+}
+
 export async function saveAttendanceRecord({ program, club, session, entries, actor }) {
   if (isFirebaseEnabled()) {
     return api('attendance-api', 'save', {

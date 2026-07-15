@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { listClubMembers } from '../../services/applicationService'
+import { isFirebaseEnabled } from '../../lib/firebase'
 import {
   getAttendanceRecord,
+  getAttendanceRecords,
   hasAttendanceApiSession,
   saveAttendanceRecord,
   savePublicAttendance,
@@ -274,17 +276,24 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
     ;(async () => {
       setLoading(true)
       try {
-        const roster = await listClubMembers(club.id)
+        const roster = isFirebaseEnabled() ? [] : await listClubMembers(club.id)
         if (seq !== loadSeqRef.current) return
         rosterRef.current = roster
-        const results = await Promise.allSettled(targetSessions.map((session) => getAttendanceRecord({ program, club, session, roster })))
+        const results = await Promise.allSettled([
+          getAttendanceRecords({ program, club, sessions: targetSessions, roster }),
+        ])
         if (seq !== loadSeqRef.current) return
         const nextRecords = {}; const nextEntries = {}; const nextErrors = {}
-        results.forEach((result, index) => {
-          const id = targetSessions[index].id
-          if (result.status === 'fulfilled') { nextRecords[id] = result.value; nextEntries[id] = toEntryMap(result.value) }
-          else nextErrors[id] = result.reason?.message || '출석부를 불러오지 못했습니다.'
-        })
+        const result = results[0]
+        if (result.status === 'fulfilled') {
+          result.value.forEach((record) => {
+            if (!record?.sessionId) return
+            nextRecords[record.sessionId] = record
+            nextEntries[record.sessionId] = toEntryMap(record)
+          })
+        } else {
+          targetSessions.forEach((session) => { nextErrors[session.id] = result.reason?.message || '출석부를 불러오지 못했습니다.' })
+        }
         setRecords(nextRecords); setEntriesMap(nextEntries); setLoadErrors(nextErrors)
       } catch (error) {
         if (seq === loadSeqRef.current) onMessage?.('error', error.message)
@@ -344,7 +353,9 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
     if (!club || !session) return
     setLoading(true)
     try {
-      const roster = rosterRef.current.length ? rosterRef.current : await listClubMembers(club.id)
+      const roster = rosterRef.current.length
+        ? rosterRef.current
+        : (isFirebaseEnabled() ? [] : await listClubMembers(club.id))
       const next = await getAttendanceRecord({ program, club, session, roster })
       setRecords((prev) => ({ ...prev, [session.id]: next }))
       setEntriesMap((prev) => ({ ...prev, [session.id]: toEntryMap(next) }))
@@ -384,7 +395,7 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
     if (!club || !manageSession) return
     setLoading(true)
     try {
-      const roster = await listClubMembers(club.id)
+      const roster = isFirebaseEnabled() ? [] : await listClubMembers(club.id)
       rosterRef.current = roster
       const next = await syncAttendanceRoster({ program, club, session: manageSession, roster })
       setRecords((prev) => ({ ...prev, [manageSession.id]: next }))
