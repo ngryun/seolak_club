@@ -129,7 +129,11 @@ function assertWindowOpen(program) {
 }
 
 async function listProgramClubs(programId) {
-  const snapshot = await db().collection('schedules').get()
+  // 기본 프로그램은 programId 필드가 없는 과거 문서도 포함해야 해서 전체를 읽고,
+  // 그 외 프로그램은 인덱스 쿼리로 해당 수업만 읽습니다.
+  const snapshot = programId === DEFAULT_PROGRAM_ID
+    ? await db().collection('schedules').get()
+    : await db().collection('schedules').where('programId', '==', programId).get()
   return snapshot.docs.map((row) => ({ id: row.id, ...row.data() })).filter((row) => {
     const resolved = clean(row.programId || DEFAULT_PROGRAM_ID, 160)
     return resolved === programId
@@ -149,14 +153,16 @@ async function findStudentMembership(program, studentUid) {
   const assignment = await db().doc(`recruitmentAssignments/${assignmentId(program.cycleId, studentUid)}`).get()
   const assignedClubId = clean(assignment.data()?.clubId, 160)
   if (assignment.exists && assignedClubId) {
-    const [clubSnapshot, memberSnapshot] = await Promise.all([
+    // 활동 기록 문서까지 같은 왕복에서 함께 읽어 학생 화면의 순차 조회를 줄입니다.
+    const [clubSnapshot, memberSnapshot, recordSnapshot] = await Promise.all([
       db().doc(`schedules/${assignedClubId}`).get(),
       db().doc(`schedules/${assignedClubId}/members/${studentUid}`).get(),
+      recordRef(assignedClubId, program.cycleId, studentUid).get(),
     ])
     if (clubSnapshot.exists && memberSnapshot.exists) {
       const club = { id: clubSnapshot.id, ...clubSnapshot.data() }
       if (clean(club.programId || DEFAULT_PROGRAM_ID, 160) === program.id) {
-        return { club, member: { id: memberSnapshot.id, ...memberSnapshot.data() } }
+        return { club, member: { id: memberSnapshot.id, ...memberSnapshot.data() }, recordSnapshot }
       }
     }
   }
@@ -236,7 +242,7 @@ async function getStudentContext(actorUser, program) {
   if (!membership) return null
   const { club, member } = membership
   const ref = recordRef(club.id, program.cycleId, actorUser.uid)
-  const snapshot = await ref.get()
+  const snapshot = membership.recordSnapshot || await ref.get()
   const fallback = {
     id: ref.id,
     programId: program.id,
@@ -304,21 +310,22 @@ async function studentSave(actorUser, program, body) {
   return studentResult(program, context)
 }
 
-async function attendanceSummaries(program, clubId, studentUids) {
+// 출결 요약은 편집 화면에서 선택된 학생만 필요하므로, 학급 전체 entries를 읽는 대신
+// 해당 학생의 문서 경로만 세션 수만큼 직접 조회합니다.
+async function attendanceSummary(actorUser, program, body) {
+  const club = await authorizeTeacher(actorUser, body.clubId, program.id)
+  const studentUid = clean(body.studentUid, 160)
+  if (!studentUid) throw Object.assign(new Error('학생 정보가 필요합니다.'), { status: 400 })
   const sessions = (Array.isArray(program.attendanceSchedule) ? program.attendanceSchedule : []).filter((row) => row?.active !== false && row?.id)
-  const summaries = new Map(studentUids.map((uid) => [uid, { present: 0, absent: 0, unchecked: 0, total: sessions.length }]))
-  const entrySnapshots = await Promise.all(sessions.map((session) => db().collection(`schedules/${clubId}/attendanceSessions/${session.id}/entries`).get()))
-  for (const entrySnapshot of entrySnapshots) {
-    const statusMap = new Map(entrySnapshot.docs.map((row) => [row.id, row.data().status]))
-    for (const studentUid of studentUids) {
-      const result = summaries.get(studentUid)
-      const status = statusMap.get(studentUid) || 'unchecked'
-      if (status === 'present') result.present += 1
-      else if (status === 'absent') result.absent += 1
-      else result.unchecked += 1
-    }
+  const summary = { present: 0, absent: 0, unchecked: 0, total: sessions.length }
+  const snapshots = await Promise.all(sessions.map((session) => db().doc(`schedules/${club.id}/attendanceSessions/${session.id}/entries/${studentUid}`).get()))
+  for (const snapshot of snapshots) {
+    const status = snapshot.exists ? snapshot.data().status : 'unchecked'
+    if (status === 'present') summary.present += 1
+    else if (status === 'absent') summary.absent += 1
+    else summary.unchecked += 1
   }
-  return summaries
+  return summary
 }
 
 async function teacherList(actorUser, program, options = {}) {
@@ -350,8 +357,6 @@ async function teacherList(actorUser, program, options = {}) {
       db().collection(`schedules/${club.id}/activityRecords`).where('cycleId', '==', program.cycleId).get(),
     ])
     const recordMap = new Map(recordSnapshot.docs.map((row) => [clean(row.data().studentUid, 160), { id: row.id, ...row.data() }]))
-    const studentUids = memberSnapshot.docs.map((row) => clean(row.data().studentUid || row.id, 160))
-    const clubAttendance = await attendanceSummaries(program, club.id, studentUids)
     const clubRows = []
     for (const memberDoc of memberSnapshot.docs) {
       const member = { id: memberDoc.id, ...memberDoc.data() }
@@ -380,7 +385,6 @@ async function teacherList(actorUser, program, options = {}) {
           applyReason: clean(application.applyReason, 100),
           wantedActivity: clean(application.wantedActivity, 100),
         },
-        attendance: clubAttendance.get(studentUid) || { present: 0, absent: 0, unchecked: 0, total: 0 },
       })
     }
     return clubRows
@@ -421,7 +425,28 @@ async function teacherSave(actorUser, program, body) {
     createdAt: existing.createdAt || timestamp(),
     updatedAt: timestamp(),
   }, { merge: true })
-  return teacherList(actorUser, program, { clubId: club.id })
+  // 전체 목록을 다시 만드는 대신 저장된 학생의 레코드만 돌려주고 화면에서 그 행만 교체합니다.
+  const record = normalizeRecord({
+    ...existing,
+    programId: program.id,
+    cycleId: program.cycleId,
+    clubId: club.id,
+    studentUid,
+    studentNo: clean(member.data().studentNo, 40),
+    studentName: clean(member.data().name, 120),
+    observationNote: clean(body.observationNote, 2000),
+    studentRecordText,
+    teacherStatus,
+    teacherUpdatedAt: new Date().toISOString(),
+    reviewedByUid: actorUser.uid,
+    studentUpdatedAfterReview: false,
+  }, { id: ref.id })
+  if (record.studentStatus !== 'submitted') {
+    record.commonAnswers = Object.fromEntries(Object.keys(COMMON_LIMITS).map((key) => [key, '']))
+    record.additionalAnswers = {}
+    record.questionSnapshot = []
+  }
+  return { record: { ...record, clubName: clean(club.clubName, 160) } }
 }
 
 async function exportRecords(actorUser) {
@@ -435,14 +460,14 @@ async function exportRecords(actorUser) {
 export default async (req) => {
   try {
     const actor = requireActor(req)
-    const actorUser = await getActorUser(actor)
     const body = await readBody(req)
-    if (body.action === 'export') return json({ records: await exportRecords(actorUser) })
-    const program = await getProgram(body.programId)
+    if (body.action === 'export') return json({ records: await exportRecords(await getActorUser(actor)) })
+    const [actorUser, program] = await Promise.all([getActorUser(actor), getProgram(body.programId)])
     if (body.action === 'student-get') return json(await studentGet(actorUser, program))
     if (body.action === 'student-save') return json(await studentSave(actorUser, program, body))
     if (body.action === 'teacher-list') return json(await teacherList(actorUser, program, { clubId: body.clubId, metaOnly: body.metaOnly === true }))
     if (body.action === 'teacher-save') return json(await teacherSave(actorUser, program, body))
+    if (body.action === 'attendance-summary') return json(await attendanceSummary(actorUser, program, body))
     return json({ error: '지원하지 않는 작업입니다.' }, 400)
   } catch (error) {
     return handleError(error)

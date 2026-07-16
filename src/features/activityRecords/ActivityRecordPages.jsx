@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   getStudentActivityRecord,
+  getTeacherActivityAttendanceSummary,
   listTeacherActivityRecords,
   saveStudentActivityRecord,
   saveTeacherActivityRecord,
@@ -165,6 +166,16 @@ function TeacherRecordEditor({ row, program, actor, onSaved, onError }) {
   const [observationNote, setObservationNote] = useState(row.observationNote || '')
   const [studentRecordText, setStudentRecordText] = useState(row.studentRecordText || '')
   const [saving, setSaving] = useState(false)
+  const [attendance, setAttendance] = useState(null)
+
+  useEffect(() => {
+    let active = true
+    setAttendance(null)
+    getTeacherActivityAttendanceSummary({ program, clubId: row.clubId, studentUid: row.studentUid })
+      .then((summary) => { if (active) setAttendance(summary) })
+      .catch(() => { if (active) setAttendance(undefined) })
+    return () => { active = false }
+  }, [program, row.clubId, row.studentUid])
 
   async function save(teacherStatus) {
     setSaving(true)
@@ -198,7 +209,11 @@ function TeacherRecordEditor({ row, program, actor, onSaved, onError }) {
       </div>
 
       <div style={{ padding: 10, borderRadius: 8, background: '#f6f9ff', fontSize: 13 }}>
-        출석 {row.attendance?.present || 0}회 · 결석 {row.attendance?.absent || 0}회 · 미체크 {row.attendance?.unchecked || 0}회 / 전체 {row.attendance?.total || 0}회
+        {attendance === null
+          ? '출결 현황을 불러오는 중입니다.'
+          : attendance === undefined
+            ? '출결 현황을 불러오지 못했습니다.'
+            : `출석 ${attendance.present || 0}회 · 결석 ${attendance.absent || 0}회 · 미체크 ${attendance.unchecked || 0}회 / 전체 ${attendance.total || 0}회`}
       </div>
 
       {row.studentStatus !== 'submitted' ? (
@@ -279,7 +294,16 @@ export function TeacherActivityRecordPage({ user, program }) {
   const selected = filtered.find((row) => `${row.clubId}::${row.studentUid}` === selectedKey) || filtered[0] || null
 
   function onSaved(next, text) {
-    if (clubId) setRowsByClub((prev) => ({ ...prev, [clubId]: next.rows }))
+    // 저장 응답은 해당 학생의 레코드 하나만 담고 있으므로 그 행만 교체합니다.
+    const saved = next?.record
+    if (clubId && saved) {
+      setRowsByClub((prev) => ({
+        ...prev,
+        [clubId]: (prev[clubId] || []).map((row) => (
+          row.clubId === saved.clubId && row.studentUid === saved.studentUid ? { ...row, ...saved } : row
+        )),
+      }))
+    }
     setMessage(text)
     setError('')
   }
