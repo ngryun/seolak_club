@@ -4,6 +4,7 @@ import { listClubMembers } from '../../services/applicationService'
 import { isFirebaseEnabled } from '../../lib/firebase'
 import {
   getAttendanceRecord,
+  getAttendanceDatePublicUrl,
   getAttendanceRecords,
   hasAttendanceApiSession,
   openPublicAttendance,
@@ -231,7 +232,7 @@ function openBulkPrintWindow({ program, subjects }) {
   if (!popup) throw new Error('인쇄 창을 열 수 없습니다. 팝업 차단을 해제해주세요.')
   popup.opener = null
   const body = subjects.map((subject, index) => {
-    const { club, sessions } = subject
+    const { club, sessions, qrData } = subject
     const rosterMap = new Map()
     sessions.forEach(({ record }) => (record?.rosterSnapshot || []).forEach((student) => {
       if (!rosterMap.has(student.studentUid)) rosterMap.set(student.studentUid, student)
@@ -251,7 +252,7 @@ function openBulkPrintWindow({ program, subjects }) {
     }).join('')
     const teacherNames = (club.teacherNames || [club.teacherName]).filter(Boolean).join(', ') || '-'
     const qrHint = program.attendanceQrPinRequired === false ? 'QR 스캔 후 바로 출결 입력' : 'QR 스캔 후 PIN 입력'
-    const qrItems = sessions.filter(({ qrData }) => qrData).map(({ session, qrData }) => `<div class="qr-item"><img src="${qrData}" alt="${escapeHtml(sessionTitle(session))} QR"><b>${escapeHtml(sessionTitle(session))}</b><span>${qrHint}</span></div>`).join('')
+    const qrItems = qrData ? `<div class="qr-item"><img src="${qrData}" alt="전체 교시 QR"><b>전체 교시</b><span>${qrHint}</span></div>` : ''
     const sessionHeaders = sessions.map(({ session }) => `<th>${escapeHtml(sessionTitle(session))}</th>`).join('')
     return `<section class="sheet${index === subjects.length - 1 ? ' last' : ''}">
       <header><div><div class="eyebrow">ATTENDANCE SHEET</div><h1>${escapeHtml(club.clubName)} 출석부</h1><div class="subtitle">${escapeHtml(program.name)} · ${escapeHtml(withWeekday(firstDate))} · ${sessions.length}개 교시</div></div>${qrItems ? `<div class="qr-list">${qrItems}</div>` : ''}</header>
@@ -521,12 +522,15 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
             session,
             record,
             entries: toEntryMap(record),
-            qrData: record.publicEnabled && record.publicUrl
-              ? await QRCode.toDataURL(record.publicUrl, { width: 220, margin: 1 })
-              : '',
           })
         }
-        if (subjectSessions.length) subjects.push({ club: result.value.club, sessions: subjectSessions })
+        if (subjectSessions.length) {
+          const publicUrlResult = await getAttendanceDatePublicUrl({ program, club: result.value.club, date: dateKey, sessions })
+          const qrData = publicUrlResult?.publicUrl
+            ? await QRCode.toDataURL(publicUrlResult.publicUrl, { width: 220, margin: 1 })
+            : ''
+          subjects.push({ club: result.value.club, sessions: subjectSessions, qrData })
+        }
       }
       if (!subjects.length) throw new Error('불러온 출석부가 없어 인쇄할 수 없습니다.')
       openBulkPrintWindow({ program, subjects })
@@ -614,11 +618,34 @@ export function PublicAttendancePage({ token }) {
   const [pin, setPin] = useState('')
   const [record, setRecord] = useState(null)
   const [entries, setEntries] = useState({})
+  const [publicRecords, setPublicRecords] = useState([])
+  const [publicSessions, setPublicSessions] = useState([])
+  const [publicEntries, setPublicEntries] = useState({})
+  const [activePublicSessionId, setActivePublicSessionId] = useState('')
+  const [isDatePublic, setIsDatePublic] = useState(false)
   const [editToken, setEditToken] = useState('')
   const [requiresPin, setRequiresPin] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+
+  function applyPublicResult(result) {
+    const rows = Array.isArray(result?.records) ? result.records : [result?.record || result]
+    const validRows = rows.filter((row) => row?.sessionId)
+    const sessionRows = Array.isArray(result?.sessions) && result.sessions.length
+      ? result.sessions
+      : validRows.map((row) => ({ id: row.sessionId, period: 0, label: '' }))
+    const nextEntries = Object.fromEntries(validRows.map((row) => [row.sessionId, toEntryMap(row)]))
+    setRecord(validRows[0] || null)
+    setEntries(nextEntries[validRows[0]?.sessionId] || {})
+    setPublicRecords(validRows)
+    setPublicSessions(sessionRows)
+    setPublicEntries(nextEntries)
+    setIsDatePublic(Array.isArray(result?.records))
+    setActivePublicSessionId((previous) => validRows.some((row) => row.sessionId === previous) ? previous : (validRows[0]?.sessionId || ''))
+    setEditToken(result?.editToken || '')
+  }
+
   useEffect(() => {
     let mounted = true
     setLoading(true)
@@ -626,10 +653,7 @@ export function PublicAttendancePage({ token }) {
     openPublicAttendance(token)
       .then((result) => {
         if (!mounted) return
-        const next = result.record || result
-        setRecord(next)
-        setEntries(toEntryMap(next))
-        setEditToken(result.editToken || '')
+        applyPublicResult(result)
       })
       .catch((e) => {
         if (!mounted) return
@@ -645,19 +669,36 @@ export function PublicAttendancePage({ token }) {
     setLoading(true); setError('')
     try {
       const result = await unlockPublicAttendance(token, pin)
-      const next = result.record || result
-      setRecord(next); setEntries(toEntryMap(next)); setEditToken(result.editToken || ''); setPin('')
+      applyPublicResult(result); setPin('')
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
 
   async function save() {
     setLoading(true); setError('')
     try {
-      const next = await savePublicAttendance(token, editToken, entries)
-      setRecord(next); setEntries(toEntryMap(next)); setMessage('출석부를 저장했습니다.')
+      const next = await savePublicAttendance(token, editToken, isDatePublic ? publicEntries : entries)
+      applyPublicResult(next); setMessage('출석부를 저장했습니다.')
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
 
+  const activePublicRecord = publicRecords.find((row) => row.sessionId === activePublicSessionId) || publicRecords[0] || record
+  const activePublicEntries = activePublicRecord ? (publicEntries[activePublicRecord.sessionId] || entries) : entries
+  const isMultiSession = isDatePublic && publicRecords.length > 1
   const showPinForm = !record && !error && !loading && requiresPin
-  return <main style={{ minHeight: '100vh', background: '#f4f7fb', padding: 16, boxSizing: 'border-box' }}><div style={{ maxWidth: 760, margin: '0 auto', display: 'grid', gap: 12 }}><section style={card}><h1 style={{ margin: '0 0 6px', fontSize: 20 }}>QR 출석부</h1><div style={{ color: colors.sub, fontSize: 13 }}>{requiresPin ? '프로그램 PIN 확인 후 학생 명단과 출결 정보를 볼 수 있습니다.' : 'QR 링크를 확인하는 중입니다.'}</div></section>{error ? <div style={{ ...card, color: colors.danger, background: '#fff6f6' }}>{error}</div> : null}{message ? <div style={{ ...card, color: colors.ok, background: '#f2fbf5' }}>{message}</div> : null}{!record && loading ? <section style={{ ...card, color: colors.sub }}>출석부를 여는 중...</section> : null}{showPinForm ? <form onSubmit={unlock} style={{ ...card, display: 'grid', gap: 10 }}><label style={{ fontSize: 13, color: colors.sub }}>프로그램 PIN<input autoFocus type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))} style={input} /></label><button disabled={loading || pin.length < 4} style={{ ...button, background: colors.accent, color: '#fff' }}>{loading ? '확인 중...' : '출석부 열기'}</button></form> : null}{record ? <section style={card}><div style={{ marginBottom: 10, color: colors.sub }}>전체 {(record.rosterSnapshot || []).length}명</div><AttendanceRoster record={record} entries={entries} onChange={(uid, status) => setEntries((prev) => ({ ...prev, [uid]: status }))} disabled={loading} /><button onClick={save} disabled={loading} style={{ ...button, marginTop: 12, width: '100%', background: colors.accent, color: '#fff' }}>{loading ? '저장 중...' : '출석부 저장'}</button></section> : null}</div></main>
+  return <main style={{ minHeight: '100vh', background: '#f4f7fb', padding: 16, boxSizing: 'border-box' }}><div style={{ maxWidth: 760, margin: '0 auto', display: 'grid', gap: 12 }}>
+    <section style={card}><h1 style={{ margin: '0 0 6px', fontSize: 20 }}>QR 출석부</h1><div style={{ color: colors.sub, fontSize: 13 }}>{requiresPin ? '프로그램 PIN 확인 후 학생 명단과 출결 정보를 볼 수 있습니다.' : isMultiSession ? '이 과목의 여러 교시를 한 화면에서 확인할 수 있습니다.' : 'QR 링크를 확인하는 중입니다.'}</div></section>
+    {error ? <div style={{ ...card, color: colors.danger, background: '#fff6f6' }}>{error}</div> : null}
+    {message ? <div style={{ ...card, color: colors.ok, background: '#f2fbf5' }}>{message}</div> : null}
+    {!record && loading ? <section style={{ ...card, color: colors.sub }}>출석부를 여는 중...</section> : null}
+    {showPinForm ? <form onSubmit={unlock} style={{ ...card, display: 'grid', gap: 10 }}><label style={{ fontSize: 13, color: colors.sub }}>프로그램 PIN<input autoFocus type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))} style={input} /></label><button disabled={loading || pin.length < 4} style={{ ...button, background: colors.accent, color: '#fff' }}>{loading ? '확인 중...' : '출석부 열기'}</button></form> : null}
+    {record ? <section style={card}>
+      {isMultiSession ? <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>{publicSessions.filter((session) => publicRecords.some((row) => row.sessionId === session.id)).map((session) => <button key={session.id} type="button" onClick={() => setActivePublicSessionId(session.id)} style={{ ...button, minHeight: 42, background: activePublicRecord?.sessionId === session.id ? colors.accent : '#f8fafc', color: activePublicRecord?.sessionId === session.id ? '#fff' : colors.sub, border: `1px solid ${activePublicRecord?.sessionId === session.id ? colors.accent : colors.border}` }}>{sessionTitle(session)}</button>)}</div> : null}
+      <div style={{ marginBottom: 10, color: colors.sub }}>{isMultiSession ? `${sessionTitle(publicSessions.find((session) => session.id === activePublicRecord?.sessionId))} · ` : ''}전체 {(activePublicRecord?.rosterSnapshot || []).length}명</div>
+      <AttendanceRoster record={activePublicRecord} entries={activePublicEntries} onChange={(uid, status) => {
+        if (isMultiSession) setPublicEntries((prev) => ({ ...prev, [activePublicRecord.sessionId]: { ...prev[activePublicRecord.sessionId], [uid]: status } }))
+        else setEntries((prev) => ({ ...prev, [uid]: status }))
+      }} disabled={loading} />
+      <button onClick={save} disabled={loading} style={{ ...button, marginTop: 12, width: '100%', background: colors.accent, color: '#fff' }}>{loading ? '저장 중...' : '출석부 저장'}</button>
+    </section> : null}
+  </div></main>
 }

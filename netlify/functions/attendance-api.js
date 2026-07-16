@@ -183,6 +183,38 @@ export default async (req) => {
     if (!programSnap.exists || program.features?.attendance !== true) return json({ error: '출석부 기능이 활성화되지 않은 프로그램입니다.' }, 400)
     const sessionConfig = (program.attendanceSchedule || []).find((row) => String(row.id) === sessionId)
     const origin = new URL(req.url).origin
+    if (action === 'get-date-public') {
+      const date = String(body.date || '').trim()
+      const requestedIds = new Set((Array.isArray(body.sessionIds) ? body.sessionIds : [])
+        .map((id) => String(id || '').trim()).filter(Boolean))
+      const accessSnap = await db().doc(`_attendanceAccess/${body.programId}`).get()
+      const accessData = accessSnap.data() || {}
+      if (accessData.enabled !== true) return json({ error: '프로그램 QR이 활성화되어 있지 않습니다.' }, 409)
+      const sessionConfigs = (program.attendanceSchedule || []).filter((row) => row?.active !== false
+        && row?.id && String(row.date || '') === date
+        && (!requestedIds.size || requestedIds.has(String(row.id))))
+      if (!date || !sessionConfigs.length) return json({ error: '해당 날짜의 출석 회차가 없습니다.' }, 400)
+      const records = await Promise.all(sessionConfigs.map((row) => readRecord(
+        clubId, String(row.id), true, String(body.programId || ''), origin, null, program, accessData,
+      )))
+      const usable = records
+        .map((record, index) => ({ record, config: sessionConfigs[index] }))
+        .filter(({ record }) => record.status !== 'closed' && record.publicEnabled)
+      if (!usable.length) return json({ error: '사용할 수 있는 출석 회차가 없습니다.' }, 409)
+      const sessionRows = usable.map(({ config }) => ({
+        id: String(config.id), date: String(config.date || ''), period: Number(config.period) || 0, label: String(config.label || ''),
+      }))
+      const version = Math.max(1, ...usable.map(({ record }) => Number(record.tokenVersion) || 1))
+      const token = createPublicToken({
+        scheduleId: clubId,
+        sessionIds: sessionRows.map((row) => row.id),
+        sessions: sessionRows,
+        programId: String(body.programId || ''),
+        date,
+        version,
+      })
+      return json({ publicUrl: `${origin}/attendance/public/${token}`, sessions: sessionRows })
+    }
     if (action === 'get-batch') {
       const sessionIds = Array.from(new Set((Array.isArray(body.sessionIds) ? body.sessionIds : [])
         .map((id) => String(id || '').trim()).filter(Boolean)))

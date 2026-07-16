@@ -130,6 +130,30 @@ export async function getAttendanceRecords({ program, club, sessions = [], roste
   return Promise.all(targetSessions.map((session) => getAttendanceRecord({ program, club, session, roster })))
 }
 
+export async function getAttendanceDatePublicUrl({ program, club, date, sessions = [] }) {
+  const targetSessions = Array.isArray(sessions) ? sessions.filter((session) => session?.id) : []
+  if (!targetSessions.length) return { publicUrl: '' }
+  if (isFirebaseEnabled()) {
+    return api('attendance-api', 'get-date-public', {
+      programId: program.id,
+      clubId: club.id,
+      date,
+      sessionIds: targetSessions.map((session) => session.id),
+    })
+  }
+  const store = readStore()
+  if (store.programQrSettings?.[program.id]?.enabled !== true) return { publicUrl: '' }
+  const token = makeDemoToken({
+    c: club.id,
+    p: program.id,
+    d: date,
+    v: 1,
+    s: targetSessions.map((session) => session.id),
+    sessions: targetSessions.map((session) => ({ id: session.id, date: session.date, period: session.period, label: session.label || '' })),
+  })
+  return { publicUrl: `${window.location.origin}/attendance/public/${token}` }
+}
+
 export async function saveAttendanceRecord({ program, club, session, entries, actor }) {
   if (isFirebaseEnabled()) {
     return api('attendance-api', 'save', {
@@ -240,6 +264,17 @@ function readDemoToken(token) {
   } catch { throw new Error('유효하지 않은 QR 링크입니다.') }
 }
 
+function getDemoPublicRecords(store, payload) {
+  const sessionIds = Array.isArray(payload.s) ? payload.s : [payload.s]
+  const rows = sessionIds.map((sessionId) => {
+    const record = normalizeRecord(store.records?.[recordKey(payload.c, sessionId)])
+    if (!record.clubId || !record.publicEnabled || record.tokenVersion !== payload.v || record.status === 'closed') return null
+    return record
+  }).filter(Boolean)
+  if (!rows.length) throw new Error('중지되었거나 종료된 출석 링크입니다.')
+  return rows
+}
+
 export async function configurePublicAttendance({ program, club, session, enabled, rotate = false }) {
   if (isFirebaseEnabled()) {
     return api('attendance-api', 'configure-public', {
@@ -289,31 +324,26 @@ export async function unlockPublicAttendance(token, pin) {
   if (isFirebaseEnabled()) return api('attendance-public', 'unlock', { token, pin })
   const payload = readDemoToken(token)
   const store = readStore()
-  const current = normalizeRecord(store.records?.[recordKey(payload.c, payload.s)])
-  if (!current.clubId || !current.publicEnabled || current.tokenVersion !== payload.v || current.status === 'closed') {
-    throw new Error('중지되었거나 종료된 출석 링크입니다.')
-  }
+  const rows = getDemoPublicRecords(store, payload)
   if (store.programQrSettings?.[payload.p]?.pinRequired !== false
     && (!store.programPins?.[payload.p] || store.programPins[payload.p] !== String(pin))) {
     throw new Error('PIN이 올바르지 않습니다.')
   }
-  return { record: current, editToken: store.programQrSettings?.[payload.p]?.pinRequired === false ? 'no-pin' : pin }
+  const editToken = store.programQrSettings?.[payload.p]?.pinRequired === false ? 'no-pin' : pin
+  return Array.isArray(payload.s) ? { records: rows, sessions: payload.sessions || [], editToken } : { record: rows[0], editToken }
 }
 
 export async function openPublicAttendance(token) {
   if (isFirebaseEnabled()) return api('attendance-public', 'open', { token })
   const payload = readDemoToken(token)
   const store = readStore()
-  const current = normalizeRecord(store.records?.[recordKey(payload.c, payload.s)])
+  const rows = getDemoPublicRecords(store, payload)
   if (store.programQrSettings?.[payload.p]?.pinRequired !== false) {
     const error = new Error('프로그램 PIN이 필요합니다.')
     error.requiresPin = true
     throw error
   }
-  if (!current.clubId || !current.publicEnabled || current.tokenVersion !== payload.v || current.status === 'closed') {
-    throw new Error('중지되었거나 종료된 출석 링크입니다.')
-  }
-  return { record: current, editToken: 'no-pin' }
+  return Array.isArray(payload.s) ? { records: rows, sessions: payload.sessions || [], editToken: 'no-pin' } : { record: rows[0], editToken: 'no-pin' }
 }
 
 export async function savePublicAttendance(token, editToken, entries) {
@@ -321,20 +351,20 @@ export async function savePublicAttendance(token, editToken, entries) {
   const payload = readDemoToken(token)
   const store = readStore()
   if (store.programQrSettings?.[payload.p]?.pinRequired !== false && store.programPins?.[payload.p] !== String(editToken)) throw new Error('PIN 인증이 만료되었습니다.')
-  const key = recordKey(payload.c, payload.s)
-  const current = normalizeRecord(store.records?.[key])
-  if (!current.publicEnabled || current.tokenVersion !== payload.v || current.status === 'closed') {
-    throw new Error('중지되었거나 종료된 출석 링크입니다.')
-  }
-  for (const student of current.rosterSnapshot) {
-    const status = entries?.[student.studentUid]
-    if (!['present', 'absent', 'unchecked'].includes(status)) continue
-    current.entries[student.studentUid] = { status, updatedAt: new Date().toISOString(), updatedBy: 'public-qr' }
-  }
-  current.updatedAt = new Date().toISOString()
-  store.records[key] = current
+  const rows = getDemoPublicRecords(store, payload)
+  rows.forEach((current) => {
+    const key = recordKey(payload.c, current.sessionId)
+    const values = Array.isArray(payload.s) ? (entries?.[current.sessionId] || {}) : entries
+    for (const student of current.rosterSnapshot) {
+      const status = values?.[student.studentUid]
+      if (!['present', 'absent', 'unchecked'].includes(status)) continue
+      current.entries[student.studentUid] = { status, updatedAt: new Date().toISOString(), updatedBy: 'public-qr' }
+    }
+    current.updatedAt = new Date().toISOString()
+    store.records[key] = current
+  })
   writeStore(store)
-  return current
+  return Array.isArray(payload.s) ? { records: rows, sessions: payload.sessions || [] } : rows[0]
 }
 
 export async function exportAttendanceData() {
