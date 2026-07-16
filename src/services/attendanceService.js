@@ -48,14 +48,19 @@ function normalizeRecord(record, fallback = {}) {
 
 async function api(endpoint, action, payload = {}, options = {}) {
   const token = options.publicToken || sessionStorage.getItem(API_TOKEN_KEY) || ''
-  const response = await fetch(`/.netlify/functions/${endpoint}`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({ action, ...payload }),
-  })
+  let response
+  try {
+    response = await fetch(`/.netlify/functions/${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ action, ...payload }),
+    })
+  } catch (error) {
+    throw new Error(`출석부 서버에 연결하지 못했습니다. ${error?.message || 'Netlify 함수를 확인해주세요.'}`)
+  }
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
     const error = new Error(data?.error || '출석부 서버 요청에 실패했습니다.')

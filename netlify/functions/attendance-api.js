@@ -39,13 +39,15 @@ async function loadClubRoster(clubId, program = {}) {
     })))
 }
 
-async function readRecord(clubId, sessionId, create = true, programId = '', origin = '', fallbackRoster = null, program = {}) {
+async function readRecord(clubId, sessionId, create = true, programId = '', origin = '', fallbackRoster = null, program = {}, accessData = null) {
   const { session, entries } = refs(clubId, sessionId)
   let sessionSnap = await session.get()
   if (!sessionSnap.exists && create) {
     const rosterSnapshot = fallbackRoster || await loadClubRoster(clubId, program)
-    const accessSnap = programId ? await db().doc(`_attendanceAccess/${programId}`).get() : null
-    const publicEnabled = accessSnap?.data()?.enabled === true
+    const access = programId
+      ? (accessData || (await db().doc(`_attendanceAccess/${programId}`).get()).data())
+      : null
+    const publicEnabled = access?.enabled === true
     const tokenVersion = 1
     const publicUrl = publicEnabled && origin
       ? `${origin}/attendance/public/${createPublicToken({ scheduleId: clubId, sessionId, programId, version: tokenVersion })}`
@@ -74,8 +76,8 @@ async function readRecord(clubId, sessionId, create = true, programId = '', orig
   // 프로그램 단위 설정을 기준으로 기존·지연 생성 회차의 QR 상태도 동기화합니다.
   // 일괄 처리 중 일부 회차가 새로 만들어지거나 재시도되는 경우에도 상태가 어긋나지 않습니다.
   if (programId) {
-    const accessSnap = await db().doc(`_attendanceAccess/${programId}`).get()
-    const shouldEnable = accessSnap.data()?.enabled === true && data.status !== 'closed'
+    const access = accessData || (await db().doc(`_attendanceAccess/${programId}`).get()).data()
+    const shouldEnable = access?.enabled === true && data.status !== 'closed'
     const tokenVersion = Math.max(1, Number(data.tokenVersion) || 1)
     const expectedUrl = shouldEnable && origin
       ? `${origin}/attendance/public/${createPublicToken({ scheduleId: clubId, sessionId, programId, version: tokenVersion })}`
@@ -139,29 +141,33 @@ export default async (req) => {
         return clubProgramId === programId
       })
       const sessions = (program.attendanceSchedule || []).filter((row) => row?.active !== false && row?.id)
-      let updatedCount = 0
-      let closedCount = 0
-      for (const club of clubs) {
-        for (const sessionConfig of sessions) {
-          const record = await readRecord(club.id, String(sessionConfig.id), true, programId, origin, null, program)
-          if (record.status === 'closed') { closedCount += 1; continue }
-          const version = (Number(record.tokenVersion) || 1) + (body.rotate === true ? 1 : 0)
-          const enabled = body.enabled === true
-          const publicUrl = enabled
-            ? `${origin}/attendance/public/${createPublicToken({ scheduleId: club.id, sessionId: String(sessionConfig.id), programId, version })}`
-            : ''
-          await refs(club.id, String(sessionConfig.id)).session.set({
-            programId,
-            publicEnabled: enabled,
-            tokenVersion: version,
-            publicUrl,
-            updatedAt: timestamp(),
-            updatedBy: actor.uid,
-          }, { merge: true })
-          updatedCount += 1
-        }
-      }
-      return json({ ok: true, enabled: body.enabled === true, updatedCount, closedCount })
+      const accessData = { ...(accessSnap.data() || {}), enabled: body.enabled === true, pinRequired }
+      const rosterRows = await Promise.all(clubs.map(async (club) => [club.id, await loadClubRoster(club.id, program)]))
+      const rosterByClub = new Map(rosterRows)
+      const jobs = clubs.flatMap((club) => sessions.map(async (sessionConfig) => {
+        const sessionId = String(sessionConfig.id)
+        const record = await readRecord(club.id, sessionId, true, programId, origin, rosterByClub.get(club.id) || [], program, accessData)
+        if (record.status === 'closed') return { status: 'closed' }
+        const version = (Number(record.tokenVersion) || 1) + (body.rotate === true ? 1 : 0)
+        const enabled = body.enabled === true
+        const publicUrl = enabled
+          ? `${origin}/attendance/public/${createPublicToken({ scheduleId: club.id, sessionId, programId, version })}`
+          : ''
+        await refs(club.id, sessionId).session.set({
+          programId,
+          publicEnabled: enabled,
+          tokenVersion: version,
+          publicUrl,
+          updatedAt: timestamp(),
+          updatedBy: actor.uid,
+        }, { merge: true })
+        return { status: 'updated' }
+      }))
+      const results = await Promise.allSettled(jobs)
+      const updatedCount = results.filter((result) => result.status === 'fulfilled' && result.value.status === 'updated').length
+      const closedCount = results.filter((result) => result.status === 'fulfilled' && result.value.status === 'closed').length
+      const failedCount = results.filter((result) => result.status === 'rejected').length
+      return json({ ok: true, enabled: body.enabled === true, updatedCount, closedCount, failedCount })
     }
     if (action === 'export') {
       const userSnap = await db().doc(`users/${actor.uid}`).get(); const user = userSnap.data()

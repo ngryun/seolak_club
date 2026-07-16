@@ -9129,9 +9129,10 @@ export default function PrototypeApp({ studentOnly = false }) {
       const action = options.enabled ? (options.rotate ? "재발급" : "활성화") : "중지";
       const updated = Number(result?.updatedCount) || 0;
       const closed = Number(result?.closedCount) || 0;
+      const failed = Number(result?.failedCount) || 0;
       setMessage({
-        type: "ok",
-        text: `프로그램 QR을 전체 ${action}했습니다. (적용 ${updated}개 회차${closed ? ` · 종료 회차 ${closed}개 제외` : ""})`,
+        type: failed ? "warn" : "ok",
+        text: `프로그램 QR을 전체 ${action}했습니다. (적용 ${updated}개 회차${closed ? ` · 종료 회차 ${closed}개 제외` : ""}${failed ? ` · 실패 ${failed}개` : ""})`,
       });
       await refreshPrograms({ forceRefresh: true });
       return result || { ok: true };

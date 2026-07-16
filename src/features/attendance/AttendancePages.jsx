@@ -226,30 +226,43 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char])
 }
 
-function openBulkPrintWindow({ program, sheets }) {
+function openBulkPrintWindow({ program, subjects }) {
   const popup = window.open('', '_blank')
   if (!popup) throw new Error('인쇄 창을 열 수 없습니다. 팝업 차단을 해제해주세요.')
   popup.opener = null
-  const body = sheets.map((sheet, index) => {
-    const { club, session, record, entries, qrData } = sheet
-    const roster = (record?.rosterSnapshot || []).map((student, rowIndex) => ({ ...student, printIndex: rowIndex + 1 }))
-    const counts = Object.values(entries || {}).reduce((result, status) => ({ ...result, [status]: (result[status] || 0) + 1 }), { present: 0, absent: 0, unchecked: 0 })
+  const body = subjects.map((subject, index) => {
+    const { club, sessions } = subject
+    const rosterMap = new Map()
+    sessions.forEach(({ record }) => (record?.rosterSnapshot || []).forEach((student) => {
+      if (!rosterMap.has(student.studentUid)) rosterMap.set(student.studentUid, student)
+    }))
+    const roster = [...rosterMap.values()].sort((a, b) => a.studentNo.localeCompare(b.studentNo, 'ko', { numeric: true }) || a.name.localeCompare(b.name, 'ko')).map((student, rowIndex) => ({ ...student, printIndex: rowIndex + 1 }))
+    const firstDate = sessions[0]?.session?.date || ''
+    const sessionCounts = sessions.map(({ session, entries }) => {
+      const counts = Object.values(entries || {}).reduce((result, status) => ({ ...result, [status]: (result[status] || 0) + 1 }), { present: 0, absent: 0, unchecked: 0 })
+      return `${sessionTitle(session)} 출석 ${counts.present || 0} · 결석 ${counts.absent || 0} · 미체크 ${counts.unchecked || 0}`
+    })
     const rows = roster.map((student) => {
-      const status = entries?.[student.studentUid] || 'unchecked'
-      return `<tr><td>${student.printIndex}</td><td>${escapeHtml(student.studentNo || '-')}</td><td class="name">${escapeHtml(student.name || '-')}</td><td class="${status}">${escapeHtml(statusLabel(status))}</td></tr>`
+      const statusCells = sessions.map(({ entries }) => {
+        const status = entries?.[student.studentUid]
+        return status ? `<td class="${status}">${escapeHtml(statusLabel(status))}</td>` : '<td class="missing">—</td>'
+      }).join('')
+      return `<tr><td>${student.printIndex}</td><td>${escapeHtml(student.studentNo || '-')}</td><td class="name">${escapeHtml(student.name || '-')}</td>${statusCells}</tr>`
     }).join('')
     const teacherNames = (club.teacherNames || [club.teacherName]).filter(Boolean).join(', ') || '-'
     const qrHint = program.attendanceQrPinRequired === false ? 'QR 스캔 후 바로 출결 입력' : 'QR 스캔 후 PIN 입력'
-    return `<section class="sheet${index === sheets.length - 1 ? ' last' : ''}">
-      <header><div><div class="eyebrow">ATTENDANCE SHEET</div><h1>${escapeHtml(club.clubName)} 출석부</h1><div class="subtitle">${escapeHtml(program.name)} · ${escapeHtml(withWeekday(session.date))} · ${escapeHtml(sessionTitle(session))}</div></div>${qrData ? `<div class="qr"><img src="${qrData}" alt="QR 코드"><div>${qrHint}</div></div>` : ''}</header>
-      <div class="info"><span><b>수업 · 담당교사</b>${escapeHtml(club.clubName)} · ${escapeHtml(teacherNames)}</span><span><b>전체</b>${roster.length}명</span><span><b>출석 · 결석 · 미체크</b>${counts.present || 0} · ${counts.absent || 0} · ${counts.unchecked || 0}</span></div>
-      <table><thead><tr><th>순</th><th>학번</th><th>이름</th><th>출결</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="empty">표시할 학생이 없습니다.</td></tr>'}</tbody></table>
+    const qrItems = sessions.filter(({ qrData }) => qrData).map(({ session, qrData }) => `<div class="qr-item"><img src="${qrData}" alt="${escapeHtml(sessionTitle(session))} QR"><b>${escapeHtml(sessionTitle(session))}</b><span>${qrHint}</span></div>`).join('')
+    const sessionHeaders = sessions.map(({ session }) => `<th>${escapeHtml(sessionTitle(session))}</th>`).join('')
+    return `<section class="sheet${index === subjects.length - 1 ? ' last' : ''}">
+      <header><div><div class="eyebrow">ATTENDANCE SHEET</div><h1>${escapeHtml(club.clubName)} 출석부</h1><div class="subtitle">${escapeHtml(program.name)} · ${escapeHtml(withWeekday(firstDate))} · ${sessions.length}개 교시</div></div>${qrItems ? `<div class="qr-list">${qrItems}</div>` : ''}</header>
+      <div class="info"><span><b>수업 · 담당교사</b>${escapeHtml(club.clubName)} · ${escapeHtml(teacherNames)}</span><span><b>활동장소</b>${escapeHtml(club.room || club.activityPlace || club.location || '-')}</span><span><b>전체</b>${roster.length}명</span><span><b>교시별 현황</b>${sessionCounts.map(escapeHtml).join('<br>')}</span></div>
+      <table><thead><tr><th>순</th><th>학번</th><th>이름</th>${sessionHeaders}</tr></thead><tbody>${rows || `<tr><td colspan="${3 + sessions.length}" class="empty">표시할 학생이 없습니다.</td></tr>`}</tbody></table>
       <footer><span>담당교사 확인: ____________________</span><span>${escapeHtml(program.name)} · ${escapeHtml(club.clubName)}</span></footer>
     </section>`
   }).join('')
   popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(program.name)} · 전체 과목 출석부</title><style>
-    @page{size:A4 portrait;margin:10mm}*{box-sizing:border-box}html,body{margin:0;padding:0;color:#172033;background:#fff;font-family:"Pretendard","Apple SD Gothic Neo",Arial,sans-serif}.sheet{min-height:277mm;page-break-after:always;padding:0 0 4mm}.sheet.last{page-break-after:auto}header{display:grid;grid-template-columns:1fr auto;gap:8mm;align-items:start;padding-bottom:4mm;border-bottom:2.5px solid #1769e0}.eyebrow{margin-bottom:1.5mm;color:#1769e0;font-size:9pt;font-weight:800;letter-spacing:.08em}h1{margin:0;font-size:20pt;line-height:1.15;letter-spacing:-.04em}.subtitle{margin-top:2mm;color:#475569;font-size:10pt}.qr{width:31mm;text-align:center;color:#64748b;font-size:7.5pt;line-height:1.25}.qr img{display:block;width:26mm;height:26mm;margin:0 auto 1mm}.info{display:grid;grid-template-columns:1.4fr .6fr 1fr;gap:2mm;margin:4mm 0}.info span{display:block;min-height:14mm;padding:2.5mm 3mm;border:1px solid #dce3ec;border-radius:2mm;background:#f8fafc;font-size:10pt;font-weight:800}.info b{display:block;margin-bottom:1mm;color:#64748b;font-size:7.5pt}.info span:nth-child(2),.info span:nth-child(3){white-space:nowrap}table{width:100%;border-collapse:collapse;table-layout:fixed;border:1px solid #94a3b8;font-size:10pt}th{height:9mm;padding:1.5mm;background:#eaf2ff;color:#23436f;border:1px solid #94a3b8;text-align:center;font-size:9pt}td{height:7mm;padding:1.2mm 2mm;border:1px solid #cbd5e1;text-align:center}td.name{text-align:left;font-weight:700}td.present{color:#157f3d;background:#f0faf3;font-weight:800}td.absent{color:#b42318;background:#fff4f4;font-weight:800}td.unchecked{color:#64748b}.empty{height:24mm;color:#64748b}footer{display:flex;justify-content:space-between;gap:4mm;margin-top:4mm;padding-top:2mm;border-top:1px solid #dce3ec;color:#64748b;font-size:8pt}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-  </style></head><body>${body}<button class="toolbar" onclick="window.print()">인쇄하기</button><style>.toolbar{position:fixed;right:18px;bottom:18px;padding:10px 18px;border:0;border-radius:9px;background:#1769e0;color:#fff;font-weight:800;box-shadow:0 8px 24px rgba(23,105,224,.25);cursor:pointer}@media print{.toolbar{display:none}}</style></body></html>`)
+    @page{size:A4 portrait;margin:10mm}*{box-sizing:border-box}html,body{margin:0;padding:0;color:#172033;background:#fff;font-family:"Pretendard","Apple SD Gothic Neo",Arial,sans-serif}.sheet{min-height:277mm;page-break-after:always;padding:0 0 4mm}.sheet.last{page-break-after:auto}header{display:grid;grid-template-columns:1fr auto;gap:5mm;align-items:start;padding-bottom:3mm;border-bottom:2.5px solid #1769e0}.eyebrow{margin-bottom:1.5mm;color:#1769e0;font-size:9pt;font-weight:800;letter-spacing:.08em}h1{margin:0;font-size:20pt;line-height:1.15;letter-spacing:-.04em}.subtitle{margin-top:2mm;color:#475569;font-size:10pt}.qr-list{display:flex;gap:2mm;justify-content:flex-end;flex-wrap:wrap;max-width:82mm}.qr-item{width:22mm;text-align:center;color:#64748b;font-size:6.5pt;line-height:1.15}.qr-item img{display:block;width:18mm;height:18mm;margin:0 auto 1mm}.qr-item b,.qr-item span{display:block}.info{display:grid;grid-template-columns:1.35fr .7fr .5fr 1.65fr;gap:2mm;margin:3mm 0}.info span{display:block;min-height:14mm;padding:2.2mm 2.5mm;border:1px solid #dce3ec;border-radius:2mm;background:#f8fafc;font-size:9pt;font-weight:800}.info b{display:block;margin-bottom:1mm;color:#64748b;font-size:7.5pt}.info span:nth-child(2),.info span:nth-child(3){white-space:nowrap}table{width:100%;border-collapse:collapse;table-layout:fixed;border:1px solid #94a3b8;font-size:8.5pt}th{height:8mm;padding:1.2mm;background:#eaf2ff;color:#23436f;border:1px solid #94a3b8;text-align:center;font-size:8pt}td{height:5.8mm;padding:.9mm 1.2mm;border:1px solid #cbd5e1;text-align:center}td.name{text-align:left;font-weight:700}td.present{color:#157f3d;background:#f0faf3;font-weight:800}td.absent{color:#b42318;background:#fff4f4;font-weight:800}td.unchecked{color:#64748b}td.missing{color:#b6c0cf}.empty{height:24mm;color:#64748b}footer{display:flex;justify-content:space-between;gap:4mm;margin-top:3mm;padding-top:2mm;border-top:1px solid #dce3ec;color:#64748b;font-size:8pt}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+    </style></head><body>${body}<button class="toolbar" onclick="window.print()">인쇄하기</button><style>.toolbar{position:fixed;right:18px;bottom:18px;padding:10px 18px;border:0;border-radius:9px;background:#1769e0;color:#fff;font-weight:800;box-shadow:0 8px 24px rgba(23,105,224,.25);cursor:pointer}@media print{.toolbar{display:none}}</style></body></html>`)
   popup.document.close(); popup.focus(); setTimeout(() => popup.print(), 350)
 }
 
@@ -495,16 +508,16 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
         const records = await getAttendanceRecords({ program, club: targetClub, sessions, roster })
         return { club: targetClub, records }
       }))
-      const sheets = []
+      const subjects = []
       const failedCount = results.filter((result) => result.status === 'rejected').length
       for (const result of results) {
         if (result.status !== 'fulfilled') continue
         const recordMap = new Map(result.value.records.map((record) => [record.sessionId, record]))
+        const subjectSessions = []
         for (const session of sessions) {
           const record = recordMap.get(session.id)
           if (!record) continue
-          sheets.push({
-            club: result.value.club,
+          subjectSessions.push({
             session,
             record,
             entries: toEntryMap(record),
@@ -513,10 +526,11 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
               : '',
           })
         }
+        if (subjectSessions.length) subjects.push({ club: result.value.club, sessions: subjectSessions })
       }
-      if (!sheets.length) throw new Error('불러온 출석부가 없어 인쇄할 수 없습니다.')
-      openBulkPrintWindow({ program, sheets })
-      onMessage?.(failedCount ? 'warn' : 'ok', `${sheets.length}개 출석부를 한 번에 인쇄할 준비를 했습니다.${failedCount ? ` 불러오지 못한 과목 ${failedCount}개는 제외되었습니다.` : ''}`)
+      if (!subjects.length) throw new Error('불러온 출석부가 없어 인쇄할 수 없습니다.')
+      openBulkPrintWindow({ program, subjects })
+      onMessage?.(failedCount ? 'warn' : 'ok', `${subjects.length}개 과목 출석부를 한 번에 인쇄할 준비를 했습니다. 교시별 출결은 과목별 한 페이지에 표시됩니다.${failedCount ? ` 불러오지 못한 과목 ${failedCount}개는 제외되었습니다.` : ''}`)
     } catch (error) {
       onMessage?.('error', error.message)
     } finally {
