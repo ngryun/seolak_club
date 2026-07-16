@@ -6,8 +6,6 @@ import { getClubTeacherUids, listSchedules } from './scheduleService'
 const STORE_KEY = 'app.activity-records.demo.v1'
 const API_TOKEN_KEY = 'app.attendance.api-token.v1'
 const COMMON_LIMITS = { activity: 200, contribution: 200, learning: 250, change: 250, followUp: 200 }
-const MAX_ATTACHMENT_BYTES = 750 * 1024
-const ALLOWED_ATTACHMENT_EXTENSIONS = new Set(['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'webp'])
 
 function readStore() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}') } catch { return {} }
@@ -80,7 +78,6 @@ function emptyRecord(program, club, member) {
     commonAnswers: Object.fromEntries(Object.keys(COMMON_LIMITS).map((key) => [key, ''])),
     additionalAnswers: {},
     questionSnapshot: [],
-    attachments: [],
     studentStatus: 'unsubmitted',
     teacherStatus: '',
     observationNote: '',
@@ -128,10 +125,6 @@ function validateAnswers(program, commonAnswers, additionalAnswers, submitting) 
   return { common, additional, questions }
 }
 
-function toPublicAttachment(row) {
-  return { id: row.id, name: row.name, type: row.type, size: row.size, uploadedAt: row.uploadedAt }
-}
-
 export async function getStudentActivityRecord({ program, user }) {
   if (isFirebaseEnabled()) return api('student-get', { programId: program.id })
   const context = await findLocalStudentContext(program, user)
@@ -144,7 +137,7 @@ export async function getStudentActivityRecord({ program, user }) {
     window: getWindowState(program),
     questions: activeQuestions(program),
     club: { id: context.club.id, clubName: context.club.clubName },
-    record: { ...record, attachments: (record.attachments || []).map(toPublicAttachment) },
+    record,
   }
 }
 
@@ -176,74 +169,6 @@ export async function saveStudentActivityRecord({ program, user, commonAnswers, 
   store.records = { ...(store.records || {}), [key]: next }
   writeStore(store)
   return getStudentActivityRecord({ program, user })
-}
-
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '')
-    reader.onerror = () => reject(new Error('첨부파일을 읽지 못했습니다.'))
-    reader.readAsDataURL(file)
-  })
-}
-
-export async function uploadStudentActivityAttachment({ program, user, file }) {
-  if (!file) throw new Error('첨부할 파일을 선택해주세요.')
-  if (file.size > MAX_ATTACHMENT_BYTES) throw new Error('첨부파일은 개당 750KB 이하여야 합니다.')
-  const extension = String(file.name || '').split('.').pop()?.toLowerCase() || ''
-  if (!ALLOWED_ATTACHMENT_EXTENSIONS.has(extension)) throw new Error('PDF, 문서, 발표자료, 엑셀 또는 이미지 파일만 첨부할 수 있습니다.')
-  const base64 = await fileToBase64(file)
-  if (isFirebaseEnabled()) {
-    return api('upload-attachment', { programId: program.id, fileName: file.name, fileType: file.type, base64 })
-  }
-  assertWindowOpen(program)
-  const context = await findLocalStudentContext(program, user)
-  if (!context) throw new Error('이 프로그램의 확정 참여 명단에서 학생을 찾을 수 없습니다.')
-  const store = readStore()
-  const key = getRecordKey(program, context.club.id, user.uid)
-  const existing = store.records?.[key] || emptyRecord(program, context.club, context.member)
-  if ((existing.attachments || []).length >= 3) throw new Error('첨부파일은 최대 3개까지 등록할 수 있습니다.')
-  const now = new Date().toISOString()
-  const attachment = { id: `demo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: file.name, type: file.type, size: file.size, uploadedAt: now, base64 }
-  const next = { ...existing, attachments: [...(existing.attachments || []), attachment], studentStatus: 'draft', studentUpdatedAt: now, updatedAt: now }
-  store.records = { ...(store.records || {}), [key]: next }
-  writeStore(store)
-  return getStudentActivityRecord({ program, user })
-}
-
-export async function removeStudentActivityAttachment({ program, user, attachmentId }) {
-  if (isFirebaseEnabled()) return api('remove-attachment', { programId: program.id, attachmentId })
-  assertWindowOpen(program)
-  const context = await findLocalStudentContext(program, user)
-  if (!context) throw new Error('학생 활동 기록을 찾을 수 없습니다.')
-  const store = readStore()
-  const key = getRecordKey(program, context.club.id, user.uid)
-  const existing = store.records?.[key] || emptyRecord(program, context.club, context.member)
-  const now = new Date().toISOString()
-  store.records = { ...(store.records || {}), [key]: { ...existing, attachments: (existing.attachments || []).filter((row) => row.id !== attachmentId), studentStatus: 'draft', studentUpdatedAt: now, updatedAt: now } }
-  writeStore(store)
-  return getStudentActivityRecord({ program, user })
-}
-
-export async function downloadActivityAttachment({ program, actor, clubId, studentUid, attachment }) {
-  let payload
-  if (isFirebaseEnabled()) {
-    payload = await api('download-attachment', { programId: program.id, clubId, studentUid, attachmentId: attachment.id })
-  } else {
-    const store = readStore()
-    const key = getRecordKey(program, clubId, studentUid)
-    const target = (store.records?.[key]?.attachments || []).find((row) => row.id === attachment.id)
-    if (!target) throw new Error('첨부파일을 찾을 수 없습니다.')
-    payload = { name: target.name, type: target.type, base64: target.base64 }
-  }
-  const bytes = Uint8Array.from(atob(payload.base64), (char) => char.charCodeAt(0))
-  const url = URL.createObjectURL(new Blob([bytes], { type: payload.type || 'application/octet-stream' }))
-  const link = document.createElement('a')
-  link.href = url
-  link.download = payload.name || attachment.name || 'attachment'
-  link.click()
-  URL.revokeObjectURL(url)
-  return { ok: true, actorUid: actor?.uid || '' }
 }
 
 function localAttendanceSummary(attendanceRecords, program, clubId, studentUid) {
@@ -283,11 +208,10 @@ export async function listTeacherActivityRecords({ program, actor, clubId = '', 
       const record = store.records?.[key] || emptyRecord(program, club, member)
       const submittedRecord = record.studentStatus === 'submitted'
         ? record
-        : { ...record, commonAnswers: Object.fromEntries(Object.keys(COMMON_LIMITS).map((key) => [key, ''])), additionalAnswers: {}, questionSnapshot: [], attachments: [] }
+        : { ...record, commonAnswers: Object.fromEntries(Object.keys(COMMON_LIMITS).map((key) => [key, ''])), additionalAnswers: {}, questionSnapshot: [] }
       const application = applications.find((row) => row.clubId === club.id && row.studentUid === member.studentUid) || {}
       rows.push({
         ...submittedRecord,
-        attachments: (submittedRecord.attachments || []).map(toPublicAttachment),
         clubName: club.clubName,
         application: { careerGoal: application.careerGoal || '', applyReason: application.applyReason || '', wantedActivity: application.wantedActivity || '' },
         attendance: localAttendanceSummary(attendanceData.records, program, club.id, member.studentUid),
@@ -316,6 +240,6 @@ export async function saveTeacherActivityRecord({ program, actor, clubId, studen
 
 export async function exportActivityRecordData() {
   if (isFirebaseEnabled()) return api('export')
-  const records = Object.values(readStore().records || {}).map((row) => ({ ...row, attachments: (row.attachments || []).map(toPublicAttachment) }))
+  const records = Object.values(readStore().records || {})
   return { records }
 }

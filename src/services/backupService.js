@@ -199,7 +199,6 @@ export async function exportFullBackup() {
       record.commonAnswers?.change || '',
       record.commonAnswers?.followUp || '',
       additional,
-      (record.attachments || []).map((row) => row.name).join(', '),
       record.observationNote || '',
       record.studentRecordText || '',
       record.teacherStatus || '',
@@ -208,7 +207,7 @@ export async function exportFullBackup() {
       record.cycleId || '',
     ]
   })
-  const activityRecordHeaders = ['프로그램', '수업', '학번', '학생명', '학생상태', '활동내용', '역할과기여', '배운점', '느낀점과변화', '후속활동', '추가답변', '첨부파일', '교사관찰메모', '생활기록부작성내용', '교사상태', '학생제출일시', '교사수정일시', '사이클ID']
+  const activityRecordHeaders = ['프로그램', '수업', '학번', '학생명', '학생상태', '활동내용', '역할과기여', '배운점', '느낀점과변화', '후속활동', '추가답변', '교사관찰메모', '생활기록부작성내용', '교사상태', '학생제출일시', '교사수정일시', '사이클ID']
 
   // 워크북 생성
   const wb = XLSX.utils.book_new()

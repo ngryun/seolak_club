@@ -1,12 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  downloadActivityAttachment,
   getStudentActivityRecord,
   listTeacherActivityRecords,
-  removeStudentActivityAttachment,
   saveStudentActivityRecord,
   saveTeacherActivityRecord,
-  uploadStudentActivityAttachment,
 } from '../../services/activityRecordService'
 
 const color = {
@@ -32,11 +29,6 @@ function formatTime(value) {
   if (!value) return '-'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('ko-KR')
-}
-
-function formatBytes(value) {
-  const size = Number(value) || 0
-  return size < 1024 ? `${size}B` : `${Math.ceil(size / 1024)}KB`
 }
 
 function windowMessage(windowState) {
@@ -115,44 +107,6 @@ export function StudentActivityRecordPage({ user, program }) {
     }
   }
 
-  async function upload(file) {
-    if (!file) return
-    setSaving(true)
-    setError('')
-    try {
-      const next = await uploadStudentActivityAttachment({ program, user, file })
-      applyData(next)
-      setMessage('첨부파일을 등록했습니다. 내용을 확인한 뒤 다시 제출해주세요.')
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '첨부파일을 등록하지 못했습니다.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function remove(attachment) {
-    if (!window.confirm(`'${attachment.name}' 파일을 삭제할까요?`)) return
-    setSaving(true)
-    setError('')
-    try {
-      const next = await removeStudentActivityAttachment({ program, user, attachmentId: attachment.id })
-      applyData(next)
-      setMessage('첨부파일을 삭제했습니다. 내용을 확인한 뒤 다시 제출해주세요.')
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '첨부파일을 삭제하지 못했습니다.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function download(attachment) {
-    try {
-      await downloadActivityAttachment({ program, actor: user, clubId: data.club.id, studentUid: user.uid, attachment })
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '첨부파일을 열지 못했습니다.')
-    }
-  }
-
   if (loading) return <section style={card}>학생 활동 기록을 불러오는 중입니다.</section>
   if (error && !data) return <section style={{ ...card, color: color.danger }}>{error}</section>
   if (!data?.eligible) {
@@ -165,7 +119,6 @@ export function StudentActivityRecordPage({ user, program }) {
   }
 
   const editable = data.window?.open === true && !saving
-  const attachments = data.record?.attachments || []
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
@@ -200,28 +153,6 @@ export function StudentActivityRecordPage({ user, program }) {
         </section>
       ) : null}
 
-      <section style={{ ...card, display: 'grid', gap: 10 }}>
-        <div>
-          <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>산출물 첨부 <span style={{ fontSize: 11, color: color.sub, fontWeight: 500 }}>(선택)</span></h3>
-          <div style={{ fontSize: 12, color: color.sub }}>PDF·문서·발표자료·엑셀·이미지, 개당 750KB 이하, 최대 3개</div>
-        </div>
-        <div style={{ display: 'grid', gap: 7 }}>
-          {attachments.map((attachment) => (
-            <div key={attachment.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: 9, border: `1px solid ${color.border}`, borderRadius: 8 }}>
-              <button type="button" onClick={() => download(attachment)} style={{ ...button, padding: 0, background: 'transparent', color: color.accent, textAlign: 'left' }}>{attachment.name} <span style={{ color: color.sub }}>({formatBytes(attachment.size)})</span></button>
-              {editable ? <button type="button" onClick={() => remove(attachment)} style={{ ...button, padding: '5px 8px', background: '#fff3f3', color: color.danger }}>삭제</button> : null}
-            </div>
-          ))}
-          {attachments.length === 0 ? <div style={{ color: color.sub, fontSize: 12 }}>등록된 첨부파일이 없습니다.</div> : null}
-        </div>
-        {editable && attachments.length < 3 ? (
-          <label style={{ ...button, justifySelf: 'start', background: '#edf4ff', color: color.accent, fontWeight: 700, display: 'inline-flex' }}>
-            파일 선택
-            <input type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,image/jpeg,image/png,image/webp" style={{ display: 'none' }} onChange={(event) => { const file = event.target.files?.[0]; if (file) upload(file); event.target.value = '' }} />
-          </label>
-        ) : null}
-      </section>
-
       <section style={{ ...card, display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
         <button type="button" onClick={() => save('draft')} disabled={!editable} style={{ ...button, background: '#fff', border: `1px solid ${color.border}`, color: color.sub, opacity: editable ? 1 : 0.5 }}>임시 저장</button>
         <button type="button" onClick={() => save('submit')} disabled={!editable} style={{ ...button, background: editable ? color.accent : '#cfd8e3', color: '#fff', fontWeight: 800 }}>활동 기록 제출</button>
@@ -245,14 +176,6 @@ function TeacherRecordEditor({ row, program, actor, onSaved, onError }) {
       onError(reason instanceof Error ? reason.message : '교사 기록을 저장하지 못했습니다.')
     } finally {
       setSaving(false)
-    }
-  }
-
-  async function download(attachment) {
-    try {
-      await downloadActivityAttachment({ program, actor, clubId: row.clubId, studentUid: row.studentUid, attachment })
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : '첨부파일을 열지 못했습니다.')
     }
   }
 
@@ -290,12 +213,6 @@ function TeacherRecordEditor({ row, program, actor, onSaved, onError }) {
           ))}
         </div>
       )}
-
-      {row.studentStatus === 'submitted' && (row.attachments || []).length > 0 ? (
-        <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
-          {(row.attachments || []).map((attachment) => <button key={attachment.id} type="button" onClick={() => download(attachment)} style={{ ...button, background: '#edf4ff', color: color.accent, fontSize: 12 }}>{attachment.name} ({formatBytes(attachment.size)})</button>)}
-        </div>
-      ) : null}
 
       {row.studentUpdatedAfterReview ? <div style={{ padding: 10, borderRadius: 8, background: '#fff8e1', color: color.warn, fontSize: 12 }}>교사 검토 후 학생 답변이 변경되었습니다. 다시 확인해주세요.</div> : null}
 

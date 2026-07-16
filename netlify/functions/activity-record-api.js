@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto'
-import { db, handleError, json, readBody, requireActor, storageBucket, timestamp } from './_attendance-utils.js'
+import { db, handleError, json, readBody, requireActor, timestamp } from './_attendance-utils.js'
 
 const DEFAULT_PROGRAM_ID = 'club-default'
 const COMMON_LIMITS = {
@@ -11,26 +10,6 @@ const COMMON_LIMITS = {
 }
 const MAX_ADDITIONAL_QUESTIONS = 3
 const MAX_ADDITIONAL_ANSWER_LENGTH = 300
-const MAX_ATTACHMENTS = 3
-const MAX_ATTACHMENT_BYTES = 750 * 1024
-const ALLOWED_ATTACHMENT_TYPES = new Set([
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.ms-powerpoint',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-])
-const ATTACHMENT_EXTENSION_TYPES = {
-  pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
-}
 
 function clean(value, max = 10000) {
   return String(value || '').trim().slice(0, max)
@@ -82,16 +61,6 @@ function normalizeQuestions(value) {
   }).filter(Boolean)
 }
 
-function publicAttachments(value) {
-  return (Array.isArray(value) ? value : []).map((row) => ({
-    id: clean(row?.id, 120),
-    name: clean(row?.name, 180),
-    type: clean(row?.type, 120),
-    size: Math.max(0, Number(row?.size) || 0),
-    uploadedAt: toIso(row?.uploadedAt) || row?.uploadedAt || null,
-  })).filter((row) => row.id)
-}
-
 function normalizeRecord(source = {}, fallback = {}) {
   return {
     id: clean(source.id || fallback.id, 320),
@@ -104,7 +73,6 @@ function normalizeRecord(source = {}, fallback = {}) {
     commonAnswers: Object.fromEntries(Object.keys(COMMON_LIMITS).map((key) => [key, clean(source.commonAnswers?.[key], COMMON_LIMITS[key])])),
     additionalAnswers: Object.fromEntries(Object.entries(source.additionalAnswers || {}).map(([key, value]) => [clean(key, 120), clean(value, MAX_ADDITIONAL_ANSWER_LENGTH)]).filter(([key]) => key)),
     questionSnapshot: normalizeQuestions(source.questionSnapshot),
-    attachments: publicAttachments(source.attachments),
     studentStatus: source.studentStatus === 'submitted' ? 'submitted' : source.studentStatus === 'draft' ? 'draft' : 'unsubmitted',
     teacherStatus: source.teacherStatus === 'completed' ? 'completed' : source.teacherStatus === 'reviewing' ? 'reviewing' : '',
     observationNote: clean(source.observationNote, 2000),
@@ -315,7 +283,6 @@ async function studentSave(actorUser, program, body) {
     commonAnswers,
     additionalAnswers: { ...(existingData.additionalAnswers || {}), ...additionalAnswers },
     questionSnapshot: [...snapshotMap.values()],
-    attachments: Array.isArray(existingData.attachments) ? existingData.attachments : [],
     ...studentEditPatch(existingData, submitting ? 'submitted' : 'draft'),
     createdAt: existingData.createdAt || timestamp(),
     updatedAt: timestamp(),
@@ -332,110 +299,9 @@ async function studentSave(actorUser, program, body) {
     commonAnswers,
     additionalAnswers: { ...(existingData.additionalAnswers || {}), ...additionalAnswers },
     questionSnapshot: [...snapshotMap.values()],
-    attachments: Array.isArray(existingData.attachments) ? existingData.attachments : [],
     ...studentEditPatch(existingData, submitting ? 'submitted' : 'draft'),
   }, { id: context.snapshot.id || context.ref.id, programId: program.id, cycleId: program.cycleId, clubId: context.club.id, studentUid: actorUser.uid })
   return studentResult(program, context)
-}
-
-function safeFileName(value) {
-  return clean(value, 180).replace(/[\\/:*?"<>|]/gu, '_') || 'attachment'
-}
-
-function resolveAttachmentType(fileName, fileType) {
-  const provided = clean(fileType, 120)
-  if (ALLOWED_ATTACHMENT_TYPES.has(provided)) return provided
-  const extension = String(fileName || '').split('.').pop()?.toLowerCase() || ''
-  return ATTACHMENT_EXTENSION_TYPES[extension] || ''
-}
-
-async function uploadAttachment(actorUser, program, body) {
-  assertWindowOpen(program)
-  const context = await getStudentContext(actorUser, program)
-  if (!context) throw Object.assign(new Error('이 프로그램의 확정 참여 명단에서 학생을 찾을 수 없습니다.'), { status: 403 })
-  const existing = context.snapshot.exists ? context.snapshot.data() : {}
-  const attachments = Array.isArray(existing.attachments) ? existing.attachments : []
-  if (attachments.length >= MAX_ATTACHMENTS) throw Object.assign(new Error(`첨부파일은 최대 ${MAX_ATTACHMENTS}개까지 등록할 수 있습니다.`), { status: 400 })
-  const name = safeFileName(body.fileName)
-  const type = resolveAttachmentType(name, body.fileType)
-  if (!type) throw Object.assign(new Error('PDF, 문서, 발표자료, 엑셀 또는 이미지 파일만 첨부할 수 있습니다.'), { status: 400 })
-  const data = Buffer.from(String(body.base64 || ''), 'base64')
-  if (!data.length || data.length > MAX_ATTACHMENT_BYTES) throw Object.assign(new Error('첨부파일은 개당 750KB 이하여야 합니다.'), { status: 400 })
-  const id = randomUUID()
-  const storagePath = `activity-records/${program.id}/${program.cycleId}/${context.club.id}/${actorUser.uid}/${id}-${name}`
-  await storageBucket().file(storagePath).save(data, { resumable: false, contentType: type, metadata: { cacheControl: 'private, max-age=0, no-store' } })
-  const nextAttachments = [...attachments, { id, name, type, size: data.length, storagePath, uploadedAt: new Date().toISOString() }]
-  await context.ref.set({
-    programId: program.id,
-    cycleId: program.cycleId,
-    clubId: context.club.id,
-    studentUid: actorUser.uid,
-    studentNo: clean(context.member.studentNo || actorUser.studentNo, 40),
-    studentName: clean(context.member.name || actorUser.name, 120),
-    attachments: nextAttachments,
-    ...studentEditPatch(existing, 'draft'),
-    createdAt: existing.createdAt || timestamp(),
-    updatedAt: timestamp(),
-  }, { merge: true })
-  context.record = normalizeRecord({
-    id: context.snapshot.id,
-    ...existing,
-    programId: program.id,
-    cycleId: program.cycleId,
-    clubId: context.club.id,
-    studentUid: actorUser.uid,
-    studentNo: clean(context.member.studentNo || actorUser.studentNo, 40),
-    studentName: clean(context.member.name || actorUser.name, 120),
-    attachments: nextAttachments,
-    ...studentEditPatch(existing, 'draft'),
-  }, { id: context.snapshot.id || context.ref.id, programId: program.id, cycleId: program.cycleId, clubId: context.club.id, studentUid: actorUser.uid })
-  return studentResult(program, context)
-}
-
-async function removeAttachment(actorUser, program, body) {
-  assertWindowOpen(program)
-  const context = await getStudentContext(actorUser, program)
-  if (!context || !context.snapshot.exists) throw Object.assign(new Error('학생 활동 기록을 찾을 수 없습니다.'), { status: 404 })
-  const existing = context.snapshot.data()
-  const attachments = Array.isArray(existing.attachments) ? existing.attachments : []
-  const target = attachments.find((row) => clean(row.id, 120) === clean(body.attachmentId, 120))
-  if (!target) throw Object.assign(new Error('첨부파일을 찾을 수 없습니다.'), { status: 404 })
-  await storageBucket().file(target.storagePath).delete({ ignoreNotFound: true })
-  await context.ref.set({
-    attachments: attachments.filter((row) => clean(row.id, 120) !== clean(body.attachmentId, 120)),
-    ...studentEditPatch(existing, 'draft'),
-    updatedAt: timestamp(),
-  }, { merge: true })
-  context.record = normalizeRecord({
-    id: context.snapshot.id,
-    ...existing,
-    attachments: attachments.filter((row) => clean(row.id, 120) !== clean(body.attachmentId, 120)),
-    ...studentEditPatch(existing, 'draft'),
-  }, { id: context.snapshot.id || context.ref.id, programId: program.id, cycleId: program.cycleId, clubId: context.club.id, studentUid: actorUser.uid })
-  return studentResult(program, context)
-}
-
-async function downloadAttachment(actorUser, program, body) {
-  const clubId = clean(body.clubId, 160)
-  const studentUid = clean(body.studentUid, 160)
-  if (actorUser.role === 'student') {
-    if (actorUser.uid !== studentUid) throw Object.assign(new Error('본인의 첨부파일만 열 수 있습니다.'), { status: 403 })
-    const clubSnapshot = await db().doc(`schedules/${clubId}`).get()
-    if (!clubSnapshot.exists || clean(clubSnapshot.data().programId || DEFAULT_PROGRAM_ID, 160) !== program.id) {
-      throw Object.assign(new Error('프로그램과 수업 정보가 일치하지 않습니다.'), { status: 400 })
-    }
-    const membership = await db().doc(`schedules/${clubId}/members/${studentUid}`).get()
-    if (!membership.exists) throw Object.assign(new Error('확정 참여 정보를 찾을 수 없습니다.'), { status: 403 })
-  } else {
-    await authorizeTeacher(actorUser, clubId, program.id)
-  }
-  const ref = recordRef(clubId, program.cycleId, studentUid)
-  const snapshot = await ref.get()
-  if (!snapshot.exists) throw Object.assign(new Error('학생 활동 기록을 찾을 수 없습니다.'), { status: 404 })
-  const target = (snapshot.data().attachments || []).find((row) => clean(row.id, 120) === clean(body.attachmentId, 120))
-  if (!target) throw Object.assign(new Error('첨부파일을 찾을 수 없습니다.'), { status: 404 })
-  const [buffer] = await storageBucket().file(target.storagePath).download()
-  return { name: target.name, type: target.type, base64: buffer.toString('base64') }
 }
 
 async function attendanceSummaries(program, clubId, studentUids) {
@@ -504,7 +370,6 @@ async function teacherList(actorUser, program, options = {}) {
         record.commonAnswers = Object.fromEntries(Object.keys(COMMON_LIMITS).map((key) => [key, '']))
         record.additionalAnswers = {}
         record.questionSnapshot = []
-        record.attachments = []
       }
       const application = applicationMap.get(`${club.id}::${studentUid}`) || {}
       clubRows.push({
@@ -576,9 +441,6 @@ export default async (req) => {
     const program = await getProgram(body.programId)
     if (body.action === 'student-get') return json(await studentGet(actorUser, program))
     if (body.action === 'student-save') return json(await studentSave(actorUser, program, body))
-    if (body.action === 'upload-attachment') return json(await uploadAttachment(actorUser, program, body))
-    if (body.action === 'remove-attachment') return json(await removeAttachment(actorUser, program, body))
-    if (body.action === 'download-attachment') return json(await downloadAttachment(actorUser, program, body))
     if (body.action === 'teacher-list') return json(await teacherList(actorUser, program, { clubId: body.clubId, metaOnly: body.metaOnly === true }))
     if (body.action === 'teacher-save') return json(await teacherSave(actorUser, program, body))
     return json({ error: '지원하지 않는 작업입니다.' }, 400)
