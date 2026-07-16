@@ -116,19 +116,21 @@ export default async (req) => {
       if (!programSnap.exists || program.features?.attendance !== true) return json({ error: '출석부 기능이 활성화되지 않은 프로그램입니다.' }, 400)
 
       const pin = String(body.pin || '').trim()
+      const pinRequired = body.pinRequired !== false
       if (pin && !/^\d{4,8}$/u.test(pin)) return json({ error: 'PIN은 숫자 4~8자리로 입력해주세요.' }, 400)
       const accessRef = db().doc(`_attendanceAccess/${programId}`)
       const accessSnap = await accessRef.get()
-      if (body.enabled === true && !pin && (!accessSnap.exists || !accessSnap.data().hash)) {
+      if (body.enabled === true && pinRequired && !pin && (!accessSnap.exists || !accessSnap.data().hash)) {
         return json({ error: 'QR을 활성화하려면 프로그램 PIN을 먼저 입력해주세요.' }, 409)
       }
       await accessRef.set({
         ...(pin ? { ...hashPin(pin), failedAttempts: 0, lockedUntil: null } : {}),
         enabled: body.enabled === true,
+        pinRequired,
         updatedAt: timestamp(),
         updatedBy: actor.uid,
       }, { merge: true })
-      await programSnap.ref.set({ attendanceQrEnabled: body.enabled === true, updatedAt: timestamp() }, { merge: true })
+      await programSnap.ref.set({ attendanceQrEnabled: body.enabled === true, attendanceQrPinRequired: pinRequired, updatedAt: timestamp() }, { merge: true })
 
       const origin = new URL(req.url).origin
       const scheduleSnap = await db().collection('schedules').get()

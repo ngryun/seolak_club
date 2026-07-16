@@ -7848,24 +7848,34 @@ function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUp
   const [form, setForm] = useState(newProgramForm());
   const [qrProgramId, setQrProgramId] = useState("");
   const [qrPin, setQrPin] = useState("");
+  const [qrPinRequiredOverrides, setQrPinRequiredOverrides] = useState({});
   const [qrOverrides, setQrOverrides] = useState({});
   const rows = Array.isArray(programs) ? programs : [];
   const attendancePrograms = rows.filter((row) => row.status === "active" && row.features?.attendance);
   const qrProgram = attendancePrograms.find((row) => row.id === qrProgramId) || attendancePrograms[0] || null;
   const storedQrEnabled = getProgramAttendanceQrSetting(qrProgram?.id)?.enabled;
+  const storedQrPinRequired = getProgramAttendanceQrSetting(qrProgram?.id)?.pinRequired;
   const qrEnabled = qrProgram
     ? (qrOverrides[qrProgram.id] ?? (typeof storedQrEnabled === "boolean" ? storedQrEnabled : qrProgram.attendanceQrEnabled))
     : false;
+  const qrPinRequired = qrProgram
+    ? (qrPinRequiredOverrides[qrProgram.id] ?? (typeof storedQrPinRequired === "boolean" ? storedQrPinRequired : qrProgram.attendanceQrPinRequired !== false))
+    : true;
 
   async function configureQr(enabled, rotate = false) {
     if (!qrProgram || !onConfigureAttendanceQr) return;
-    if (enabled && !rotate && !/^\d{4,8}$/u.test(qrPin)) {
+    if (enabled && qrPinRequired && !rotate && !/^\d{4,8}$/u.test(qrPin)) {
       window.alert("프로그램 공통 PIN을 숫자 4~8자리로 입력해주세요.");
       return;
     }
     if (!enabled && !window.confirm(`'${qrProgram.name}'의 전체 QR 출석 링크를 중지할까요?`)) return;
     if (rotate && !window.confirm(`'${qrProgram.name}'의 전체 QR 링크를 재발급할까요? 기존 QR은 사용할 수 없게 됩니다.`)) return;
-    const result = await onConfigureAttendanceQr(qrProgram.id, { enabled, rotate, pin: rotate ? "" : qrPin });
+    const result = await onConfigureAttendanceQr(qrProgram.id, {
+      enabled,
+      rotate,
+      pin: qrPinRequired && !rotate ? qrPin : "",
+      pinRequired: qrPinRequired,
+    });
     if (result) {
       setQrOverrides((prev) => ({ ...prev, [qrProgram.id]: enabled }));
       if (qrPin) setQrPin("");
@@ -8101,26 +8111,31 @@ function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUp
                 {attendancePrograms.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
               </Select>
             </Field>
-            <Field label="프로그램 공통 PIN" hint="숫자 4~8자리 · 활성화할 때 함께 저장됩니다.">
-              <input
-                type="password"
-                inputMode="numeric"
-                autoComplete="new-password"
-                value={qrPin}
-                onChange={(e) => setQrPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
-                style={inputBase}
-                placeholder="PIN 입력"
-              />
-            </Field>
+              <Field label="프로그램 공통 PIN" hint={qrPinRequired ? "숫자 4~8자리 · 활성화할 때 함께 저장됩니다." : "PIN 없이 사용 중입니다."}>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="new-password"
+                  value={qrPin}
+                  onChange={(e) => setQrPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                  disabled={!qrPinRequired}
+                  style={inputBase}
+                  placeholder={qrPinRequired ? "PIN 입력" : "PIN 사용 안 함"}
+                />
+              </Field>
+            <label style={{ display: "flex", alignItems: "center", gap: 7, minHeight: 40, fontSize: 12, color: qrPinRequired ? t.textSub : t.warn, cursor: "pointer" }}>
+              <input type="checkbox" checked={!qrPinRequired} onChange={(e) => setQrPinRequiredOverrides((prev) => ({ ...prev, [qrProgram.id]: !e.target.checked }))} />
+              QR에서 PIN 생략 (보안 낮음)
+            </label>
             <div style={{ alignSelf: "center", minWidth: 92, textAlign: "center" }}>
               <span style={{ display: "inline-flex", padding: "5px 10px", borderRadius: 999, background: qrEnabled ? "#e8f7ed" : "#f1f5f9", color: qrEnabled ? t.ok : t.textSub, fontSize: 12, fontWeight: 800 }}>
-                QR {qrEnabled ? "사용 중" : "중지"}
+                QR {qrEnabled ? (qrPinRequired ? "사용 중" : "PIN 없음") : "중지"}
               </span>
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button type="button" onClick={() => configureQr(true)} disabled={loading || qrPin.length < 4} style={{ ...buttonBase, background: loading || qrPin.length < 4 ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 800 }}>
-              PIN 저장 · 전체 QR 활성화
+            <button type="button" onClick={() => configureQr(true)} disabled={loading || (qrPinRequired && qrPin.length < 4)} style={{ ...buttonBase, background: loading || (qrPinRequired && qrPin.length < 4) ? "#cfd8e3" : t.accent, color: "#fff", fontWeight: 800 }}>
+              {qrPinRequired ? "PIN 저장 · 전체 QR 활성화" : "PIN 없이 전체 QR 활성화"}
             </button>
             <button type="button" onClick={() => configureQr(true, true)} disabled={loading || !qrEnabled} style={{ ...buttonBase, background: "#fff7e6", color: "#9a6700", fontWeight: 700, opacity: loading || !qrEnabled ? 0.55 : 1 }}>
               전체 QR 재발급
@@ -9106,7 +9121,10 @@ export default function PrototypeApp({ studentOnly = false }) {
       // 데모 모드에서는 출석 전용 저장소와 프로그램 목록이 분리되어 있으므로
       // 프로그램 문서의 표시 상태도 함께 갱신해 백업·새로고침과 일치시킵니다.
       if (!isFirebaseEnabled()) {
-        await updateProgram(programId, { attendanceQrEnabled: options.enabled === true }, { actor: user });
+        await updateProgram(programId, {
+          attendanceQrEnabled: options.enabled === true,
+          attendanceQrPinRequired: options.pinRequired !== false,
+        }, { actor: user });
       }
       const action = options.enabled ? (options.rotate ? "재발급" : "활성화") : "중지";
       const updated = Number(result?.updatedCount) || 0;

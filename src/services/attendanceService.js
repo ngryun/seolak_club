@@ -57,7 +57,11 @@ async function api(endpoint, action, payload = {}, options = {}) {
     body: JSON.stringify({ action, ...payload }),
   })
   const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(data?.error || '출석부 서버 요청에 실패했습니다.')
+  if (!response.ok) {
+    const error = new Error(data?.error || '출석부 서버 요청에 실패했습니다.')
+    Object.assign(error, data)
+    throw error
+  }
   return data
 }
 
@@ -176,7 +180,7 @@ export async function setAttendancePin({ programId, pin }) {
   return { ok: true }
 }
 
-export async function configureProgramAttendanceQr({ programId, enabled, rotate = false, pin = '' }) {
+export async function configureProgramAttendanceQr({ programId, enabled, rotate = false, pin = '', pinRequired = true }) {
   const normalizedProgramId = String(programId || '').trim()
   const normalizedPin = String(pin || '').trim()
   if (!normalizedProgramId) throw new Error('프로그램 정보가 필요합니다.')
@@ -187,6 +191,7 @@ export async function configureProgramAttendanceQr({ programId, enabled, rotate 
       enabled: enabled === true,
       rotate: rotate === true,
       pin: normalizedPin,
+      pinRequired: pinRequired !== false,
     })
   }
 
@@ -194,12 +199,12 @@ export async function configureProgramAttendanceQr({ programId, enabled, rotate 
   if (normalizedPin) {
     store.programPins = { ...(store.programPins || {}), [normalizedProgramId]: normalizedPin }
   }
-  if (enabled && !store.programPins?.[normalizedProgramId]) {
+  if (enabled && pinRequired && !store.programPins?.[normalizedProgramId]) {
     throw new Error('QR을 활성화하려면 프로그램 PIN을 먼저 입력해주세요.')
   }
   store.programQrSettings = {
     ...(store.programQrSettings || {}),
-    [normalizedProgramId]: { enabled: enabled === true, updatedAt: new Date().toISOString() },
+    [normalizedProgramId]: { enabled: enabled === true, pinRequired, updatedAt: new Date().toISOString() },
   }
 
   let updatedCount = 0
@@ -238,7 +243,7 @@ export async function configurePublicAttendance({ program, club, session, enable
   }
   const store = readStore()
   if (enabled && store.programQrSettings?.[program.id]?.enabled !== true) throw new Error('관리자가 프로그램 관리에서 QR을 먼저 활성화해야 합니다.')
-  if (enabled && !store.programPins?.[program.id]) throw new Error('관리자가 프로그램 QR PIN을 먼저 설정해야 합니다.')
+  if (enabled && store.programQrSettings?.[program.id]?.pinRequired !== false && !store.programPins?.[program.id]) throw new Error('관리자가 프로그램 QR PIN을 먼저 설정해야 합니다.')
   const key = recordKey(club.id, session.id)
   const current = normalizeRecord(store.records?.[key], {
     programId: program.id, clubId: club.id, sessionId: session.id,
@@ -283,17 +288,34 @@ export async function unlockPublicAttendance(token, pin) {
   if (!current.clubId || !current.publicEnabled || current.tokenVersion !== payload.v || current.status === 'closed') {
     throw new Error('중지되었거나 종료된 출석 링크입니다.')
   }
-  if (!store.programPins?.[payload.p] || store.programPins[payload.p] !== String(pin)) {
+  if (store.programQrSettings?.[payload.p]?.pinRequired !== false
+    && (!store.programPins?.[payload.p] || store.programPins[payload.p] !== String(pin))) {
     throw new Error('PIN이 올바르지 않습니다.')
   }
-  return { record: current, editToken: pin }
+  return { record: current, editToken: store.programQrSettings?.[payload.p]?.pinRequired === false ? 'no-pin' : pin }
+}
+
+export async function openPublicAttendance(token) {
+  if (isFirebaseEnabled()) return api('attendance-public', 'open', { token })
+  const payload = readDemoToken(token)
+  const store = readStore()
+  const current = normalizeRecord(store.records?.[recordKey(payload.c, payload.s)])
+  if (store.programQrSettings?.[payload.p]?.pinRequired !== false) {
+    const error = new Error('프로그램 PIN이 필요합니다.')
+    error.requiresPin = true
+    throw error
+  }
+  if (!current.clubId || !current.publicEnabled || current.tokenVersion !== payload.v || current.status === 'closed') {
+    throw new Error('중지되었거나 종료된 출석 링크입니다.')
+  }
+  return { record: current, editToken: 'no-pin' }
 }
 
 export async function savePublicAttendance(token, editToken, entries) {
   if (isFirebaseEnabled()) return api('attendance-public', 'save', { token, editToken, entries })
   const payload = readDemoToken(token)
   const store = readStore()
-  if (store.programPins?.[payload.p] !== String(editToken)) throw new Error('PIN 인증이 만료되었습니다.')
+  if (store.programQrSettings?.[payload.p]?.pinRequired !== false && store.programPins?.[payload.p] !== String(editToken)) throw new Error('PIN 인증이 만료되었습니다.')
   const key = recordKey(payload.c, payload.s)
   const current = normalizeRecord(store.records?.[key])
   if (!current.publicEnabled || current.tokenVersion !== payload.v || current.status === 'closed') {

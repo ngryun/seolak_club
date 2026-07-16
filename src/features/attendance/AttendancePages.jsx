@@ -6,6 +6,7 @@ import {
   getAttendanceRecord,
   getAttendanceRecords,
   hasAttendanceApiSession,
+  openPublicAttendance,
   saveAttendanceRecord,
   savePublicAttendance,
   setAttendanceSessionStatus,
@@ -223,6 +224,33 @@ function MobileSessionRoster({ sessions, records, entriesMap, loadErrors, studen
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char])
+}
+
+function openBulkPrintWindow({ program, sheets }) {
+  const popup = window.open('', '_blank')
+  if (!popup) throw new Error('인쇄 창을 열 수 없습니다. 팝업 차단을 해제해주세요.')
+  popup.opener = null
+  const body = sheets.map((sheet, index) => {
+    const { club, session, record, entries, qrData } = sheet
+    const roster = (record?.rosterSnapshot || []).map((student, rowIndex) => ({ ...student, printIndex: rowIndex + 1 }))
+    const counts = Object.values(entries || {}).reduce((result, status) => ({ ...result, [status]: (result[status] || 0) + 1 }), { present: 0, absent: 0, unchecked: 0 })
+    const rows = roster.map((student) => {
+      const status = entries?.[student.studentUid] || 'unchecked'
+      return `<tr><td>${student.printIndex}</td><td>${escapeHtml(student.studentNo || '-')}</td><td class="name">${escapeHtml(student.name || '-')}</td><td class="${status}">${escapeHtml(statusLabel(status))}</td></tr>`
+    }).join('')
+    const teacherNames = (club.teacherNames || [club.teacherName]).filter(Boolean).join(', ') || '-'
+    const qrHint = program.attendanceQrPinRequired === false ? 'QR 스캔 후 바로 출결 입력' : 'QR 스캔 후 PIN 입력'
+    return `<section class="sheet${index === sheets.length - 1 ? ' last' : ''}">
+      <header><div><div class="eyebrow">ATTENDANCE SHEET</div><h1>${escapeHtml(club.clubName)} 출석부</h1><div class="subtitle">${escapeHtml(program.name)} · ${escapeHtml(withWeekday(session.date))} · ${escapeHtml(sessionTitle(session))}</div></div>${qrData ? `<div class="qr"><img src="${qrData}" alt="QR 코드"><div>${qrHint}</div></div>` : ''}</header>
+      <div class="info"><span><b>수업 · 담당교사</b>${escapeHtml(club.clubName)} · ${escapeHtml(teacherNames)}</span><span><b>전체</b>${roster.length}명</span><span><b>출석 · 결석 · 미체크</b>${counts.present || 0} · ${counts.absent || 0} · ${counts.unchecked || 0}</span></div>
+      <table><thead><tr><th>순</th><th>학번</th><th>이름</th><th>출결</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="empty">표시할 학생이 없습니다.</td></tr>'}</tbody></table>
+      <footer><span>담당교사 확인: ____________________</span><span>${escapeHtml(program.name)} · ${escapeHtml(club.clubName)}</span></footer>
+    </section>`
+  }).join('')
+  popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(program.name)} · 전체 과목 출석부</title><style>
+    @page{size:A4 portrait;margin:10mm}*{box-sizing:border-box}html,body{margin:0;padding:0;color:#172033;background:#fff;font-family:"Pretendard","Apple SD Gothic Neo",Arial,sans-serif}.sheet{min-height:277mm;page-break-after:always;padding:0 0 4mm}.sheet.last{page-break-after:auto}header{display:grid;grid-template-columns:1fr auto;gap:8mm;align-items:start;padding-bottom:4mm;border-bottom:2.5px solid #1769e0}.eyebrow{margin-bottom:1.5mm;color:#1769e0;font-size:9pt;font-weight:800;letter-spacing:.08em}h1{margin:0;font-size:20pt;line-height:1.15;letter-spacing:-.04em}.subtitle{margin-top:2mm;color:#475569;font-size:10pt}.qr{width:31mm;text-align:center;color:#64748b;font-size:7.5pt;line-height:1.25}.qr img{display:block;width:26mm;height:26mm;margin:0 auto 1mm}.info{display:grid;grid-template-columns:1.4fr .6fr 1fr;gap:2mm;margin:4mm 0}.info span{display:block;min-height:14mm;padding:2.5mm 3mm;border:1px solid #dce3ec;border-radius:2mm;background:#f8fafc;font-size:10pt;font-weight:800}.info b{display:block;margin-bottom:1mm;color:#64748b;font-size:7.5pt}.info span:nth-child(2),.info span:nth-child(3){white-space:nowrap}table{width:100%;border-collapse:collapse;table-layout:fixed;border:1px solid #94a3b8;font-size:10pt}th{height:9mm;padding:1.5mm;background:#eaf2ff;color:#23436f;border:1px solid #94a3b8;text-align:center;font-size:9pt}td{height:7mm;padding:1.2mm 2mm;border:1px solid #cbd5e1;text-align:center}td.name{text-align:left;font-weight:700}td.present{color:#157f3d;background:#f0faf3;font-weight:800}td.absent{color:#b42318;background:#fff4f4;font-weight:800}td.unchecked{color:#64748b}.empty{height:24mm;color:#64748b}footer{display:flex;justify-content:space-between;gap:4mm;margin-top:4mm;padding-top:2mm;border-top:1px solid #dce3ec;color:#64748b;font-size:8pt}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  </style></head><body>${body}<button class="toolbar" onclick="window.print()">인쇄하기</button><style>.toolbar{position:fixed;right:18px;bottom:18px;padding:10px 18px;border:0;border-radius:9px;background:#1769e0;color:#fff;font-weight:800;box-shadow:0 8px 24px rgba(23,105,224,.25);cursor:pointer}@media print{.toolbar{display:none}}</style></body></html>`)
+  popup.document.close(); popup.focus(); setTimeout(() => popup.print(), 350)
 }
 
 export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyChange }) {
@@ -450,8 +478,50 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
       html,body{margin:0;padding:0;color:#172033;background:#fff;font-family:"Pretendard","Apple SD Gothic Neo",Arial,sans-serif}
       body{padding:8mm}.sheet{width:100%;position:relative}.header{display:grid;grid-template-columns:1fr auto;gap:7mm;align-items:start;padding:0 0 4mm;border-bottom:2.5px solid #1769e0}.eyebrow{margin-bottom:1.5mm;color:#1769e0;font-size:9pt;font-weight:800;letter-spacing:.08em}.title{margin:0;font-size:20pt;line-height:1.15;letter-spacing:-.04em}.subtitle{margin-top:1.5mm;color:#475569;font-size:10pt}.qr{width:29mm;text-align:center;color:#64748b;font-size:7.5pt;line-height:1.25}.qr img{display:block;width:25mm;height:25mm;margin:0 auto 1mm}.info{display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:2mm;margin:3mm 0}.info-item{min-height:13mm;padding:2.2mm 3mm;border:1px solid #dce3ec;border-radius:2mm;background:#f8fafc}.info-label{display:block;margin-bottom:1mm;color:#64748b;font-size:7.5pt;font-weight:700}.info-value{display:block;font-size:9.5pt;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summary{display:flex;gap:2mm;align-items:center;margin-bottom:2.5mm;font-size:8pt}.chip{padding:1.1mm 2.3mm;border-radius:99px;background:#eef2f7;color:#475569;font-weight:700}.chip.total{background:#eaf2ff;color:#1769e0}.chip.absent{background:#fff0f0;color:#b42318}.tables{display:grid;grid-template-columns:repeat(${columns.length},minmax(0,1fr));gap:3mm}table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;border:1px solid #94a3b8;border-radius:1.5mm;overflow:hidden;font-size:${rowFontSize}pt}.col-number{width:${numberColumnWidth}mm}.col-student-no{width:${studentNumberColumnWidth}mm}.col-status{width:${statusColumnWidth}mm}th{height:8mm;padding:1.3mm 1.8mm;background:#eaf2ff;color:#23436f;border-bottom:1px solid #94a3b8;text-align:center;font-size:8.5pt;font-weight:800}td{height:${rowHeight}mm;padding:.6mm 1.8mm;border-bottom:1px solid #cbd5e1;text-align:center;line-height:1.1}tbody tr:last-child td{border-bottom:0}td+td,th+th{border-left:1px solid #cbd5e1}td.name{text-align:left;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}td.number{color:#64748b}.status{font-weight:800}.status.present{color:#157f3d;background:#f0faf3}.status.absent{color:#b42318;background:#fff4f4}.status.unchecked{color:#94a3b8}.footer{display:flex;justify-content:space-between;gap:4mm;margin-top:2.5mm;padding-top:2mm;border-top:1px solid #dce3ec;color:#64748b;font-size:7.5pt}.toolbar{position:fixed;right:18px;bottom:18px;padding:10px 18px;border:0;border-radius:9px;background:#1769e0;color:#fff;font-weight:800;box-shadow:0 8px 24px rgba(23,105,224,.25);cursor:pointer}
       @media print{body{padding:0}.toolbar{display:none}.sheet{break-inside:avoid;page-break-inside:avoid}.tables,table,tr{break-inside:avoid;page-break-inside:avoid}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-    </style></head><body><main class="sheet"><header class="header"><div><div class="eyebrow">ATTENDANCE SHEET</div><h1 class="title">${escapeHtml(club.clubName)} 출석부</h1><div class="subtitle">${escapeHtml(program.name)}</div></div>${qrData ? `<div class="qr"><img src="${qrData}" alt="QR 코드"><div>PIN 확인 후<br>출결 수정</div></div>` : ''}</header><section class="info"><div class="info-item"><span class="info-label">수업 · 담당교사</span><span class="info-value">${escapeHtml(club.clubName)} · ${escapeHtml(teacherNames)}</span></div><div class="info-item"><span class="info-label">수업 일자</span><span class="info-value">${escapeHtml(withWeekday(manageSession.date))}</span></div><div class="info-item"><span class="info-label">회차</span><span class="info-value">${escapeHtml(sessionTitle(manageSession))}</span></div></section><div class="summary"><span class="chip total">전체 ${roster.length}명</span><span class="chip">출석 ${counts.present || 0}</span><span class="chip absent">결석 ${counts.absent || 0}</span><span class="chip">미체크 ${counts.unchecked || 0}</span></div><section class="tables">${tables}</section><footer class="footer"><span>출결 변경 사항은 확인 후 시스템에도 반영해 주세요.</span><span>담당교사 확인: ____________________</span></footer></main><button class="toolbar" onclick="window.print()">인쇄하기</button></body></html>`)
+    </style></head><body><main class="sheet"><header class="header"><div><div class="eyebrow">ATTENDANCE SHEET</div><h1 class="title">${escapeHtml(club.clubName)} 출석부</h1><div class="subtitle">${escapeHtml(program.name)}</div></div>${qrData ? `<div class="qr"><img src="${qrData}" alt="QR 코드"><div>${program.attendanceQrPinRequired === false ? 'QR 스캔 후<br>바로 출결 수정' : 'PIN 확인 후<br>출결 수정'}</div></div>` : ''}</header><section class="info"><div class="info-item"><span class="info-label">수업 · 담당교사</span><span class="info-value">${escapeHtml(club.clubName)} · ${escapeHtml(teacherNames)}</span></div><div class="info-item"><span class="info-label">수업 일자</span><span class="info-value">${escapeHtml(withWeekday(manageSession.date))}</span></div><div class="info-item"><span class="info-label">회차</span><span class="info-value">${escapeHtml(sessionTitle(manageSession))}</span></div></section><div class="summary"><span class="chip total">전체 ${roster.length}명</span><span class="chip">출석 ${counts.present || 0}</span><span class="chip absent">결석 ${counts.absent || 0}</span><span class="chip">미체크 ${counts.unchecked || 0}</span></div><section class="tables">${tables}</section><footer class="footer"><span>출결 변경 사항은 확인 후 시스템에도 반영해 주세요.</span><span>담당교사 확인: ____________________</span></footer></main><button class="toolbar" onclick="window.print()">인쇄하기</button></body></html>`)
     popup.document.close(); popup.focus(); setTimeout(() => popup.print(), 350)
+  }
+
+  async function printAllSheets() {
+    if (!clubs.length || !sessions.length) {
+      onMessage?.('warn', '인쇄할 과목 또는 출석 회차가 없습니다.')
+      return
+    }
+    if (anyDirty && !window.confirm('저장되지 않은 출결 변경이 있습니다. 현재 입력 내용은 일괄 인쇄에 반영되지 않을 수 있습니다. 계속할까요?')) return
+    setLoading(true)
+    try {
+      const results = await Promise.allSettled(clubs.map(async (targetClub) => {
+        const roster = isFirebaseEnabled() ? [] : await listClubMembers(targetClub.id)
+        const records = await getAttendanceRecords({ program, club: targetClub, sessions, roster })
+        return { club: targetClub, records }
+      }))
+      const sheets = []
+      const failedCount = results.filter((result) => result.status === 'rejected').length
+      for (const result of results) {
+        if (result.status !== 'fulfilled') continue
+        const recordMap = new Map(result.value.records.map((record) => [record.sessionId, record]))
+        for (const session of sessions) {
+          const record = recordMap.get(session.id)
+          if (!record) continue
+          sheets.push({
+            club: result.value.club,
+            session,
+            record,
+            entries: toEntryMap(record),
+            qrData: record.publicEnabled && record.publicUrl
+              ? await QRCode.toDataURL(record.publicUrl, { width: 220, margin: 1 })
+              : '',
+          })
+        }
+      }
+      if (!sheets.length) throw new Error('불러온 출석부가 없어 인쇄할 수 없습니다.')
+      openBulkPrintWindow({ program, sheets })
+      onMessage?.(failedCount ? 'warn' : 'ok', `${sheets.length}개 출석부를 한 번에 인쇄할 준비를 했습니다.${failedCount ? ` 불러오지 못한 과목 ${failedCount}개는 제외되었습니다.` : ''}`)
+    } catch (error) {
+      onMessage?.('error', error.message)
+    } finally {
+      setLoading(false)
+    }
   }
 
   if (!program?.features?.attendance) return null
@@ -480,6 +550,7 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <button onClick={() => guardedChange(() => setReloadKey((key) => key + 1))} disabled={loading} style={{ ...button, background: '#f8fafc', color: colors.sub, border: `1px solid ${colors.border}` }}>새로고침</button>
             <button onClick={saveAll} disabled={loading || !anyDirty} style={{ ...button, background: colors.accent, color: '#fff', opacity: loading || !anyDirty ? 0.55 : 1 }}>저장</button>
+            <button onClick={printAllSheets} disabled={loading || !clubs.length} style={{ ...button, background: '#eaf2ff', color: colors.accent, border: `1px solid #bfd4f7` }}>전체 과목 인쇄</button>
           </div>
         </div>
         <div style={{ padding: '10px 16px', display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -530,10 +601,49 @@ export function PublicAttendancePage({ token }) {
   const [record, setRecord] = useState(null)
   const [entries, setEntries] = useState({})
   const [editToken, setEditToken] = useState('')
+  const [requiresPin, setRequiresPin] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
-  async function unlock(event) { event.preventDefault(); setLoading(true); setError(''); try { const result = await unlockPublicAttendance(token, pin); const next = result.record || result; setRecord(next); setEntries(toEntryMap(next)); setEditToken(result.editToken || ''); setPin('') } catch (e) { setError(e.message) } finally { setLoading(false) } }
-  async function save() { setLoading(true); setError(''); try { const next = await savePublicAttendance(token, editToken, entries); setRecord(next); setEntries(toEntryMap(next)); setMessage('출석부를 저장했습니다.') } catch (e) { setError(e.message) } finally { setLoading(false) } }
-  return <main style={{ minHeight: '100vh', background: '#f4f7fb', padding: 16, boxSizing: 'border-box' }}><div style={{ maxWidth: 760, margin: '0 auto', display: 'grid', gap: 12 }}><section style={card}><h1 style={{ margin: '0 0 6px', fontSize: 20 }}>QR 출석부</h1><div style={{ color: colors.sub, fontSize: 13 }}>PIN 확인 후에만 학생 명단과 출결 정보를 볼 수 있습니다.</div></section>{error ? <div style={{ ...card, color: colors.danger, background: '#fff6f6' }}>{error}</div> : null}{message ? <div style={{ ...card, color: colors.ok, background: '#f2fbf5' }}>{message}</div> : null}{!record ? <form onSubmit={unlock} style={{ ...card, display: 'grid', gap: 10 }}><label style={{ fontSize: 13, color: colors.sub }}>프로그램 PIN<input autoFocus type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))} style={input} /></label><button disabled={loading || pin.length < 4} style={{ ...button, background: colors.accent, color: '#fff' }}>{loading ? '확인 중...' : '출석부 열기'}</button></form> : <section style={card}><div style={{ marginBottom: 10, color: colors.sub }}>전체 {(record.rosterSnapshot || []).length}명</div><AttendanceRoster record={record} entries={entries} onChange={(uid, status) => setEntries((prev) => ({ ...prev, [uid]: status }))} disabled={loading} /><button onClick={save} disabled={loading} style={{ ...button, marginTop: 12, width: '100%', background: colors.accent, color: '#fff' }}>{loading ? '저장 중...' : '출석부 저장'}</button></section>}</div></main>
+  useEffect(() => {
+    let mounted = true
+    setLoading(true)
+    setError('')
+    openPublicAttendance(token)
+      .then((result) => {
+        if (!mounted) return
+        const next = result.record || result
+        setRecord(next)
+        setEntries(toEntryMap(next))
+        setEditToken(result.editToken || '')
+      })
+      .catch((e) => {
+        if (!mounted) return
+        if (e.requiresPin) setRequiresPin(true)
+        else setError(e.message)
+      })
+      .finally(() => { if (mounted) setLoading(false) })
+    return () => { mounted = false }
+  }, [token])
+
+  async function unlock(event) {
+    event.preventDefault()
+    setLoading(true); setError('')
+    try {
+      const result = await unlockPublicAttendance(token, pin)
+      const next = result.record || result
+      setRecord(next); setEntries(toEntryMap(next)); setEditToken(result.editToken || ''); setPin('')
+    } catch (e) { setError(e.message) } finally { setLoading(false) }
+  }
+
+  async function save() {
+    setLoading(true); setError('')
+    try {
+      const next = await savePublicAttendance(token, editToken, entries)
+      setRecord(next); setEntries(toEntryMap(next)); setMessage('출석부를 저장했습니다.')
+    } catch (e) { setError(e.message) } finally { setLoading(false) }
+  }
+
+  const showPinForm = !record && !error && !loading && requiresPin
+  return <main style={{ minHeight: '100vh', background: '#f4f7fb', padding: 16, boxSizing: 'border-box' }}><div style={{ maxWidth: 760, margin: '0 auto', display: 'grid', gap: 12 }}><section style={card}><h1 style={{ margin: '0 0 6px', fontSize: 20 }}>QR 출석부</h1><div style={{ color: colors.sub, fontSize: 13 }}>{requiresPin ? '프로그램 PIN 확인 후 학생 명단과 출결 정보를 볼 수 있습니다.' : 'QR 링크를 확인하는 중입니다.'}</div></section>{error ? <div style={{ ...card, color: colors.danger, background: '#fff6f6' }}>{error}</div> : null}{message ? <div style={{ ...card, color: colors.ok, background: '#f2fbf5' }}>{message}</div> : null}{!record && loading ? <section style={{ ...card, color: colors.sub }}>출석부를 여는 중...</section> : null}{showPinForm ? <form onSubmit={unlock} style={{ ...card, display: 'grid', gap: 10 }}><label style={{ fontSize: 13, color: colors.sub }}>프로그램 PIN<input autoFocus type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))} style={input} /></label><button disabled={loading || pin.length < 4} style={{ ...button, background: colors.accent, color: '#fff' }}>{loading ? '확인 중...' : '출석부 열기'}</button></form> : null}{record ? <section style={card}><div style={{ marginBottom: 10, color: colors.sub }}>전체 {(record.rosterSnapshot || []).length}명</div><AttendanceRoster record={record} entries={entries} onChange={(uid, status) => setEntries((prev) => ({ ...prev, [uid]: status }))} disabled={loading} /><button onClick={save} disabled={loading} style={{ ...button, marginTop: 12, width: '100%', background: colors.accent, color: '#fff' }}>{loading ? '저장 중...' : '출석부 저장'}</button></section> : null}</div></main>
 }

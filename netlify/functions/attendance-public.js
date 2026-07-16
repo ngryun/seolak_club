@@ -23,14 +23,21 @@ export default async (req) => {
   try {
     const body = await readBody(req); const { payload, ref, record } = await validatePublic(body.token)
     const accessRef = db().doc(`_attendanceAccess/${payload.programId}`); const accessSnap = await accessRef.get(); const access = accessSnap.data() || {}
+    if (body.action === 'open') {
+      if (access.pinRequired !== false) return json({ error: '프로그램 PIN이 필요합니다.', requiresPin: true }, 409)
+      const editToken = createSessionToken({ uid: `public:${payload.scheduleId}:${payload.sessionId}`, role: 'public' })
+      return json({ record: await fullRecord(payload, record), editToken })
+    }
     if (body.action === 'unlock') {
-      if (access.lockedUntil?.toMillis?.() > Date.now()) return json({ error: 'PIN 오류가 반복되어 잠시 잠겼습니다. 5분 후 다시 시도해주세요.' }, 429)
-      if (!access.hash || !verifyPin(body.pin, access.salt, access.hash)) {
-        const failed = (Number(access.failedAttempts) || 0) + 1; const patch = { failedAttempts: failed, updatedAt: timestamp() }
-        if (failed >= 5) { patch.failedAttempts = 0; patch.lockedUntil = new Date(Date.now() + 5 * 60 * 1000) }
-        await accessRef.set(patch, { merge: true }); return json({ error: 'PIN이 올바르지 않습니다.' }, 401)
+      if (access.pinRequired !== false) {
+        if (access.lockedUntil?.toMillis?.() > Date.now()) return json({ error: 'PIN 오류가 반복되어 잠시 잠겼습니다. 5분 후 다시 시도해주세요.' }, 429)
+        if (!access.hash || !verifyPin(body.pin, access.salt, access.hash)) {
+          const failed = (Number(access.failedAttempts) || 0) + 1; const patch = { failedAttempts: failed, updatedAt: timestamp() }
+          if (failed >= 5) { patch.failedAttempts = 0; patch.lockedUntil = new Date(Date.now() + 5 * 60 * 1000) }
+          await accessRef.set(patch, { merge: true }); return json({ error: 'PIN이 올바르지 않습니다.' }, 401)
+        }
+        await accessRef.set({ failedAttempts: 0, lockedUntil: null, updatedAt: timestamp() }, { merge: true })
       }
-      await accessRef.set({ failedAttempts: 0, lockedUntil: null, updatedAt: timestamp() }, { merge: true })
       const editToken = createSessionToken({ uid: `public:${payload.scheduleId}:${payload.sessionId}`, role: 'public' })
       return json({ record: await fullRecord(payload, record), editToken })
     }
@@ -45,4 +52,3 @@ export default async (req) => {
     return json({ error: '지원하지 않는 작업입니다.' }, 400)
   } catch (error) { return handleError(error) }
 }
-
