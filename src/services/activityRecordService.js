@@ -21,11 +21,20 @@ function clean(value, max = 10000) {
   return String(value || '').trim().slice(0, max)
 }
 
+function parseActivityDateTime(value) {
+  const raw = clean(value, 80)
+  if (!raw) return Number.NaN
+  // datetime-local 값이 남아 있는 구버전 데이터도 한국 시간으로 해석합니다.
+  const localMatch = raw.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/u)
+  const normalized = localMatch ? `${raw.length === 16 ? `${raw}:00` : raw}+09:00` : raw
+  return new Date(normalized).getTime()
+}
+
 function getWindowState(program) {
   const startAt = clean(program?.activityRecordStartAt, 80)
   const endAt = clean(program?.activityRecordEndAt, 80)
-  const start = startAt ? new Date(startAt).getTime() : Number.NaN
-  const end = endAt ? new Date(endAt).getTime() : Number.NaN
+  const start = parseActivityDateTime(startAt)
+  const end = parseActivityDateTime(endAt)
   const now = Date.now()
   const configured = Number.isFinite(start) && Number.isFinite(end) && start < end
   return {
@@ -96,10 +105,13 @@ async function api(action, payload = {}) {
 
 async function findLocalStudentContext(program, user) {
   const clubs = (await listSchedules()).filter((club) => club.programId === program.id && !club.legacy)
-  for (const club of clubs) {
+  const matches = await Promise.all(clubs.map(async (club) => {
     const members = await listClubMembers(club.id)
     const member = members.find((row) => row.studentUid === user.uid)
-    if (member) return { club, member }
+    return member ? { club, member } : null
+  }))
+  for (const match of matches) {
+    if (match) return match
   }
   return null
 }

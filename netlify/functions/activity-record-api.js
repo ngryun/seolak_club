@@ -36,6 +36,15 @@ function clean(value, max = 10000) {
   return String(value || '').trim().slice(0, max)
 }
 
+function parseActivityDateTime(value) {
+  const raw = clean(value, 80)
+  if (!raw) return Number.NaN
+  // datetime-local 값이 남아 있는 구버전 데이터도 한국 시간으로 해석합니다.
+  const localMatch = raw.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/u)
+  const normalized = localMatch ? `${raw.length === 16 ? `${raw}:00` : raw}+09:00` : raw
+  return new Date(normalized).getTime()
+}
+
 function toIso(value) {
   if (!value) return null
   if (typeof value === 'string') return value
@@ -50,6 +59,10 @@ function recordId(cycleId, studentUid) {
 
 function recordRef(clubId, cycleId, studentUid) {
   return db().doc(`schedules/${clubId}/activityRecords/${recordId(cycleId, studentUid)}`)
+}
+
+function assignmentId(cycleId, studentUid) {
+  return `${clean(cycleId || 'current', 160)}__${clean(studentUid, 160)}`.replaceAll('/', '_')
 }
 
 function normalizeQuestions(value) {
@@ -121,8 +134,8 @@ async function getProgram(programId) {
 function getWindowState(program) {
   const startAt = clean(program.activityRecordStartAt, 80)
   const endAt = clean(program.activityRecordEndAt, 80)
-  const start = startAt ? new Date(startAt).getTime() : Number.NaN
-  const end = endAt ? new Date(endAt).getTime() : Number.NaN
+  const start = parseActivityDateTime(startAt)
+  const end = parseActivityDateTime(endAt)
   const now = Date.now()
   const configured = Number.isFinite(start) && Number.isFinite(end) && start < end
   return {
@@ -163,12 +176,51 @@ function teacherUids(club) {
 }
 
 async function findStudentMembership(program, studentUid) {
-  const clubs = await listProgramClubs(program.id)
-  const memberships = await Promise.all(clubs.map(async (club) => {
-    const member = await db().doc(`schedules/${club.id}/members/${studentUid}`).get()
-    return member.exists ? { club, member: { id: member.id, ...member.data() } } : null
-  }))
-  return memberships.find(Boolean) || null
+  // 승인 처리 시 저장되는 배정 문서를 우선 사용합니다. 기존 방식처럼 모든 수업과
+  // 모든 수업의 학생 문서를 읽으면 수업 수가 늘어날수록 학생 화면이 느려집니다.
+  const assignment = await db().doc(`recruitmentAssignments/${assignmentId(program.cycleId, studentUid)}`).get()
+  const assignedClubId = clean(assignment.data()?.clubId, 160)
+  if (assignment.exists && assignedClubId) {
+    const [clubSnapshot, memberSnapshot] = await Promise.all([
+      db().doc(`schedules/${assignedClubId}`).get(),
+      db().doc(`schedules/${assignedClubId}/members/${studentUid}`).get(),
+    ])
+    if (clubSnapshot.exists && memberSnapshot.exists) {
+      const club = { id: clubSnapshot.id, ...clubSnapshot.data() }
+      if (clean(club.programId || DEFAULT_PROGRAM_ID, 160) === program.id) {
+        return { club, member: { id: memberSnapshot.id, ...memberSnapshot.data() } }
+      }
+    }
+  }
+
+  // 배정 문서가 없는 기존 데이터는 학생 UID로 members 컬렉션 그룹을 조회해
+  // 레거시 자료도 계속 찾을 수 있도록 보조 경로를 유지합니다.
+  try {
+    const membershipSnapshot = await db().collectionGroup('members').where('studentUid', '==', studentUid).get()
+    const candidates = membershipSnapshot.docs
+      .map((memberSnapshot) => ({ memberSnapshot, clubId: memberSnapshot.ref.parent.parent?.id || '' }))
+      .filter((row) => row.clubId)
+    const clubSnapshots = await Promise.all(candidates.map((row) => db().doc(`schedules/${row.clubId}`).get()))
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index]
+      const clubSnapshot = clubSnapshots[index]
+      if (!clubSnapshot.exists) continue
+      const club = { id: clubSnapshot.id, ...clubSnapshot.data() }
+      if (clean(club.programId || DEFAULT_PROGRAM_ID, 160) === program.id) {
+        return { club, member: { id: candidate.memberSnapshot.id, ...candidate.memberSnapshot.data() } }
+      }
+    }
+    return null
+  } catch (error) {
+    // collectionGroup 인덱스가 아직 배포되지 않은 환경에서는 기존 조회로 복구합니다.
+    console.warn('학생 활동 기록의 빠른 명단 조회를 사용할 수 없어 기존 조회로 복구합니다.', error)
+    const clubs = await listProgramClubs(program.id)
+    const memberships = await Promise.all(clubs.map(async (club) => {
+      const member = await db().doc(`schedules/${club.id}/members/${studentUid}`).get()
+      return member.exists ? { club, member: { id: member.id, ...member.data() } } : null
+    }))
+    return memberships.find(Boolean) || null
+  }
 }
 
 async function authorizeTeacher(actorUser, clubId, programId) {
@@ -229,8 +281,7 @@ async function getStudentContext(actorUser, program) {
   return { club, member, ref, snapshot, record: normalizeRecord(snapshot.exists ? { id: snapshot.id, ...snapshot.data() } : {}, fallback) }
 }
 
-async function studentGet(actorUser, program) {
-  const context = await getStudentContext(actorUser, program)
+function studentResult(program, context) {
   return {
     eligible: Boolean(context),
     window: getWindowState(program),
@@ -238,6 +289,11 @@ async function studentGet(actorUser, program) {
     club: context ? { id: context.club.id, clubName: clean(context.club.clubName, 160) } : null,
     record: context?.record || null,
   }
+}
+
+async function studentGet(actorUser, program) {
+  const context = await getStudentContext(actorUser, program)
+  return studentResult(program, context)
 }
 
 async function studentSave(actorUser, program, body) {
@@ -264,7 +320,22 @@ async function studentSave(actorUser, program, body) {
     createdAt: existingData.createdAt || timestamp(),
     updatedAt: timestamp(),
   }, { merge: true })
-  return studentGet(actorUser, program)
+  context.record = normalizeRecord({
+    id: context.snapshot.id,
+    ...existingData,
+    programId: program.id,
+    cycleId: program.cycleId,
+    clubId: context.club.id,
+    studentUid: actorUser.uid,
+    studentNo: clean(context.member.studentNo || actorUser.studentNo, 40),
+    studentName: clean(context.member.name || actorUser.name, 120),
+    commonAnswers,
+    additionalAnswers: { ...(existingData.additionalAnswers || {}), ...additionalAnswers },
+    questionSnapshot: [...snapshotMap.values()],
+    attachments: Array.isArray(existingData.attachments) ? existingData.attachments : [],
+    ...studentEditPatch(existingData, submitting ? 'submitted' : 'draft'),
+  }, { id: context.snapshot.id || context.ref.id, programId: program.id, cycleId: program.cycleId, clubId: context.club.id, studentUid: actorUser.uid })
+  return studentResult(program, context)
 }
 
 function safeFileName(value) {
@@ -306,7 +377,19 @@ async function uploadAttachment(actorUser, program, body) {
     createdAt: existing.createdAt || timestamp(),
     updatedAt: timestamp(),
   }, { merge: true })
-  return studentGet(actorUser, program)
+  context.record = normalizeRecord({
+    id: context.snapshot.id,
+    ...existing,
+    programId: program.id,
+    cycleId: program.cycleId,
+    clubId: context.club.id,
+    studentUid: actorUser.uid,
+    studentNo: clean(context.member.studentNo || actorUser.studentNo, 40),
+    studentName: clean(context.member.name || actorUser.name, 120),
+    attachments: nextAttachments,
+    ...studentEditPatch(existing, 'draft'),
+  }, { id: context.snapshot.id || context.ref.id, programId: program.id, cycleId: program.cycleId, clubId: context.club.id, studentUid: actorUser.uid })
+  return studentResult(program, context)
 }
 
 async function removeAttachment(actorUser, program, body) {
@@ -323,7 +406,13 @@ async function removeAttachment(actorUser, program, body) {
     ...studentEditPatch(existing, 'draft'),
     updatedAt: timestamp(),
   }, { merge: true })
-  return studentGet(actorUser, program)
+  context.record = normalizeRecord({
+    id: context.snapshot.id,
+    ...existing,
+    attachments: attachments.filter((row) => clean(row.id, 120) !== clean(body.attachmentId, 120)),
+    ...studentEditPatch(existing, 'draft'),
+  }, { id: context.snapshot.id || context.ref.id, programId: program.id, cycleId: program.cycleId, clubId: context.club.id, studentUid: actorUser.uid })
+  return studentResult(program, context)
 }
 
 async function downloadAttachment(actorUser, program, body) {
