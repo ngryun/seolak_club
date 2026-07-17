@@ -8,7 +8,7 @@ import {
   signInWithLoginId,
   recordLastLogin,
 } from '../services/userService'
-import { clearAttendanceApiSession, createAttendanceApiSession } from '../services/attendanceService'
+import { clearAttendanceApiSession, createAttendanceApiSession, refreshAttendanceApiSession } from '../services/attendanceService'
 
 const SESSION_KEY = 'app.session.v3'
 
@@ -126,6 +126,8 @@ export function AuthProvider({ children }) {
         setSession(nextSession)
         persistSession(nextSession)
         setSyncError('')
+        // 로그인 세션이 유지되는 동안 출석부 보안 토큰도 만료되지 않도록 조용히 연장합니다.
+        refreshAttendanceApiSession().catch(() => {})
       } catch (error) {
         if (!mounted) return
         const message = error instanceof Error ? error.message : '로그인 초기화 실패'

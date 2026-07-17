@@ -1,10 +1,9 @@
 import { isFirebaseEnabled } from '../lib/firebase'
 import { listClubMembers, listCurrentCycleApplications } from './applicationService'
-import { exportAttendanceData } from './attendanceService'
+import { exportAttendanceData, getAttendanceApiToken } from './attendanceService'
 import { getClubTeacherUids, listSchedules } from './scheduleService'
 
 const STORE_KEY = 'app.activity-records.demo.v1'
-const API_TOKEN_KEY = 'app.attendance.api-token.v1'
 const COMMON_LIMITS = { activity: 200, contribution: 200, learning: 250, change: 250, followUp: 200 }
 
 function readStore() {
@@ -86,7 +85,7 @@ function emptyRecord(program, club, member) {
 }
 
 async function api(action, payload = {}) {
-  const token = sessionStorage.getItem(API_TOKEN_KEY) || ''
+  const token = getAttendanceApiToken()
   const response = await fetch('/.netlify/functions/activity-record-api', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
@@ -195,10 +194,7 @@ export async function listTeacherActivityRecords({ program, actor, clubId = '', 
   if (metaOnly) return { window: getWindowState(program), clubs: clubSummaries, rows: [] }
   const targetClubs = clubId ? allowedClubs.filter((club) => club.id === clubId) : allowedClubs
   if (clubId && targetClubs.length === 0) throw new Error('이 수업의 학생 활동 기록 권한이 없습니다.')
-  const [applications, attendanceData] = await Promise.all([
-    listCurrentCycleApplications({ program }),
-    exportAttendanceData(),
-  ])
+  const applications = await listCurrentCycleApplications({ program })
   const store = readStore()
   const rows = []
   for (const club of targetClubs) {
@@ -214,7 +210,6 @@ export async function listTeacherActivityRecords({ program, actor, clubId = '', 
         ...submittedRecord,
         clubName: club.clubName,
         application: { careerGoal: application.careerGoal || '', applyReason: application.applyReason || '', wantedActivity: application.wantedActivity || '' },
-        attendance: localAttendanceSummary(attendanceData.records, program, club.id, member.studentUid),
       })
     }
   }
@@ -233,9 +228,21 @@ export async function saveTeacherActivityRecord({ program, actor, clubId, studen
   const key = getRecordKey(program, clubId, studentUid)
   const existing = store.records?.[key] || emptyRecord(program, { id: clubId }, { studentUid, studentNo: row.studentNo, name: row.studentName })
   const now = new Date().toISOString()
-  store.records = { ...(store.records || {}), [key]: { ...existing, observationNote: clean(observationNote, 2000), studentRecordText: clean(studentRecordText, 3000), teacherStatus: teacherStatus === 'completed' ? 'completed' : 'reviewing', teacherUpdatedAt: now, reviewedByUid: actor.uid, studentUpdatedAfterReview: false, updatedAt: now } }
+  const next = { ...existing, observationNote: clean(observationNote, 2000), studentRecordText: clean(studentRecordText, 3000), teacherStatus: teacherStatus === 'completed' ? 'completed' : 'reviewing', teacherUpdatedAt: now, reviewedByUid: actor.uid, studentUpdatedAfterReview: false, updatedAt: now }
+  store.records = { ...(store.records || {}), [key]: next }
   writeStore(store)
-  return listTeacherActivityRecords({ program, actor, clubId })
+  // 서버와 동일하게 저장된 학생의 레코드만 반환합니다. 미제출 학생의 임시 답변은 노출하지 않습니다.
+  const masked = next.studentStatus === 'submitted'
+    ? next
+    : { ...next, commonAnswers: Object.fromEntries(Object.keys(COMMON_LIMITS).map((field) => [field, ''])), additionalAnswers: {}, questionSnapshot: [] }
+  return { record: { ...masked, clubName: row.clubName } }
+}
+
+// 출결 요약은 편집 화면에서 선택된 학생만 필요할 때 개별 조회합니다.
+export async function getTeacherActivityAttendanceSummary({ program, clubId, studentUid }) {
+  if (isFirebaseEnabled()) return api('attendance-summary', { programId: program.id, clubId, studentUid })
+  const attendanceData = await exportAttendanceData()
+  return localAttendanceSummary(attendanceData.records, program, clubId, studentUid)
 }
 
 export async function exportActivityRecordData() {

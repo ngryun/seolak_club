@@ -39,9 +39,12 @@ async function loadClubRoster(clubId, program = {}) {
     })))
 }
 
-async function readRecord(clubId, sessionId, create = true, programId = '', origin = '', fallbackRoster = null, program = {}, accessData = null) {
+async function readRecord(clubId, sessionId, create = true, programId = '', origin = '', fallbackRoster = null, program = {}, accessData = null, options = {}) {
+  const { includeEntries = true } = options
   const { session, entries } = refs(clubId, sessionId)
-  let sessionSnap = await session.get()
+  const sessionSnap = await session.get()
+  let data
+  let created = false
   if (!sessionSnap.exists && create) {
     const rosterSnapshot = fallbackRoster || await loadClubRoster(clubId, program)
     const access = programId
@@ -56,10 +59,13 @@ async function readRecord(clubId, sessionId, create = true, programId = '', orig
     batch.set(session, { programId, status: 'open', rosterSnapshot, publicEnabled, tokenVersion, publicUrl, createdAt: timestamp(), updatedAt: timestamp() })
     for (const student of rosterSnapshot) batch.set(entries.doc(student.studentUid), { status: 'unchecked', updatedAt: timestamp(), updatedBy: 'system' })
     await batch.commit()
-    sessionSnap = await session.get()
+    // 방금 만든 문서를 다시 읽지 않고 로컬 값으로 응답을 구성합니다.
+    data = { programId, status: 'open', rosterSnapshot, publicEnabled, tokenVersion, publicUrl }
+    created = true
+  } else {
+    if (!sessionSnap.exists) throw Object.assign(new Error('출석 회차를 찾을 수 없습니다.'), { status: 404 })
+    data = sessionSnap.data()
   }
-  if (!sessionSnap.exists) throw Object.assign(new Error('출석 회차를 찾을 수 없습니다.'), { status: 404 })
-  let data = sessionSnap.data()
   let rosterSnapshot = Array.isArray(data.rosterSnapshot) ? data.rosterSnapshot : []
   if (!rosterSnapshot.length) {
     const currentRoster = fallbackRoster || await loadClubRoster(clubId, program)
@@ -72,7 +78,10 @@ async function readRecord(clubId, sessionId, create = true, programId = '', orig
       rosterSnapshot = currentRoster
     }
   }
-  const entrySnap = await entries.get(); const entryMap = Object.fromEntries(entrySnap.docs.map((doc) => [doc.id, doc.data()]))
+  // 새로 만든 회차는 전원 미체크이므로 entries를 다시 읽을 필요가 없습니다.
+  const entryMap = created || !includeEntries
+    ? {}
+    : Object.fromEntries((await entries.get()).docs.map((doc) => [doc.id, doc.data()]))
   // 프로그램 단위 설정을 기준으로 기존·지연 생성 회차의 QR 상태도 동기화합니다.
   // 일괄 처리 중 일부 회차가 새로 만들어지거나 재시도되는 경우에도 상태가 어긋나지 않습니다.
   if (programId) {
@@ -135,7 +144,11 @@ export default async (req) => {
       await programSnap.ref.set({ attendanceQrEnabled: body.enabled === true, attendanceQrPinRequired: pinRequired, updatedAt: timestamp() }, { merge: true })
 
       const origin = new URL(req.url).origin
-      const scheduleSnap = await db().collection('schedules').get()
+      // 기본 프로그램은 programId 필드가 없는 과거 문서도 포함해야 해서 전체를 읽고,
+      // 그 외 프로그램은 인덱스 쿼리로 해당 수업만 읽습니다.
+      const scheduleSnap = programId === 'club-default'
+        ? await db().collection('schedules').get()
+        : await db().collection('schedules').where('programId', '==', programId).get()
       const clubs = scheduleSnap.docs.filter((row) => {
         const clubProgramId = String(row.data().programId || (programId === 'club-default' ? 'club-default' : ''))
         return clubProgramId === programId
@@ -146,7 +159,7 @@ export default async (req) => {
       const rosterByClub = new Map(rosterRows)
       const jobs = clubs.flatMap((club) => sessions.map(async (sessionConfig) => {
         const sessionId = String(sessionConfig.id)
-        const record = await readRecord(club.id, sessionId, true, programId, origin, rosterByClub.get(club.id) || [], program, accessData)
+        const record = await readRecord(club.id, sessionId, true, programId, origin, rosterByClub.get(club.id) || [], program, accessData, { includeEntries: false })
         if (record.status === 'closed') return { status: 'closed' }
         const version = (Number(record.tokenVersion) || 1) + (body.rotate === true ? 1 : 0)
         const enabled = body.enabled === true
@@ -177,25 +190,31 @@ export default async (req) => {
       return json({ records })
     }
     const clubId = String(body.clubId || ''); const sessionId = String(body.sessionId || '')
-    const { club } = await authorizeClub(actor, clubId, action === 'configure-public')
-    if (String(body.programId || '') && String(club.programId || '') !== String(body.programId)) return json({ error: '프로그램과 수업 정보가 일치하지 않습니다.' }, 400)
-    const programSnap = await db().doc(`programs/${body.programId}`).get(); const program = programSnap.data()
+    const programId = String(body.programId || '').trim()
+    if (!programId) return json({ error: '프로그램 정보가 필요합니다.' }, 400)
+    // 권한·프로그램·QR 설정 문서를 병렬로 한 번씩만 읽고 이후 단계에 재사용합니다.
+    const [{ club }, programSnap, accessSnap] = await Promise.all([
+      authorizeClub(actor, clubId, action === 'configure-public'),
+      db().doc(`programs/${programId}`).get(),
+      db().doc(`_attendanceAccess/${programId}`).get(),
+    ])
+    if (String(club.programId || '') !== programId) return json({ error: '프로그램과 수업 정보가 일치하지 않습니다.' }, 400)
+    const program = programSnap.data()
     if (!programSnap.exists || program.features?.attendance !== true) return json({ error: '출석부 기능이 활성화되지 않은 프로그램입니다.' }, 400)
+    const accessData = accessSnap.data() || {}
     const sessionConfig = (program.attendanceSchedule || []).find((row) => String(row.id) === sessionId)
     const origin = new URL(req.url).origin
     if (action === 'get-date-public') {
       const date = String(body.date || '').trim()
       const requestedIds = new Set((Array.isArray(body.sessionIds) ? body.sessionIds : [])
         .map((id) => String(id || '').trim()).filter(Boolean))
-      const accessSnap = await db().doc(`_attendanceAccess/${body.programId}`).get()
-      const accessData = accessSnap.data() || {}
       if (accessData.enabled !== true) return json({ error: '프로그램 QR이 활성화되어 있지 않습니다.' }, 409)
       const sessionConfigs = (program.attendanceSchedule || []).filter((row) => row?.active !== false
         && row?.id && String(row.date || '') === date
         && (!requestedIds.size || requestedIds.has(String(row.id))))
       if (!date || !sessionConfigs.length) return json({ error: '해당 날짜의 출석 회차가 없습니다.' }, 400)
       const records = await Promise.all(sessionConfigs.map((row) => readRecord(
-        clubId, String(row.id), true, String(body.programId || ''), origin, null, program, accessData,
+        clubId, String(row.id), true, programId, origin, null, program, accessData, { includeEntries: false },
       )))
       const usable = records
         .map((record, index) => ({ record, config: sessionConfigs[index] }))
@@ -222,34 +241,37 @@ export default async (req) => {
         return json({ error: '프로그램에 등록되지 않은 출석 회차가 포함되어 있습니다.' }, 400)
       }
       const roster = await loadClubRoster(clubId, program)
-      const records = await Promise.all(sessionIds.map((id) => readRecord(clubId, id, true, String(body.programId || ''), origin, roster, program)))
+      const records = await Promise.all(sessionIds.map((id) => readRecord(clubId, id, true, programId, origin, roster, program, accessData)))
       return json({ records })
     }
     if (!sessionConfig) return json({ error: '프로그램에 등록되지 않은 출석 회차입니다.' }, 400)
-    if (action === 'get') return json(await readRecord(clubId, sessionId, true, String(body.programId || ''), origin, null, program))
-    const record = await readRecord(clubId, sessionId, true, String(body.programId || ''), origin, null, program); const { session, entries } = refs(clubId, sessionId)
+    if (action === 'get') return json(await readRecord(clubId, sessionId, true, programId, origin, null, program, accessData))
+    const record = await readRecord(clubId, sessionId, true, programId, origin, null, program, accessData, { includeEntries: action !== 'configure-public' })
+    const { session, entries } = refs(clubId, sessionId)
+    // 저장 후 전체 문서를 다시 읽지 않고, 이미 읽어둔 레코드에 쓴 값을 병합해 응답합니다.
     if (action === 'set-status') {
       const status = body.status === 'closed' ? 'closed' : 'open'
       let publicPatch = { publicEnabled: false, publicUrl: '' }
-      if (status === 'open') {
-        const accessSnap = await db().doc(`_attendanceAccess/${body.programId}`).get()
-        if (accessSnap.data()?.enabled === true) {
-          const version = Number(record.tokenVersion) || 1
-          publicPatch = {
-            publicEnabled: true,
-            publicUrl: `${origin}/attendance/public/${createPublicToken({ scheduleId: clubId, sessionId, programId: body.programId, version })}`,
-          }
+      if (status === 'open' && accessData.enabled === true) {
+        const version = Number(record.tokenVersion) || 1
+        publicPatch = {
+          publicEnabled: true,
+          publicUrl: `${origin}/attendance/public/${createPublicToken({ scheduleId: clubId, sessionId, programId, version })}`,
         }
       }
       await session.set({ status, ...publicPatch, updatedAt: timestamp(), updatedBy: actor.uid }, { merge: true })
-      return json(await readRecord(clubId, sessionId, false, String(body.programId || ''), origin))
+      return json({ ...record, status, ...publicPatch })
     }
     if (record.status === 'closed') return json({ error: '종료된 출석 회차입니다.' }, 409)
     if (action === 'save') {
       const batch = db().batch(); const allowed = record.rosterSnapshot.map((row) => row.studentUid)
-      for (const [uid, status] of normalizeEntries(body.entries, allowed)) batch.set(entries.doc(uid), { status, updatedAt: timestamp(), updatedBy: actor.uid }, { merge: true })
+      const changes = normalizeEntries(body.entries, allowed)
+      for (const [uid, status] of changes) batch.set(entries.doc(uid), { status, updatedAt: timestamp(), updatedBy: actor.uid }, { merge: true })
       batch.set(session, { updatedAt: timestamp(), updatedBy: actor.uid }, { merge: true }); await batch.commit()
-      return json(await readRecord(clubId, sessionId, false, String(body.programId || ''), origin))
+      const savedAt = new Date().toISOString()
+      const mergedEntries = { ...record.entries }
+      for (const [uid, status] of changes) mergedEntries[uid] = { status, updatedAt: savedAt, updatedBy: actor.uid }
+      return json({ ...record, entries: mergedEntries })
     }
     if (action === 'sync-roster') {
       if (Object.values(record.entries).some((row) => row.status && row.status !== 'unchecked')) return json({ error: '출결 입력이 시작된 회차는 명단을 동기화할 수 없습니다.' }, 409)
@@ -259,16 +281,20 @@ export default async (req) => {
       for (const student of rosterSnapshot) batch.set(entries.doc(student.studentUid), { status: 'unchecked', updatedAt: timestamp(), updatedBy: actor.uid })
       batch.set(session, { rosterSnapshot, updatedAt: timestamp(), updatedBy: actor.uid }, { merge: true })
       await batch.commit()
-      return json(await readRecord(clubId, sessionId, false, String(body.programId || ''), origin))
+      const syncedAt = new Date().toISOString()
+      return json({
+        ...record,
+        rosterSnapshot,
+        entries: Object.fromEntries(rosterSnapshot.map((student) => [student.studentUid, { status: 'unchecked', updatedAt: syncedAt, updatedBy: actor.uid }])),
+      })
     }
     if (action === 'configure-public') {
       const version = (Number(record.tokenVersion) || 1) + (body.rotate ? 1 : 0)
       const enabled = body.enabled === true
-      if (enabled) {
-        const access = await db().doc(`_attendanceAccess/${body.programId}`).get()
-        if (!access.exists || !access.data().hash || access.data().enabled !== true) return json({ error: '관리자가 프로그램 관리에서 QR을 먼저 활성화해야 합니다.' }, 409)
+      if (enabled && (!accessData.hash || accessData.enabled !== true)) {
+        return json({ error: '관리자가 프로그램 관리에서 QR을 먼저 활성화해야 합니다.' }, 409)
       }
-      const token = createPublicToken({ scheduleId: clubId, sessionId, programId: body.programId, version })
+      const token = createPublicToken({ scheduleId: clubId, sessionId, programId, version })
       const publicUrl = enabled ? `${origin}/attendance/public/${token}` : ''
       await session.set({ publicEnabled: enabled, tokenVersion: version, publicUrl, updatedAt: timestamp(), updatedBy: actor.uid }, { merge: true })
       return json({ publicEnabled: enabled, tokenVersion: version, publicUrl })

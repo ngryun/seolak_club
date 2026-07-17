@@ -3,6 +3,44 @@ import { isFirebaseEnabled } from '../lib/firebase'
 const STORE_KEY = 'app.attendance.demo.v1'
 const API_TOKEN_KEY = 'app.attendance.api-token.v1'
 
+function readTokenPayload(token) {
+  try {
+    const encoded = String(token).split('.')[0].replaceAll('-', '+').replaceAll('_', '/')
+    const padded = encoded + '='.repeat((4 - (encoded.length % 4)) % 4)
+    return JSON.parse(decodeURIComponent(escape(atob(padded))))
+  } catch { return null }
+}
+
+// 앱 로그인 세션(localStorage)과 수명을 맞추기 위해 토큰도 localStorage에 보관합니다.
+// 이전 버전이 sessionStorage에 남긴 토큰은 읽는 시점에 옮겨옵니다.
+export function getAttendanceApiToken() {
+  let token = ''
+  try {
+    token = localStorage.getItem(API_TOKEN_KEY) || ''
+    if (!token) {
+      token = sessionStorage.getItem(API_TOKEN_KEY) || ''
+      if (token) {
+        localStorage.setItem(API_TOKEN_KEY, token)
+        sessionStorage.removeItem(API_TOKEN_KEY)
+      }
+    }
+  } catch { return '' }
+  if (!token) return ''
+  const payload = readTokenPayload(token)
+  if (payload?.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+    clearAttendanceApiSession()
+    return ''
+  }
+  return token
+}
+
+function setAttendanceApiToken(token) {
+  try {
+    localStorage.setItem(API_TOKEN_KEY, token)
+    sessionStorage.removeItem(API_TOKEN_KEY)
+  } catch { /* noop */ }
+}
+
 function readStore() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}') } catch { return {} }
 }
@@ -47,7 +85,7 @@ function normalizeRecord(record, fallback = {}) {
 }
 
 async function api(endpoint, action, payload = {}, options = {}) {
-  const token = options.publicToken || sessionStorage.getItem(API_TOKEN_KEY) || ''
+  const token = options.publicToken || getAttendanceApiToken()
   let response
   try {
     response = await fetch(`/.netlify/functions/${endpoint}`, {
@@ -64,7 +102,7 @@ async function api(endpoint, action, payload = {}, options = {}) {
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
     const error = new Error(data?.error || '출석부 서버 요청에 실패했습니다.')
-    Object.assign(error, data)
+    Object.assign(error, data, { status: response.status })
     throw error
   }
   return data
@@ -73,16 +111,33 @@ async function api(endpoint, action, payload = {}, options = {}) {
 export async function createAttendanceApiSession(loginId, password) {
   if (!isFirebaseEnabled()) return ''
   const data = await api('attendance-auth', 'login', { loginId, password })
-  sessionStorage.setItem(API_TOKEN_KEY, data.token)
+  setAttendanceApiToken(data.token)
   return data.token
 }
 
+// 앱 실행 시 기존 토큰으로 새 토큰을 발급받아 유효기간을 연장합니다.
+// 서버가 토큰을 거부(401)한 경우에만 세션을 지우고, 네트워크 오류는 무시합니다.
+export async function refreshAttendanceApiSession() {
+  if (!isFirebaseEnabled() || !getAttendanceApiToken()) return false
+  try {
+    const data = await api('attendance-auth', 'refresh')
+    setAttendanceApiToken(data.token)
+    return true
+  } catch (error) {
+    if (error?.status === 401) clearAttendanceApiSession()
+    return false
+  }
+}
+
 export function clearAttendanceApiSession() {
-  try { sessionStorage.removeItem(API_TOKEN_KEY) } catch { /* noop */ }
+  try {
+    localStorage.removeItem(API_TOKEN_KEY)
+    sessionStorage.removeItem(API_TOKEN_KEY)
+  } catch { /* noop */ }
 }
 
 export function hasAttendanceApiSession() {
-  return !isFirebaseEnabled() || !!sessionStorage.getItem(API_TOKEN_KEY)
+  return !isFirebaseEnabled() || !!getAttendanceApiToken()
 }
 
 // 데모 모드에서도 프로그램 관리 화면이 새로고침 뒤 QR 상태를 표시할 수 있도록

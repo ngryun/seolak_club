@@ -49,8 +49,12 @@ function verifyToken(token, secret) {
   return payload
 }
 
+// 앱 로그인 세션(localStorage)이 살아 있는 동안 보안 세션만 먼저 끊기지 않도록
+// 30일로 두고, 앱 실행 시마다 refresh로 연장합니다.
+export const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+
 export function createSessionToken(user) {
-  return signedToken({ uid: user.uid, role: user.role, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 8 * 60 * 60 }, process.env.ATTENDANCE_SESSION_SECRET)
+  return signedToken({ uid: user.uid, role: user.role, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS }, process.env.ATTENDANCE_SESSION_SECRET)
 }
 
 export function requireActor(req) {
