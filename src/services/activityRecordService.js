@@ -79,7 +79,6 @@ function emptyRecord(program, club, member) {
     questionSnapshot: [],
     studentStatus: 'unsubmitted',
     teacherStatus: '',
-    observationNote: '',
     studentRecordText: '',
   }
 }
@@ -217,8 +216,8 @@ export async function listTeacherActivityRecords({ program, actor, clubId = '', 
   return { window: getWindowState(program), clubs: clubSummaries, rows }
 }
 
-export async function saveTeacherActivityRecord({ program, actor, clubId, studentUid, observationNote, studentRecordText, teacherStatus }) {
-  if (isFirebaseEnabled()) return api('teacher-save', { programId: program.id, clubId, studentUid, observationNote, studentRecordText, teacherStatus })
+export async function saveTeacherActivityRecord({ program, actor, clubId, studentUid, studentRecordText, teacherStatus }) {
+  if (isFirebaseEnabled()) return api('teacher-save', { programId: program.id, clubId, studentUid, studentRecordText, teacherStatus })
   const current = await listTeacherActivityRecords({ program, actor, clubId })
   const row = current.rows.find((item) => item.clubId === clubId && item.studentUid === studentUid)
   if (!row) throw new Error('확정 참여 학생을 찾을 수 없습니다.')
@@ -228,7 +227,7 @@ export async function saveTeacherActivityRecord({ program, actor, clubId, studen
   const key = getRecordKey(program, clubId, studentUid)
   const existing = store.records?.[key] || emptyRecord(program, { id: clubId }, { studentUid, studentNo: row.studentNo, name: row.studentName })
   const now = new Date().toISOString()
-  const next = { ...existing, observationNote: clean(observationNote, 2000), studentRecordText: clean(studentRecordText, 3000), teacherStatus: teacherStatus === 'completed' ? 'completed' : 'reviewing', teacherUpdatedAt: now, reviewedByUid: actor.uid, studentUpdatedAfterReview: false, updatedAt: now }
+  const next = { ...existing, studentRecordText: clean(studentRecordText, 3000), teacherStatus: teacherStatus === 'completed' ? 'completed' : 'reviewing', teacherUpdatedAt: now, reviewedByUid: actor.uid, studentUpdatedAfterReview: false, updatedAt: now }
   store.records = { ...(store.records || {}), [key]: next }
   writeStore(store)
   // 서버와 동일하게 저장된 학생의 레코드만 반환합니다. 미제출 학생의 임시 답변은 노출하지 않습니다.

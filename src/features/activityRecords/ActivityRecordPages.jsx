@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getStudentActivityRecord,
   getTeacherActivityAttendanceSummary,
@@ -25,6 +25,19 @@ const COMMON_QUESTIONS = [
 ]
 
 const EMPTY_COMMON = Object.fromEntries(COMMON_QUESTIONS.map((row) => [row.key, '']))
+
+const RECORD_TEXT_LIMIT = 3000
+const NEIS_BYTE_LIMIT = 1500
+
+// NEIS 기준 바이트 계산: 한글 등 다국어 문자 3Byte, 줄바꿈 2Byte, 영문·숫자·공백 1Byte
+function neisBytes(text) {
+  let bytes = 0
+  for (const ch of text) {
+    if (ch === '\n') bytes += 2
+    else bytes += ch.charCodeAt(0) > 127 ? 3 : 1
+  }
+  return bytes
+}
 
 function formatTime(value) {
   if (!value) return '-'
@@ -162,11 +175,16 @@ export function StudentActivityRecordPage({ user, program }) {
   )
 }
 
-function TeacherRecordEditor({ row, program, actor, onSaved, onError }) {
-  const [observationNote, setObservationNote] = useState(row.observationNote || '')
+function TeacherRecordEditor({ row, program, actor, nav, onSaved, onError }) {
   const [studentRecordText, setStudentRecordText] = useState(row.studentRecordText || '')
   const [saving, setSaving] = useState(false)
   const [attendance, setAttendance] = useState(null)
+  const [showAnswers, setShowAnswers] = useState(true)
+  const textareaRef = useRef(null)
+
+  const dirty = studentRecordText !== (row.studentRecordText || '')
+  const bytes = neisBytes(studentRecordText)
+  const overNeis = bytes > NEIS_BYTE_LIMIT
 
   useEffect(() => {
     let active = true
@@ -177,11 +195,18 @@ function TeacherRecordEditor({ row, program, actor, onSaved, onError }) {
     return () => { active = false }
   }, [program, row.clubId, row.studentUid])
 
+  useEffect(() => {
+    const element = textareaRef.current
+    if (!element) return
+    element.style.height = 'auto'
+    element.style.height = `${Math.max(220, element.scrollHeight)}px`
+  }, [studentRecordText])
+
   async function save(teacherStatus) {
     setSaving(true)
     onError('')
     try {
-      const next = await saveTeacherActivityRecord({ program, actor, clubId: row.clubId, studentUid: row.studentUid, observationNote, studentRecordText, teacherStatus })
+      const next = await saveTeacherActivityRecord({ program, actor, clubId: row.clubId, studentUid: row.studentUid, studentRecordText, teacherStatus })
       onSaved(next, teacherStatus === 'completed' ? '생활기록부 작성 내용을 완료 처리했습니다.' : '교사 검토 내용을 저장했습니다.')
     } catch (reason) {
       onError(reason instanceof Error ? reason.message : '교사 기록을 저장하지 못했습니다.')
@@ -190,22 +215,26 @@ function TeacherRecordEditor({ row, program, actor, onSaved, onError }) {
     }
   }
 
+  function moveBy(delta) {
+    if (dirty && !window.confirm('저장하지 않은 생활기록부 작성 내용이 있습니다. 저장하지 않고 이동할까요?')) return
+    nav.select(nav.index + delta)
+  }
+
   const snapshotMap = new Map((row.questionSnapshot || []).map((question) => [question.id, question]))
 
   return (
-    <section style={{ ...card, display: 'grid', gap: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+    <section style={{ ...card, display: 'grid', gap: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start' }}>
         <div>
           <h3 style={{ margin: '0 0 4px', fontSize: 17 }}>{row.studentNo} {row.studentName}</h3>
           <div style={{ fontSize: 12, color: color.sub }}>{row.clubName} · 학생 제출 {formatTime(row.submittedAt)}</div>
         </div>
-        <StatusBadge record={row} />
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
-        {[['진로희망', row.application?.careerGoal], ['신청사유', row.application?.applyReason], ['희망활동', row.application?.wantedActivity]].map(([label, value]) => (
-          <div key={label} style={{ padding: 10, borderRadius: 8, background: '#f8fafc' }}><div style={{ fontSize: 11, fontWeight: 800, color: color.sub }}>{label}</div><div style={{ marginTop: 4, fontSize: 13, whiteSpace: 'pre-wrap' }}>{value || '-'}</div></div>
-        ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+          <StatusBadge record={row} />
+          <button type="button" disabled={saving || nav.index <= 0} onClick={() => moveBy(-1)} style={{ ...button, padding: '6px 10px', background: '#fff', border: `1px solid ${color.border}`, color: color.sub, opacity: saving || nav.index <= 0 ? 0.45 : 1 }}>◀ 이전</button>
+          <span style={{ fontSize: 12, color: color.sub }}>{nav.index + 1} / {nav.total}</span>
+          <button type="button" disabled={saving || nav.index >= nav.total - 1} onClick={() => moveBy(1)} style={{ ...button, padding: '6px 10px', background: '#fff', border: `1px solid ${color.border}`, color: color.sub, opacity: saving || nav.index >= nav.total - 1 ? 0.45 : 1 }}>다음 ▶</button>
+        </div>
       </div>
 
       <div style={{ padding: 10, borderRadius: 8, background: '#f6f9ff', fontSize: 13 }}>
@@ -216,24 +245,59 @@ function TeacherRecordEditor({ row, program, actor, onSaved, onError }) {
             : `출석 ${attendance.present || 0}회 · 결석 ${attendance.absent || 0}회 · 미체크 ${attendance.unchecked || 0}회 / 전체 ${attendance.total || 0}회`}
       </div>
 
-      {row.studentStatus !== 'submitted' ? (
-        <div style={{ padding: 14, borderRadius: 9, background: '#f8fafc', color: color.sub, fontSize: 13 }}>학생이 아직 활동 기록을 작성하지 않았습니다.</div>
-      ) : (
-        <div style={{ display: 'grid', gap: 10 }}>
-          {COMMON_QUESTIONS.map((question) => (
-            <div key={question.key} style={{ padding: 11, border: `1px solid ${color.border}`, borderRadius: 9 }}><div style={{ fontSize: 12, fontWeight: 800, color: color.sub }}>{question.title}</div><div style={{ marginTop: 5, fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{row.commonAnswers?.[question.key] || '-'}</div></div>
-          ))}
-          {Object.entries(row.additionalAnswers || {}).map(([questionId, answer]) => (
-            <div key={questionId} style={{ padding: 11, border: `1px solid ${color.border}`, borderRadius: 9 }}><div style={{ fontSize: 12, fontWeight: 800, color: color.sub }}>{snapshotMap.get(questionId)?.title || '프로그램 추가 질문'}</div><div style={{ marginTop: 5, fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{answer || '-'}</div></div>
-          ))}
-        </div>
-      )}
+      <div style={{ border: `1px solid ${color.border}`, borderRadius: 10, overflow: 'hidden' }}>
+        <button type="button" onClick={() => setShowAnswers((prev) => !prev)} style={{ ...button, width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#f8fafc', borderRadius: 0, color: color.text }}>
+          <span style={{ fontSize: 13, fontWeight: 800 }}>학생 활동 기록·지원 정보</span>
+          <span style={{ fontSize: 12, color: color.sub }}>{showAnswers ? '접기 ▲' : '펼치기 ▼'}</span>
+        </button>
+        {showAnswers ? (
+          <div style={{ display: 'grid', gap: 10, padding: 12, borderTop: `1px solid ${color.border}` }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
+              {[['진로희망', row.application?.careerGoal], ['신청사유', row.application?.applyReason], ['희망활동', row.application?.wantedActivity]].map(([label, value]) => (
+                <div key={label} style={{ padding: 10, borderRadius: 8, background: '#f8fafc' }}><div style={{ fontSize: 11, fontWeight: 800, color: color.sub }}>{label}</div><div style={{ marginTop: 4, fontSize: 13, whiteSpace: 'pre-wrap' }}>{value || '-'}</div></div>
+              ))}
+            </div>
+            {row.studentStatus !== 'submitted' ? (
+              <div style={{ padding: 14, borderRadius: 9, background: '#f8fafc', color: color.sub, fontSize: 13 }}>학생이 아직 활동 기록을 작성하지 않았습니다.</div>
+            ) : (
+              <div style={{ display: 'grid', gap: 10 }}>
+                {COMMON_QUESTIONS.map((question) => (
+                  <div key={question.key} style={{ padding: 11, border: `1px solid ${color.border}`, borderRadius: 9 }}><div style={{ fontSize: 12, fontWeight: 800, color: color.sub }}>{question.title}</div><div style={{ marginTop: 5, fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{row.commonAnswers?.[question.key] || '-'}</div></div>
+                ))}
+                {Object.entries(row.additionalAnswers || {}).map(([questionId, answer]) => (
+                  <div key={questionId} style={{ padding: 11, border: `1px solid ${color.border}`, borderRadius: 9 }}><div style={{ fontSize: 12, fontWeight: 800, color: color.sub }}>{snapshotMap.get(questionId)?.title || '프로그램 추가 질문'}</div><div style={{ marginTop: 5, fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{answer || '-'}</div></div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
 
       {row.studentUpdatedAfterReview ? <div style={{ padding: 10, borderRadius: 8, background: '#fff8e1', color: color.warn, fontSize: 12 }}>교사 검토 후 학생 답변이 변경되었습니다. 다시 확인해주세요.</div> : null}
 
-      <Field title="교사 관찰 메모" help="학생에게 공개되지 않는 담당교사 전용 메모입니다." value={observationNote} limit={2000} disabled={saving} onChange={setObservationNote} />
-      <Field title="생활기록부 작성 내용" help="학생 답변을 그대로 복사하지 않고 실제 관찰 사실을 확인해 작성해주세요." value={studentRecordText} limit={3000} disabled={saving} onChange={setStudentRecordText} />
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+      <div style={{ border: '1px solid #9db4d4', borderRadius: 10, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '9px 12px', background: '#eef3fa', borderBottom: '1px solid #d5e0ef' }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: '#27466f' }}>생활기록부 작성 내용</span>
+          <span style={{ fontSize: 11, color: color.sub }}>학생 답변을 그대로 복사하지 않고 실제 관찰 사실을 확인해 작성해주세요.</span>
+        </div>
+        <textarea
+          ref={textareaRef}
+          value={studentRecordText}
+          disabled={saving}
+          maxLength={RECORD_TEXT_LIMIT}
+          spellCheck={false}
+          onChange={(event) => setStudentRecordText(event.target.value)}
+          style={{ display: 'block', width: '100%', boxSizing: 'border-box', border: 'none', outline: 'none', padding: 12, font: 'inherit', fontSize: 14, lineHeight: 1.8, color: color.text, resize: 'none', overflow: 'hidden', minHeight: 220, background: saving ? '#f8fafc' : '#fff' }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '7px 12px', background: '#f6f9ff', borderTop: '1px solid #d5e0ef', fontSize: 12 }}>
+          <span style={{ color: color.sub }}>NEIS 기준: 한글 3Byte · 영문/숫자/공백 1Byte · 줄바꿈 2Byte</span>
+          <span style={{ fontWeight: 800, color: overNeis ? color.danger : color.accent }}>{studentRecordText.length.toLocaleString()}자 · {bytes.toLocaleString()} / {NEIS_BYTE_LIMIT.toLocaleString()} Byte</span>
+        </div>
+        {overNeis ? <div style={{ padding: '7px 12px', background: '#fdecea', color: color.danger, fontSize: 12 }}>NEIS 동아리활동 특기사항 기준 {NEIS_BYTE_LIMIT.toLocaleString()}Byte를 초과했습니다. NEIS에 입력하려면 내용을 줄여주세요.</div> : null}
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
+        {dirty ? <span style={{ fontSize: 12, color: color.warn }}>저장하지 않은 변경 사항이 있습니다.</span> : null}
         <button type="button" disabled={saving} onClick={() => save('reviewing')} style={{ ...button, background: '#fff', border: `1px solid ${color.border}`, color: color.sub }}>검토 내용 저장</button>
         <button type="button" disabled={saving || row.studentStatus !== 'submitted'} onClick={() => save('completed')} style={{ ...button, background: saving || row.studentStatus !== 'submitted' ? '#cfd8e3' : color.ok, color: '#fff', fontWeight: 800 }}>작성 완료</button>
       </div>
@@ -291,7 +355,11 @@ export function TeacherActivityRecordPage({ user, program }) {
     const token = `${row.studentNo} ${row.studentName} ${row.clubName}`.toLowerCase()
     return token.includes(query.trim().toLowerCase())
   }), [query, rows, status])
-  const selected = filtered.find((row) => `${row.clubId}::${row.studentUid}` === selectedKey) || filtered[0] || null
+  const selectedIndex = useMemo(() => {
+    const index = filtered.findIndex((row) => `${row.clubId}::${row.studentUid}` === selectedKey)
+    return index === -1 ? (filtered.length > 0 ? 0 : -1) : index
+  }, [filtered, selectedKey])
+  const selected = selectedIndex >= 0 ? filtered[selectedIndex] : null
 
   function onSaved(next, text) {
     // 저장 응답은 해당 학생의 레코드 하나만 담고 있으므로 그 행만 교체합니다.
@@ -362,7 +430,24 @@ export function TeacherActivityRecordPage({ user, program }) {
             })}
             {filtered.length === 0 ? <div style={{ padding: 12, fontSize: 12, color: color.sub }}>조건에 맞는 학생이 없습니다.</div> : null}
           </section>
-          {selected ? <TeacherRecordEditor key={`${selected.clubId}:${selected.studentUid}:${selected.studentUpdatedAt || ''}:${selected.teacherUpdatedAt || ''}`} row={selected} program={program} actor={user} onSaved={onSaved} onError={setError} /> : <section style={card}>학생을 선택해주세요.</section>}
+          {selected ? (
+            <TeacherRecordEditor
+              key={`${selected.clubId}:${selected.studentUid}:${selected.studentUpdatedAt || ''}:${selected.teacherUpdatedAt || ''}`}
+              row={selected}
+              program={program}
+              actor={user}
+              nav={{
+                index: selectedIndex,
+                total: filtered.length,
+                select: (index) => {
+                  const target = filtered[index]
+                  if (target) setSelectedKey(`${target.clubId}::${target.studentUid}`)
+                },
+              }}
+              onSaved={onSaved}
+              onError={setError}
+            />
+          ) : <section style={card}>학생을 선택해주세요.</section>}
         </div>
       )}
     </div>
