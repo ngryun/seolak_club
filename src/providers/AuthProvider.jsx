@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { isFirebaseEnabled } from '../lib/firebase'
 import { AuthContext } from './authContext'
 import {
@@ -91,17 +91,17 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(readInitialSession)
   const [loading, setLoading] = useState(true)
   const [syncError, setSyncError] = useState('')
+  // 로그아웃/재로그인 시 이전 로그인의 백그라운드 토큰 발급이 세션을 덮어쓰지 않도록 구분합니다.
+  const attendanceSessionSeqRef = useRef(0)
 
   useEffect(() => {
     let mounted = true
 
     async function bootstrap() {
       try {
-        if (isFirebaseEnabled()) {
-          await bootstrapDefaultAdminIfNeeded()
-        } else {
-          await ensureDefaultAdminAccount()
-        }
+        // 기본 관리자 점검은 첫 화면 표시를 막지 않도록 백그라운드로 수행합니다.
+        const adminBootstrap = isFirebaseEnabled() ? bootstrapDefaultAdminIfNeeded() : ensureDefaultAdminAccount()
+        adminBootstrap.catch(() => {})
 
         const current = readInitialSession()
         if (!current?.uid) {
@@ -183,14 +183,6 @@ export function AuthProvider({ children }) {
         const account = await signInWithLoginId(normalizedId, rawPassword)
         assertLoginPolicy(account, { loginRole, studentName })
 
-        let attendanceSessionError = ''
-        try {
-          await createAttendanceApiSession(normalizedId, rawPassword)
-        } catch (error) {
-          clearAttendanceApiSession()
-          attendanceSessionError = error instanceof Error ? error.message : '보안 세션 발급에 실패했습니다.'
-        }
-
         recordLastLogin(account.uid).catch(() => {})
 
         const nextSession = buildSession(account, {
@@ -198,13 +190,34 @@ export function AuthProvider({ children }) {
           loginId: normalizedId,
         })
         setSession(nextSession)
-        setSyncError(attendanceSessionError)
+        setSyncError('')
         persistSession(nextSession)
+
+        // 출석부 보안 토큰은 로그인 완료를 막지 않도록 백그라운드에서 발급합니다.
+        // 서버 함수 콜드 스타트로 첫 시도가 실패할 수 있어 간격을 두고 재시도합니다.
+        const seq = ++attendanceSessionSeqRef.current
+        ;(async () => {
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+              await createAttendanceApiSession(normalizedId, rawPassword)
+              if (attendanceSessionSeqRef.current === seq) setSyncError('')
+              return
+            } catch {
+              if (attendanceSessionSeqRef.current !== seq) return
+              await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)))
+              if (attendanceSessionSeqRef.current !== seq) return
+            }
+          }
+          if (attendanceSessionSeqRef.current !== seq) return
+          clearAttendanceApiSession()
+          setSyncError('출석부 보안 세션 발급에 실패했습니다. 출석부 기능이 필요하면 다시 로그인해주세요.')
+        })()
       },
       async signInWithGoogle() {
         throw new Error('아이디/비밀번호 로그인 방식을 사용해주세요.')
       },
       async signOut() {
+        attendanceSessionSeqRef.current += 1
         clearAttendanceApiSession()
         setSession(null)
         setSyncError('')
