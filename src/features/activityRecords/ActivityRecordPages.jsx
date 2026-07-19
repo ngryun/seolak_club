@@ -305,6 +305,132 @@ function TeacherRecordEditor({ row, program, actor, nav, onSaved, onError }) {
   )
 }
 
+function GrowTextarea({ value, disabled, onChange }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    const element = ref.current
+    if (!element) return
+    element.style.height = 'auto'
+    element.style.height = `${Math.max(96, element.scrollHeight)}px`
+  }, [value])
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      disabled={disabled}
+      maxLength={RECORD_TEXT_LIMIT}
+      spellCheck={false}
+      onChange={(event) => onChange(event.target.value)}
+      style={{ display: 'block', width: '100%', boxSizing: 'border-box', border: 'none', outline: 'none', padding: '10px 12px', font: 'inherit', fontSize: 13, lineHeight: 1.7, color: color.text, resize: 'none', overflow: 'hidden', minHeight: 96, background: 'transparent' }}
+    />
+  )
+}
+
+function TeacherRecordGrid({ rows, program, actor, onSaved, onError, onOpenDetail }) {
+  const [drafts, setDrafts] = useState({})
+  const [savingKey, setSavingKey] = useState('')
+
+  const keyOf = (row) => `${row.clubId}::${row.studentUid}`
+  const draftOf = (row) => {
+    const key = keyOf(row)
+    return key in drafts ? drafts[key] : (row.studentRecordText || '')
+  }
+  const isDirty = (row) => draftOf(row) !== (row.studentRecordText || '')
+  const dirtyRows = rows.filter(isDirty)
+
+  async function save(row, teacherStatus) {
+    const key = keyOf(row)
+    setSavingKey(key)
+    onError('')
+    try {
+      const next = await saveTeacherActivityRecord({ program, actor, clubId: row.clubId, studentUid: row.studentUid, studentRecordText: draftOf(row), teacherStatus })
+      setDrafts((prev) => {
+        const copy = { ...prev }
+        delete copy[key]
+        return copy
+      })
+      onSaved(next, teacherStatus === 'completed' ? `${row.studentName} 학생을 작성 완료 처리했습니다.` : `${row.studentName} 학생의 작성 내용을 저장했습니다.`)
+      return true
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : '교사 기록을 저장하지 못했습니다.')
+      return false
+    } finally {
+      setSavingKey('')
+    }
+  }
+
+  async function saveAllDirty() {
+    for (const row of dirtyRows) {
+      const ok = await save(row, 'reviewing')
+      if (!ok) return
+    }
+  }
+
+  const th = { padding: '9px 12px', fontSize: 12, fontWeight: 800, color: color.sub, textAlign: 'left', background: '#f8fafc', borderBottom: `1px solid ${color.border}`, whiteSpace: 'nowrap' }
+  const td = { padding: '10px 12px', fontSize: 13, verticalAlign: 'top', borderBottom: `1px solid ${color.border}` }
+
+  if (rows.length === 0) return <section style={{ ...card, color: color.sub, fontSize: 13 }}>조건에 맞는 학생이 없습니다.</section>
+
+  return (
+    <section style={{ ...card, padding: 0, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '9px 12px', background: '#eef3fa', borderBottom: '1px solid #d5e0ef' }}>
+        <span style={{ fontSize: 12, color: color.sub }}>특기사항 칸에 바로 입력한 뒤 행별로 저장하세요. 노란 배경은 저장하지 않은 행입니다.</span>
+        <button type="button" disabled={dirtyRows.length === 0 || Boolean(savingKey)} onClick={saveAllDirty} style={{ ...button, padding: '6px 11px', background: dirtyRows.length === 0 || savingKey ? '#cfd8e3' : color.accent, color: '#fff', fontWeight: 800, fontSize: 12 }}>변경된 {dirtyRows.length}개 행 모두 저장</button>
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
+          <thead>
+            <tr>
+              <th style={th}>학번</th>
+              <th style={th}>이름</th>
+              <th style={th}>상태</th>
+              <th style={{ ...th, minWidth: 420, width: '100%' }}>특기사항</th>
+              <th style={th}>분량</th>
+              <th style={th}>작업</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const key = keyOf(row)
+              const text = draftOf(row)
+              const dirty = isDirty(row)
+              const bytes = neisBytes(text)
+              const overNeis = bytes > NEIS_BYTE_LIMIT
+              const saving = savingKey === key
+              return (
+                <tr key={key} style={{ background: dirty ? '#fffbe6' : '#fff' }}>
+                  <td style={td}>
+                    <button type="button" onClick={() => onOpenDetail(row)} title="학생 답변·출결을 보며 개별 편집" style={{ ...button, padding: 0, background: 'none', color: color.accent, fontWeight: 800, textDecoration: 'underline' }}>{row.studentNo || '-'}</button>
+                  </td>
+                  <td style={{ ...td, fontWeight: 800, whiteSpace: 'nowrap' }}>{row.studentName}</td>
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                    <StatusBadge record={row} />
+                    {dirty ? <div style={{ marginTop: 5, fontSize: 11, color: color.warn, fontWeight: 800 }}>저장 안 됨</div> : null}
+                  </td>
+                  <td style={{ ...td, padding: 0, borderLeft: `1px solid ${color.border}`, borderRight: `1px solid ${color.border}` }}>
+                    <GrowTextarea value={text} disabled={saving} onChange={(value) => setDrafts((prev) => ({ ...prev, [key]: value }))} />
+                  </td>
+                  <td style={{ ...td, whiteSpace: 'nowrap', fontSize: 12 }}>
+                    <div style={{ fontWeight: 800, color: overNeis ? color.danger : color.accent }}>{bytes.toLocaleString()} / {NEIS_BYTE_LIMIT.toLocaleString()}B</div>
+                    <div style={{ marginTop: 3, color: color.sub }}>{text.length.toLocaleString()}자</div>
+                    {overNeis ? <div style={{ marginTop: 3, color: color.danger, fontWeight: 800 }}>NEIS 초과</div> : null}
+                  </td>
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                    <div style={{ display: 'grid', gap: 5 }}>
+                      <button type="button" disabled={saving || !dirty} onClick={() => save(row, 'reviewing')} style={{ ...button, padding: '5px 10px', fontSize: 12, background: '#fff', border: `1px solid ${color.border}`, color: color.sub, opacity: saving || !dirty ? 0.5 : 1 }}>저장</button>
+                      <button type="button" disabled={saving || row.studentStatus !== 'submitted'} onClick={() => save(row, 'completed')} style={{ ...button, padding: '5px 10px', fontSize: 12, background: saving || row.studentStatus !== 'submitted' ? '#cfd8e3' : color.ok, color: '#fff', fontWeight: 800 }}>완료</button>
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
 export function TeacherActivityRecordPage({ user, program }) {
   const [meta, setMeta] = useState(null)
   const [rowsByClub, setRowsByClub] = useState({})
@@ -315,6 +441,7 @@ export function TeacherActivityRecordPage({ user, program }) {
   const [clubId, setClubId] = useState('')
   const [status, setStatus] = useState('all')
   const [selectedKey, setSelectedKey] = useState('')
+  const [viewMode, setViewMode] = useState('table')
 
   useEffect(() => {
     let active = true
@@ -404,8 +531,13 @@ export function TeacherActivityRecordPage({ user, program }) {
           <button type="button" disabled={!clubId || rowsLoading} onClick={refreshCurrentClub} style={{ ...button, background: '#fff', border: `1px solid ${color.border}`, color: color.sub, opacity: !clubId || rowsLoading ? 0.5 : 1 }}>새로고침</button>
         </div>
         {clubId ? (
-          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', fontSize: 12 }}>
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
             {['학생 미작성', '학생 작성 완료', '교사 검토 중', '작성 완료'].map((label) => <span key={label} style={{ padding: '4px 8px', background: '#f8fafc', borderRadius: 999 }}>{label} {rows.filter((row) => statusMeta(row).label === label).length}명</span>)}
+            <span style={{ display: 'inline-flex', marginLeft: 'auto', border: `1px solid ${color.border}`, borderRadius: 8, overflow: 'hidden' }}>
+              {[['table', '표 편집'], ['detail', '개별 편집']].map(([mode, label]) => (
+                <button key={mode} type="button" onClick={() => setViewMode(mode)} style={{ ...button, borderRadius: 0, padding: '6px 12px', fontSize: 12, fontWeight: 800, background: viewMode === mode ? color.accent : '#fff', color: viewMode === mode ? '#fff' : color.sub }}>{label}</button>
+              ))}
+            </span>
           </div>
         ) : null}
       </section>
@@ -414,6 +546,18 @@ export function TeacherActivityRecordPage({ user, program }) {
         <section style={{ ...card, color: color.sub, fontSize: 13 }}>수업을 선택하면 해당 수업 학생들의 활동 기록을 불러옵니다.</section>
       ) : rowsLoading ? (
         <section style={{ ...card, color: color.sub, fontSize: 13 }}>선택한 수업의 학생 활동 기록을 불러오는 중입니다.</section>
+      ) : viewMode === 'table' ? (
+        <TeacherRecordGrid
+          rows={filtered}
+          program={program}
+          actor={user}
+          onSaved={onSaved}
+          onError={setError}
+          onOpenDetail={(row) => {
+            setSelectedKey(`${row.clubId}::${row.studentUid}`)
+            setViewMode('detail')
+          }}
+        />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: 12, alignItems: 'start' }}>
           <section style={{ ...card, padding: 9, display: 'grid', gap: 5, maxHeight: '72vh', overflow: 'auto' }}>
