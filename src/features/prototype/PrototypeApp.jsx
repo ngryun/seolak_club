@@ -8702,8 +8702,8 @@ export default function PrototypeApp({ studentOnly = false }) {
     const targets = (programRows || []).filter(
       (row) => row.status === "active" && row.id !== excludeProgramId,
     );
-    const entries = {};
-    for (const row of targets) {
+    // 프로그램 수에 비례해 로딩이 길어지지 않도록 병렬로 조회합니다.
+    const results = await Promise.all(targets.map(async (row) => {
       try {
         let cycleRow = await getRecruitmentCycle(row);
         const sw = getSubmissionWindowState(cycleRow);
@@ -8711,11 +8711,13 @@ export default function PrototypeApp({ studentOnly = false }) {
           await finalizeCurrentCycleDraftsIfNeeded(row);
           cycleRow = await getRecruitmentCycle(row, { force: true });
         }
-        entries[row.id] = cycleRow;
+        return [row.id, cycleRow];
       } catch {
         // 개별 프로그램 사이클 조회 실패는 무시
+        return null;
       }
-    }
+    }));
+    const entries = Object.fromEntries(results.filter(Boolean));
     if (Object.keys(entries).length > 0) {
       setProgramCycles((prev) => ({ ...prev, ...entries }));
     }

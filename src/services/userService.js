@@ -425,13 +425,16 @@ export async function signInWithLoginId(loginId, password) {
     throw new Error('아이디와 비밀번호를 입력해주세요.')
   }
 
-  if (isFirebaseEnabled()) {
-    await bootstrapDefaultAdminIfNeeded()
-  } else {
-    await ensureDefaultAdminAccount()
+  let user = await findUserByLoginId(normalizedId, { includeSecret: true })
+  if (!user && normalizedId === DEFAULT_ADMIN_LOGIN_ID) {
+    // 최초 실행 등으로 기본 관리자 문서가 아직 없을 때만 생성 후 재조회합니다.
+    if (isFirebaseEnabled()) {
+      await bootstrapDefaultAdminIfNeeded()
+    } else {
+      await ensureDefaultAdminAccount()
+    }
+    user = await findUserByLoginId(normalizedId, { includeSecret: true })
   }
-
-  const user = await findUserByLoginId(normalizedId, { includeSecret: true })
   if (!user) {
     throw new Error('아이디 또는 비밀번호가 올바르지 않습니다.')
   }
