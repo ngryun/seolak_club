@@ -82,6 +82,87 @@ function Field({ title, help, required, value, limit, disabled, onChange }) {
   )
 }
 
+function StudentAnswerDetails({ row }) {
+  const snapshotMap = new Map((row.questionSnapshot || []).map((question) => [question.id, question]))
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
+        {[['진로희망', row.application?.careerGoal], ['신청사유', row.application?.applyReason], ['희망활동', row.application?.wantedActivity]].map(([label, value]) => (
+          <div key={label} style={{ padding: 10, borderRadius: 8, background: '#f8fafc' }}><div style={{ fontSize: 11, fontWeight: 800, color: color.sub }}>{label}</div><div style={{ marginTop: 4, fontSize: 13, whiteSpace: 'pre-wrap' }}>{value || '-'}</div></div>
+        ))}
+      </div>
+      {row.studentStatus !== 'submitted' ? (
+        <div style={{ padding: 14, borderRadius: 9, background: '#f8fafc', color: color.sub, fontSize: 13 }}>학생이 아직 활동 기록을 작성하지 않았습니다.</div>
+      ) : (
+        <div style={{ display: 'grid', gap: 10 }}>
+          {COMMON_QUESTIONS.map((question) => (
+            <div key={question.key} style={{ padding: 11, border: `1px solid ${color.border}`, borderRadius: 9 }}><div style={{ fontSize: 12, fontWeight: 800, color: color.sub }}>{question.title}</div><div style={{ marginTop: 5, fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{row.commonAnswers?.[question.key] || '-'}</div></div>
+          ))}
+          {Object.entries(row.additionalAnswers || {}).map(([questionId, answer]) => (
+            <div key={questionId} style={{ padding: 11, border: `1px solid ${color.border}`, borderRadius: 9 }}><div style={{ fontSize: 12, fontWeight: 800, color: color.sub }}>{snapshotMap.get(questionId)?.title || '프로그램 추가 질문'}</div><div style={{ marginTop: 5, fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{answer || '-'}</div></div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StudentAnswerModal({ row, program, onClose }) {
+  const [attendance, setAttendance] = useState(null)
+
+  useEffect(() => {
+    let active = true
+    getTeacherActivityAttendanceSummary({ program, clubId: row.clubId, studentUid: row.studentUid })
+      .then((summary) => { if (active) setAttendance(summary) })
+      .catch(() => { if (active) setAttendance(undefined) })
+    return () => { active = false }
+  }, [program, row.clubId, row.studentUid])
+
+  useEffect(() => {
+    function onKey(event) { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div
+      role="presentation"
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 16, overflowY: 'auto', zIndex: 1000 }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        onClick={(event) => event.stopPropagation()}
+        style={{ ...card, width: '100%', maxWidth: 720, margin: 'auto', display: 'grid', gap: 14 }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+          <div>
+            <h3 style={{ margin: '0 0 4px', fontSize: 17 }}>{row.studentNo} {row.studentName}</h3>
+            <div style={{ fontSize: 12, color: color.sub }}>{row.clubName} · 학생 제출 {formatTime(row.submittedAt)}</div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <StatusBadge record={row} />
+            <button type="button" onClick={onClose} aria-label="닫기" style={{ ...button, padding: '6px 12px', background: '#fff', border: `1px solid ${color.border}`, color: color.sub, fontWeight: 800 }}>닫기 ✕</button>
+          </div>
+        </div>
+
+        <div style={{ padding: 10, borderRadius: 8, background: '#f6f9ff', fontSize: 13 }}>
+          {attendance === null
+            ? '출결 현황을 불러오는 중입니다.'
+            : attendance === undefined
+              ? '출결 현황을 불러오지 못했습니다.'
+              : `출석 ${attendance.present || 0}회 · 결석 ${attendance.absent || 0}회 · 미체크 ${attendance.unchecked || 0}회 / 전체 ${attendance.total || 0}회`}
+        </div>
+
+        {row.studentUpdatedAfterReview ? <div style={{ padding: 10, borderRadius: 8, background: '#fff8e1', color: color.warn, fontSize: 12 }}>교사 검토 후 학생 답변이 변경되었습니다. 다시 확인해주세요.</div> : null}
+
+        <StudentAnswerDetails row={row} />
+      </div>
+    </div>
+  )
+}
+
 export function StudentActivityRecordPage({ user, program }) {
   const [data, setData] = useState(null)
   const [commonAnswers, setCommonAnswers] = useState(EMPTY_COMMON)
@@ -220,8 +301,6 @@ function TeacherRecordEditor({ row, program, actor, nav, onSaved, onError }) {
     nav.select(nav.index + delta)
   }
 
-  const snapshotMap = new Map((row.questionSnapshot || []).map((question) => [question.id, question]))
-
   return (
     <section style={{ ...card, display: 'grid', gap: 14 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start' }}>
@@ -251,24 +330,8 @@ function TeacherRecordEditor({ row, program, actor, nav, onSaved, onError }) {
           <span style={{ fontSize: 12, color: color.sub }}>{showAnswers ? '접기 ▲' : '펼치기 ▼'}</span>
         </button>
         {showAnswers ? (
-          <div style={{ display: 'grid', gap: 10, padding: 12, borderTop: `1px solid ${color.border}` }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
-              {[['진로희망', row.application?.careerGoal], ['신청사유', row.application?.applyReason], ['희망활동', row.application?.wantedActivity]].map(([label, value]) => (
-                <div key={label} style={{ padding: 10, borderRadius: 8, background: '#f8fafc' }}><div style={{ fontSize: 11, fontWeight: 800, color: color.sub }}>{label}</div><div style={{ marginTop: 4, fontSize: 13, whiteSpace: 'pre-wrap' }}>{value || '-'}</div></div>
-              ))}
-            </div>
-            {row.studentStatus !== 'submitted' ? (
-              <div style={{ padding: 14, borderRadius: 9, background: '#f8fafc', color: color.sub, fontSize: 13 }}>학생이 아직 활동 기록을 작성하지 않았습니다.</div>
-            ) : (
-              <div style={{ display: 'grid', gap: 10 }}>
-                {COMMON_QUESTIONS.map((question) => (
-                  <div key={question.key} style={{ padding: 11, border: `1px solid ${color.border}`, borderRadius: 9 }}><div style={{ fontSize: 12, fontWeight: 800, color: color.sub }}>{question.title}</div><div style={{ marginTop: 5, fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{row.commonAnswers?.[question.key] || '-'}</div></div>
-                ))}
-                {Object.entries(row.additionalAnswers || {}).map(([questionId, answer]) => (
-                  <div key={questionId} style={{ padding: 11, border: `1px solid ${color.border}`, borderRadius: 9 }}><div style={{ fontSize: 12, fontWeight: 800, color: color.sub }}>{snapshotMap.get(questionId)?.title || '프로그램 추가 질문'}</div><div style={{ marginTop: 5, fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{answer || '-'}</div></div>
-                ))}
-              </div>
-            )}
+          <div style={{ padding: 12, borderTop: `1px solid ${color.border}` }}>
+            <StudentAnswerDetails row={row} />
           </div>
         ) : null}
       </div>
@@ -329,6 +392,7 @@ function GrowTextarea({ value, disabled, onChange }) {
 function TeacherRecordGrid({ rows, program, actor, onSaved, onError, onOpenDetail }) {
   const [drafts, setDrafts] = useState({})
   const [savingKey, setSavingKey] = useState('')
+  const [modalRow, setModalRow] = useState(null)
 
   const keyOf = (row) => `${row.clubId}::${row.studentUid}`
   const draftOf = (row) => {
@@ -374,7 +438,7 @@ function TeacherRecordGrid({ rows, program, actor, onSaved, onError, onOpenDetai
   return (
     <section style={{ ...card, padding: 0, overflow: 'hidden' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '9px 12px', background: '#eef3fa', borderBottom: '1px solid #d5e0ef' }}>
-        <span style={{ fontSize: 12, color: color.sub }}>특기사항 칸에 바로 입력한 뒤 행별로 저장하세요. 노란 배경은 저장하지 않은 행입니다.</span>
+        <span style={{ fontSize: 12, color: color.sub }}>특기사항 칸에 바로 입력한 뒤 행별로 저장하세요. 상태 배지를 누르면 학생 제출 내용을 볼 수 있습니다.</span>
         <button type="button" disabled={dirtyRows.length === 0 || Boolean(savingKey)} onClick={saveAllDirty} style={{ ...button, padding: '6px 11px', background: dirtyRows.length === 0 || savingKey ? '#cfd8e3' : color.accent, color: '#fff', fontWeight: 800, fontSize: 12 }}>변경된 {dirtyRows.length}개 행 모두 저장</button>
       </div>
       <div style={{ overflowX: 'auto' }}>
@@ -404,7 +468,14 @@ function TeacherRecordGrid({ rows, program, actor, onSaved, onError, onOpenDetai
                   </td>
                   <td style={{ ...td, fontWeight: 800, whiteSpace: 'nowrap' }}>{row.studentName}</td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                    <StatusBadge record={row} />
+                    {row.studentStatus === 'submitted' ? (
+                      <button type="button" onClick={() => setModalRow(row)} title="학생 제출 내용 보기" style={{ ...button, padding: 0, background: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <StatusBadge record={row} />
+                        <span style={{ fontSize: 11, color: color.accent, fontWeight: 800 }}>보기 🔍</span>
+                      </button>
+                    ) : (
+                      <StatusBadge record={row} />
+                    )}
                     {dirty ? <div style={{ marginTop: 5, fontSize: 11, color: color.warn, fontWeight: 800 }}>저장 안 됨</div> : null}
                   </td>
                   <td style={{ ...td, padding: 0, borderLeft: `1px solid ${color.border}`, borderRight: `1px solid ${color.border}` }}>
@@ -427,6 +498,7 @@ function TeacherRecordGrid({ rows, program, actor, onSaved, onError, onOpenDetai
           </tbody>
         </table>
       </div>
+      {modalRow ? <StudentAnswerModal key={`${modalRow.clubId}::${modalRow.studentUid}`} row={modalRow} program={program} onClose={() => setModalRow(null)} /> : null}
     </section>
   )
 }
