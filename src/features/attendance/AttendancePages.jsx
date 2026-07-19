@@ -227,6 +227,51 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char])
 }
 
+// 학번(예: 20116)에서 담임 학급을 추정합니다. 앞 1자리 학년 + 2자리 반 + 나머지 번호 형식만 인식합니다.
+function parseHomeroom(studentNo) {
+  const digits = String(studentNo || '').replace(/\D/g, '')
+  if (digits.length < 5) return null
+  const grade = Number(digits[0])
+  const classNum = Number(digits.slice(1, 3))
+  const number = Number(digits.slice(3))
+  if (!grade || !classNum) return null
+  return { grade, classNum, number, key: `${grade}-${String(classNum).padStart(2, '0')}`, label: `${grade}학년 ${classNum}반` }
+}
+
+function buildHomeroomPrintHtml({ program, dateKey, sessions, classes }) {
+  const sessionHeaders = sessions.map((session) => `<th>${escapeHtml(sessionTitle(session))}</th>`).join('')
+  const body = classes.map((homeroom, index) => {
+    const counts = { present: 0, absent: 0, unchecked: 0 }
+    const rows = homeroom.students.map((student, rowIndex) => {
+      const statusCells = sessions.map((session) => {
+        const status = student.statuses[session.id]
+        if (status === 'present') counts.present += 1
+        else if (status === 'absent') counts.absent += 1
+        else if (status) counts.unchecked += 1
+        return status ? `<td class="${status}">${escapeHtml(statusLabel(status))}</td>` : '<td class="missing">—</td>'
+      }).join('')
+      return `<tr><td>${rowIndex + 1}</td><td>${escapeHtml(student.studentNo || '-')}</td><td class="name">${escapeHtml(student.name || '-')}</td><td class="club">${escapeHtml(student.clubName || '-')}</td>${statusCells}</tr>`
+    }).join('')
+    return `<section class="sheet${index === classes.length - 1 ? ' last' : ''}">
+      <header><div><div class="eyebrow">ATTENDANCE BY CLASS</div><h1>${escapeHtml(homeroom.label)} 출석 결과</h1><div class="subtitle">${escapeHtml(program.name)} · ${escapeHtml(withWeekday(dateKey))} · ${sessions.length}개 교시</div></div></header>
+      <div class="info"><span><b>학급</b>${escapeHtml(homeroom.label)}</span><span><b>대상</b>${homeroom.students.length}명</span><span><b>출석</b>${counts.present}</span><span><b>결석</b>${counts.absent}</span><span><b>미체크</b>${counts.unchecked}</span></div>
+      <table><thead><tr><th>순</th><th>학번</th><th>이름</th><th>수업</th>${sessionHeaders}</tr></thead><tbody>${rows || `<tr><td colspan="${4 + sessions.length}" class="empty">표시할 학생이 없습니다.</td></tr>`}</tbody></table>
+      <footer><span>담임교사 확인: ____________________</span><span>${escapeHtml(program.name)} · ${escapeHtml(homeroom.label)}</span></footer>
+    </section>`
+  }).join('')
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(program.name)} · 학급별 출석 결과</title><style>
+    @page{size:A4 portrait;margin:10mm}*{box-sizing:border-box}html,body{margin:0;padding:0;color:#172033;background:#fff;font-family:"Pretendard","Apple SD Gothic Neo",Arial,sans-serif}.sheet{min-height:277mm;page-break-after:always;padding:0 0 4mm}.sheet.last{page-break-after:auto}header{padding-bottom:3mm;border-bottom:2.5px solid #1769e0}.eyebrow{margin-bottom:1.5mm;color:#1769e0;font-size:9pt;font-weight:800;letter-spacing:.08em}h1{margin:0;font-size:20pt;line-height:1.15;letter-spacing:-.04em}.subtitle{margin-top:2mm;color:#475569;font-size:10pt}.info{display:grid;grid-template-columns:1.4fr .7fr .6fr .6fr .6fr;gap:2mm;margin:3mm 0}.info span{display:block;min-height:12mm;padding:2.2mm 2.5mm;border:1px solid #dce3ec;border-radius:2mm;background:#f8fafc;font-size:10pt;font-weight:800}.info b{display:block;margin-bottom:1mm;color:#64748b;font-size:7.5pt}table{width:100%;border-collapse:collapse;table-layout:fixed;border:1px solid #94a3b8;font-size:9pt}col.col-no{width:9mm}col.col-sno{width:20mm}col.col-club{width:34mm}th{height:8mm;padding:1.2mm;background:#eaf2ff;color:#23436f;border:1px solid #94a3b8;text-align:center;font-size:8.5pt}td{height:6mm;padding:.9mm 1.2mm;border:1px solid #cbd5e1;text-align:center}td.name{text-align:left;font-weight:700}td.club{text-align:left;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}td.present{color:#157f3d;background:#f0faf3;font-weight:800}td.absent{color:#b42318;background:#fff4f4;font-weight:800}td.unchecked{color:#64748b}td.missing{color:#b6c0cf}.empty{height:24mm;color:#64748b}footer{display:flex;justify-content:space-between;gap:4mm;margin-top:3mm;padding-top:2mm;border-top:1px solid #dce3ec;color:#64748b;font-size:8pt}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.sheet{break-inside:avoid}}
+    </style></head><body>${body}<button class="toolbar" onclick="window.print()">인쇄하기</button><style>.toolbar{position:fixed;right:18px;bottom:18px;padding:10px 18px;border:0;border-radius:9px;background:#1769e0;color:#fff;font-weight:800;box-shadow:0 8px 24px rgba(23,105,224,.25);cursor:pointer}@media print{.toolbar{display:none}}</style></body></html>`
+}
+
+function openHomeroomPrintWindow({ program, dateKey, sessions, classes }) {
+  const popup = window.open('', '_blank')
+  if (!popup) throw new Error('인쇄 창을 열 수 없습니다. 팝업 차단을 해제해주세요.')
+  popup.opener = null
+  popup.document.write(buildHomeroomPrintHtml({ program, dateKey, sessions, classes }))
+  popup.document.close(); popup.focus(); setTimeout(() => popup.print(), 350)
+}
+
 function openBulkPrintWindow({ program, subjects }) {
   const popup = window.open('', '_blank')
   if (!popup) throw new Error('인쇄 창을 열 수 없습니다. 팝업 차단을 해제해주세요.')
@@ -542,6 +587,74 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
     }
   }
 
+  async function printHomeroomSheets() {
+    if (!clubs.length || !sessions.length) {
+      onMessage?.('warn', '인쇄할 수업 또는 출석 회차가 없습니다.')
+      return
+    }
+    if (anyDirty && !window.confirm('저장되지 않은 출결 변경이 있습니다. 현재 입력 내용은 인쇄에 반영되지 않을 수 있습니다. 계속할까요?')) return
+    setLoading(true)
+    try {
+      const results = await Promise.allSettled(clubs.map(async (targetClub) => {
+        const roster = isFirebaseEnabled() ? [] : await listClubMembers(targetClub.id)
+        const clubRecords = await getAttendanceRecords({ program, club: targetClub, sessions, roster })
+        return { club: targetClub, records: clubRecords }
+      }))
+      const failedCount = results.filter((result) => result.status === 'rejected').length
+      // (수업, 학생) 조합마다 한 행을 만들고, 교시별 출결 상태를 담아둡니다.
+      const studentRows = []
+      for (const result of results) {
+        if (result.status !== 'fulfilled') continue
+        const { club: targetClub, records: clubRecords } = result.value
+        const entriesBySession = new Map()
+        const rosterMap = new Map()
+        for (const record of clubRecords) {
+          if (!record?.sessionId) continue
+          entriesBySession.set(record.sessionId, toEntryMap(record))
+          for (const student of record.rosterSnapshot || []) {
+            if (!rosterMap.has(student.studentUid)) rosterMap.set(student.studentUid, student)
+          }
+        }
+        for (const student of rosterMap.values()) {
+          const statuses = {}
+          for (const session of sessions) statuses[session.id] = entriesBySession.get(session.id)?.[student.studentUid] || null
+          studentRows.push({ studentUid: student.studentUid, studentNo: student.studentNo, name: student.name, clubName: targetClub.clubName, statuses })
+        }
+      }
+      // 학번에서 학년·반을 뽑아 담임 학급 단위로 묶습니다. 형식을 알 수 없는 학번은 '기타'로 모읍니다.
+      const groupMap = new Map()
+      let unmatched = 0
+      for (const row of studentRows) {
+        const homeroom = parseHomeroom(row.studentNo)
+        const key = homeroom ? homeroom.key : 'etc'
+        if (!groupMap.has(key)) {
+          groupMap.set(key, homeroom
+            ? { ...homeroom, students: [] }
+            : { grade: 9999, classNum: 9999, key: 'etc', label: '기타(학급 미상)', students: [] })
+        }
+        if (!homeroom) unmatched += 1
+        groupMap.get(key).students.push(row)
+      }
+      const classes = [...groupMap.values()]
+        .sort((a, b) => a.grade - b.grade || a.classNum - b.classNum)
+        .map((homeroom) => ({
+          ...homeroom,
+          students: homeroom.students.sort((a, b) => a.studentNo.localeCompare(b.studentNo, 'ko', { numeric: true }) || a.name.localeCompare(b.name, 'ko')),
+        }))
+      if (!classes.length) throw new Error('불러온 출석부가 없어 인쇄할 수 없습니다.')
+      openHomeroomPrintWindow({ program, dateKey, sessions, classes })
+      const detail = [
+        failedCount ? `불러오지 못한 수업 ${failedCount}개는 제외되었습니다.` : '',
+        unmatched ? `학번 형식을 알 수 없는 ${unmatched}명은 '기타' 학급으로 묶었습니다.` : '',
+      ].filter(Boolean).join(' ')
+      onMessage?.(failedCount || unmatched ? 'warn' : 'ok', `${classes.length}개 학급 출석 결과를 인쇄할 준비를 했습니다. 학급 하나당 한 페이지로 출력됩니다.${detail ? ` ${detail}` : ''}`)
+    } catch (error) {
+      onMessage?.('error', error.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   if (!program?.features?.attendance) return null
   return <div style={{ display: 'grid', gap: 12 }}>
     <section style={card}>
@@ -569,6 +682,7 @@ export function AttendancePanel({ user, program, clubs = [], onMessage, onDirtyC
             <button onClick={() => guardedChange(() => setReloadKey((key) => key + 1))} disabled={loading} style={{ ...button, background: '#f8fafc', color: colors.sub, border: `1px solid ${colors.border}` }}>새로고침</button>
             <button onClick={saveAll} disabled={loading || !anyDirty} style={{ ...button, background: colors.accent, color: '#fff', opacity: loading || !anyDirty ? 0.55 : 1 }}>저장</button>
             <button onClick={printAllSheets} disabled={loading || !clubs.length} style={{ ...button, background: '#eaf2ff', color: colors.accent, border: `1px solid #bfd4f7` }}>전체 과목 인쇄</button>
+            <button onClick={printHomeroomSheets} disabled={loading || !clubs.length} style={{ ...button, background: '#eaf2ff', color: colors.accent, border: `1px solid #bfd4f7` }}>학급별 인쇄</button>
           </div>
         </div>
         <div style={{ padding: '10px 16px', display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
