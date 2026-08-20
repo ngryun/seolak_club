@@ -6,6 +6,7 @@ import {
   saveStudentActivityRecord,
   saveTeacherActivityRecord,
 } from '../../services/activityRecordService'
+import { downloadActivityRecordsExcel, getNeisByteCount } from '../../services/activityRecordExcelService'
 
 const color = {
   border: '#dfe3ee', text: '#1c2431', sub: '#5f6b7d', accent: '#1f6feb',
@@ -28,16 +29,6 @@ const EMPTY_COMMON = Object.fromEntries(COMMON_QUESTIONS.map((row) => [row.key, 
 
 const RECORD_TEXT_LIMIT = 3000
 const NEIS_BYTE_LIMIT = 1500
-
-// NEIS 기준 바이트 계산: 한글 등 다국어 문자 3Byte, 줄바꿈 2Byte, 영문·숫자·공백 1Byte
-function neisBytes(text) {
-  let bytes = 0
-  for (const ch of text) {
-    if (ch === '\n') bytes += 2
-    else bytes += ch.charCodeAt(0) > 127 ? 3 : 1
-  }
-  return bytes
-}
 
 function formatTime(value) {
   if (!value) return '-'
@@ -264,7 +255,7 @@ function TeacherRecordEditor({ row, program, actor, nav, onSaved, onError }) {
   const textareaRef = useRef(null)
 
   const dirty = studentRecordText !== (row.studentRecordText || '')
-  const bytes = neisBytes(studentRecordText)
+  const bytes = getNeisByteCount(studentRecordText)
   const overNeis = bytes > NEIS_BYTE_LIMIT
 
   useEffect(() => {
@@ -458,7 +449,7 @@ function TeacherRecordGrid({ rows, program, actor, onSaved, onError, onOpenDetai
               const key = keyOf(row)
               const text = draftOf(row)
               const dirty = isDirty(row)
-              const bytes = neisBytes(text)
+              const bytes = getNeisByteCount(text)
               const overNeis = bytes > NEIS_BYTE_LIMIT
               const saving = savingKey === key
               return (
@@ -514,6 +505,7 @@ export function TeacherActivityRecordPage({ user, program }) {
   const [status, setStatus] = useState('all')
   const [selectedKey, setSelectedKey] = useState('')
   const [viewMode, setViewMode] = useState('table')
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -584,13 +576,43 @@ export function TeacherActivityRecordPage({ user, program }) {
     })
   }
 
+  async function exportAllRecords() {
+    if (exporting) return
+    setExporting(true)
+    setError('')
+    setMessage('')
+    try {
+      const result = await listTeacherActivityRecords({ program, actor: user })
+      if (!(result.rows || []).length) throw new Error('다운로드할 학생 활동 기록이 없습니다.')
+      const summary = await downloadActivityRecordsExcel({ program, rows: result.rows })
+      const unmatched = summary.unmatchedCount ? ` 학번 형식을 확인할 수 없는 ${summary.unmatchedCount}건은 기타 시트에 담았습니다.` : ''
+      setMessage(`${summary.classCount}개 학급, ${summary.recordCount}건의 활동 기록을 엑셀로 다운로드했습니다.${unmatched}`)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '학생 활동 기록 엑셀을 만들지 못했습니다.')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   if (loading) return <section style={card}>학생 활동 기록을 불러오는 중입니다.</section>
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <section style={card}>
-        <h2 style={{ margin: '0 0 6px', fontSize: 18 }}>{program.name} 학생 활동 기록</h2>
-        <div style={{ fontSize: 13, color: color.sub }}>{windowMessage(meta?.window)} · 담당 수업의 확정 학생만 표시됩니다.</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <div>
+            <h2 style={{ margin: '0 0 6px', fontSize: 18 }}>{program.name} 학생 활동 기록</h2>
+            <div style={{ fontSize: 13, color: color.sub }}>{windowMessage(meta?.window)} · 담당 수업의 확정 학생만 표시됩니다.</div>
+          </div>
+          <button
+            type="button"
+            disabled={exporting || !(meta?.clubs || []).length}
+            onClick={exportAllRecords}
+            style={{ ...button, background: exporting || !(meta?.clubs || []).length ? '#cfd8e3' : color.accent, color: '#fff', fontWeight: 800, whiteSpace: 'nowrap' }}
+          >
+            {exporting ? '엑셀 만드는 중...' : '전체 활동 기록 엑셀 다운로드'}
+          </button>
+        </div>
         {message ? <div style={{ marginTop: 9, color: color.ok, fontSize: 13 }}>{message}</div> : null}
         {error ? <div style={{ marginTop: 9, color: color.danger, fontSize: 13 }}>{error}</div> : null}
       </section>
