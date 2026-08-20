@@ -234,11 +234,47 @@ export async function createActivityRecordWorkbook({ program, rows }) {
   }
 }
 
+export async function serializeActivityRecordWorkbook(XLSX, workbook) {
+  const { strFromU8, strToU8, unzipSync, zipSync } = await import('fflate')
+  const raw = XLSX.write(workbook, { bookType: 'xlsx', type: 'array', cellStyles: true })
+  const archive = unzipSync(new Uint8Array(raw))
+
+  for (const [path, bytes] of Object.entries(archive)) {
+    if (!/^xl\/worksheets\/sheet\d+\.xml$/u.test(path)) continue
+    const xml = strFromU8(bytes)
+    const hidden = xml.replace(/<sheetView\b([^>]*)>/gu, (match, attributes) => {
+      if (/\bshowGridLines=/u.test(attributes)) {
+        return match.replace(/showGridLines="[^"]*"/u, 'showGridLines="0"')
+      }
+      const selfClosing = /\/\s*$/u.test(attributes)
+      const normalized = selfClosing ? attributes.replace(/\/\s*$/u, '') : attributes
+      return `<sheetView${normalized} showGridLines="0"${selfClosing ? '/' : ''}>`
+    })
+    archive[path] = strToU8(hidden)
+  }
+
+  return zipSync(archive, { level: 6 })
+}
+
+function downloadXlsx(bytes, fileName) {
+  const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  link.style.display = 'none'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
 export async function downloadActivityRecordsExcel({ program, rows }) {
   const result = await createActivityRecordWorkbook({ program, rows })
   const now = new Date()
   const date = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('')
   const fileName = `${safeFilePart(program?.name)}_학생활동기록_${date}.xlsx`
-  result.XLSX.writeFile(result.workbook, fileName, { cellStyles: true })
+  const bytes = await serializeActivityRecordWorkbook(result.XLSX, result.workbook)
+  downloadXlsx(bytes, fileName)
   return { classCount: result.classCount, recordCount: result.recordCount, unmatchedCount: result.unmatchedCount, fileName }
 }
