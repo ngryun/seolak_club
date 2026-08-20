@@ -91,6 +91,19 @@ function setRowStyles(XLSX, sheet, rowNumber, columnCount, style) {
   }
 }
 
+function estimateRemarkRowHeight(value, columnWidth = 80) {
+  const usableWidth = Math.max(10, columnWidth - 4)
+  const wrappedLines = String(value || '').split('\n').reduce((total, line) => {
+    const visualWidth = [...line].reduce((width, char) => {
+      if (char === '\t') return width + 4
+      return width + (char.charCodeAt(0) > 127 ? 2 : 1)
+    }, 0)
+    return total + Math.max(1, Math.ceil(visualWidth / usableWidth))
+  }, 0)
+  // Excel의 행 높이 상한(약 409pt) 안에서 줄마다 충분한 세로 여백을 확보합니다.
+  return Math.min(408, Math.max(24, wrappedLines * 16 + 6))
+}
+
 function addMainSheet(XLSX, workbook, program, groups) {
   const exportedAt = new Date().toLocaleString('ko-KR')
   const data = [
@@ -156,17 +169,14 @@ function addClassSheet(XLSX, workbook, program, group) {
     { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } },
     { s: { r: 2, c: 0 }, e: { r: 2, c: 4 } },
   ]
-  sheet['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 24 }, { wch: 48 }, { wch: 12 }]
+  sheet['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 24 }, { wch: 80 }, { wch: 12 }]
   sheet['!rows'] = [
     { hpt: 28 },
     { hpt: 21 },
     { hpt: 20 },
     { hpt: 8 },
     { hpt: 28 },
-    ...group.rows.map((row) => {
-      const lineCount = Math.max(1, row.studentRecordText.split('\n').length, Math.ceil(row.studentRecordText.length / 36))
-      return { hpt: Math.min(90, Math.max(24, lineCount * 16)) }
-    }),
+    ...group.rows.map((row) => ({ hpt: estimateRemarkRowHeight(row.studentRecordText) })),
   ]
   sheet['!autofilter'] = { ref: `A5:E${Math.max(5, body.length + 5)}` }
   sheet['!freeze'] = { xSplit: 0, ySplit: 5, topLeftCell: 'A6', activePane: 'bottomLeft', state: 'frozen' }
