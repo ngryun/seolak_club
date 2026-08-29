@@ -5344,7 +5344,7 @@ function StudentApplicationStatusPanel({
                   </div>
                 ) : null;
               })()}
-              <Field label="강제 배정 사유" hint={`학생 원본 신청서는 유지되고, ${forceActorLabel || "관리자"} 조정 기록만 추가됩니다.`}>
+              <Field label="강제 배정 사유 (선택)" hint={`학생 원본 신청서는 유지되고, ${forceActorLabel || "관리자"} 조정 기록만 추가됩니다.`}>
                 <textarea
                   value={forceModal.reason}
                   onChange={(e) => setForceModal({ ...forceModal, reason: e.target.value })}
@@ -5361,10 +5361,10 @@ function StudentApplicationStatusPanel({
                   });
                   if (success) setForceModal(null);
                 }}
-                disabled={forceLoading || !forceModal.row.studentUid || !forceModal.clubId || !String(forceModal.reason || "").trim()}
+                disabled={forceLoading || !forceModal.row.studentUid || !forceModal.clubId}
                 style={{
                   ...buttonBase,
-                  background: forceLoading || !forceModal.clubId || !String(forceModal.reason || "").trim() ? "#cfd8e3" : "#d97706",
+                  background: forceLoading || !forceModal.clubId ? "#cfd8e3" : "#d97706",
                   color: "#fff",
                   fontWeight: 700,
                 }}
@@ -5404,8 +5404,7 @@ function StudentApplicationDetailDialog({
   const forceDisabled = loading
     || forceLocked
     || !row.studentUid
-    || !forceClubId
-    || !String(forceReason || "").trim();
+    || !forceClubId;
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 1000, padding: 12, overflowY: "auto" }}>
@@ -5476,7 +5475,7 @@ function StudentApplicationDetailDialog({
                     ))}
                   </Select>
                 </Field>
-                <Field label="강제 배정 사유" hint={`학생 원본 신청서는 유지되고, ${forceActorLabel} 조정 기록만 추가됩니다.`}>
+                <Field label="강제 배정 사유 (선택)" hint={`학생 원본 신청서는 유지되고, ${forceActorLabel} 조정 기록만 추가됩니다.`}>
                   <textarea
                     value={forceReason}
                     onChange={(e) => setForceReason(e.target.value)}
@@ -9994,11 +9993,12 @@ export default function PrototypeApp({ studentOnly = false }) {
       return false;
     }
 
+    const trimmedReason = String(reason || "").trim();
     const confirmMessage = [
       `${targetStudent?.name || "선택한 학생"} 학생을`,
       `${targetClub?.clubName || "선택한 동아리"}로 강제 배정할까요?`,
       "",
-      `사유: ${String(reason || "").trim()}`,
+      trimmedReason ? `사유: ${trimmedReason}` : "사유: (입력 없음)",
     ].join("\n");
     if (!window.confirm(confirmMessage)) {
       return false;

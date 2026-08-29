@@ -2828,10 +2828,8 @@ export async function forceAssignStudentToClub(payload) {
     throw new Error('강제 배정은 관리자 또는 담임교사만 가능합니다.')
   }
 
+  // 강제 배정 사유는 선택 입력이며, 비어 있으면 조정 기록만 남긴다.
   const reason = String(payload?.reason || '').trim()
-  if (!reason) {
-    throw new Error('강제 배정 사유를 입력해주세요.')
-  }
 
   if (actor.role === 'homeroom') {
     if (!actor.homeroomClass) {
