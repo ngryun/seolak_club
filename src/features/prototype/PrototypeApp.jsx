@@ -4941,6 +4941,7 @@ function StudentApplicationStatusPanel({
   onRefresh,
   onOpenDetail,
   canForceAssign,
+  canForceAssignAfterClose,
   forceActorLabel,
   forceLoading,
   onForceAssign,
@@ -5253,7 +5254,7 @@ function StudentApplicationStatusPanel({
                   ) : (
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <span style={{ color: t.textSub }}>-</span>
-                      {canForceAssign && cycle?.status !== "closed" ? (
+                      {canForceAssign && (cycle?.status !== "closed" || canForceAssignAfterClose) ? (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -5385,6 +5386,7 @@ function StudentApplicationDetailDialog({
   submissionState,
   clubs,
   canForceAssign,
+  canForceAssignAfterClose,
   forceActorLabel,
   loading,
   onClose,
@@ -5397,7 +5399,8 @@ function StudentApplicationDetailDialog({
   if (!open || !row) return null;
 
   const selectableClubs = (clubs || []).filter((club) => !club.legacy);
-  const forceLocked = cycle?.status === "closed";
+  // 모집이 종료돼도 관리자는 강제 배정을 계속할 수 있다.
+  const forceLocked = cycle?.status === "closed" && !canForceAssignAfterClose;
   const forceDisabled = loading
     || forceLocked
     || !row.studentUid
@@ -5504,11 +5507,13 @@ function StudentApplicationDetailDialog({
                     {loading ? "배정 중..." : "강제 배정 실행"}
                   </button>
                   <span style={{ fontSize: 12, color: t.textSub }}>
-                    {cycle?.status === "closed"
+                    {forceLocked
                       ? "모집 종료 후에는 강제 배정할 수 없습니다."
-                      : submissionState?.selectionReady === false
-                        ? "학생 신청 기간이 끝난 뒤 강제 배정할 수 있습니다."
-                        : "기존 승인 동아리가 있으면 선택한 동아리로 이동 처리합니다."}
+                      : cycle?.status === "closed"
+                        ? "모집이 종료됐지만 관리자는 강제 배정할 수 있습니다."
+                        : submissionState?.selectionReady === false
+                          ? "학생 신청 기간이 끝난 뒤 강제 배정할 수 있습니다."
+                          : "기존 승인 동아리가 있으면 선택한 동아리로 이동 처리합니다."}
                   </span>
                 </div>
               </div>
@@ -10981,6 +10986,7 @@ export default function PrototypeApp({ studentOnly = false }) {
             cycle={cycle}
             loading={studentStatusLoading || loading}
             canForceAssign={user.role === "admin"}
+            canForceAssignAfterClose={user.role === "admin"}
             forceActorLabel="관리자"
             forceLoading={forceAssignLoading}
             onForceAssign={handleForceAssign}
@@ -11282,6 +11288,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         submissionState={submissionState}
         clubs={visibleClubs}
         canForceAssign={user.role === "admin" || (user.role === "homeroom" && tab === "classStatus")}
+        canForceAssignAfterClose={user.role === "admin"}
         forceActorLabel={user.role === "homeroom" ? "담임교사" : "관리자"}
         loading={forceAssignLoading}
         onClose={() => setStudentStatusDialog({ open: false, studentUid: "" })}

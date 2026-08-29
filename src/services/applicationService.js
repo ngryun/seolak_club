@@ -2852,6 +2852,8 @@ export async function forceAssignStudentToClub(payload) {
     source: isHomeroom ? HOMEROOM_FORCE_SOURCE : ADMIN_FORCE_SOURCE,
     requireInterview: false,
     requireLeader: false,
+    // 관리자는 모집이 종료된 뒤에도 강제 배정할 수 있도록 열린 사이클 조건을 면제한다.
+    requireOpenCycle: isHomeroom,
     overrideApproved: true,
     overrideRejectReason: isHomeroom
       ? REJECT_REASON.HOMEROOM_FORCE_ASSIGNED
