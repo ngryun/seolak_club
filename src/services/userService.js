@@ -20,6 +20,10 @@ import { getStudentClassKey } from './programService'
 const COLLECTION = 'users'
 const APPLICATIONS = 'applications'
 const SCHEDULES = 'schedules'
+const DRAFTS = 'applicationDrafts'
+const ASSIGNMENTS = 'recruitmentAssignments'
+const REQUEST_CARD_APPLICATIONS = 'requestCardApplications'
+const NOTIFICATIONS = 'notifications'
 const VALID_ROLES = new Set(['admin', 'teacher', 'homeroom', 'student'])
 const AUTH_LOGIN_DOMAIN = String(appConfig.authLoginDomain || 'seolak.local').trim() || 'seolak.local'
 export const DEFAULT_ADMIN_LOGIN_ID = 'admin'
@@ -31,7 +35,6 @@ const ACCOUNT_HEADERS = [
   '이름',
   '역할',
   '학번(5자리 숫자)',
-  '담당학급(담임교사)',
   '이메일',
   '과목',
 ]
@@ -93,6 +96,12 @@ function normalizeRole(role) {
   if (value === '학생') return 'student'
   if (VALID_ROLES.has(value)) return value
   return 'student'
+}
+
+// 담임교사 역할은 더 이상 새로 부여하지 않습니다. 기존 계정의 역할 값은 그대로 읽습니다.
+function normalizeAssignableRole(role) {
+  const value = normalizeRole(role)
+  return value === 'homeroom' ? 'teacher' : value
 }
 
 function normalizeLoginId(loginId) {
@@ -236,7 +245,7 @@ function findLocalByLoginId(loginId) {
 
 function toAccountPayload(payload) {
   const loginId = normalizeLoginId(payload.loginId || payload.id || payload.studentNo)
-  const role = normalizeRole(payload.role)
+  const role = normalizeAssignableRole(payload.role)
   const account = {
     loginId,
     password: String(payload.password || ''),
@@ -544,13 +553,12 @@ export async function downloadUserAccountTemplate(options = {}) {
   const sampleRows = isHomeroom
     ? [
       ACCOUNT_HEADERS,
-      ['10101', 'student123', '홍길동', '학생', '10101', '', '', ''],
+      ['10101', 'student123', '홍길동', '학생', '10101', '', ''],
     ]
     : [
       ACCOUNT_HEADERS,
-      ['김교사', 'teacher123', '김교사', '교사', '', '', '', '국어'],
-      ['이담임', 'teacher123', '이담임', '담임교사', '', '1-1', '', ''],
-      ['10101', 'student123', '홍길동', '학생', '10101', '', '', ''],
+      ['김교사', 'teacher123', '김교사', '교사', '', '', '국어'],
+      ['10101', 'student123', '홍길동', '학생', '10101', '', ''],
     ]
   const ws = XLSX.utils.aoa_to_sheet(sampleRows)
   ws['!cols'] = [
@@ -559,7 +567,6 @@ export async function downloadUserAccountTemplate(options = {}) {
     { wch: 12 },
     { wch: 10 },
     { wch: 12 },
-    { wch: 18 },
     { wch: 24 },
     { wch: 12 },
   ]
@@ -588,7 +595,7 @@ export async function parseUserAccountExcel(file) {
           mapped[targetKey] = String(value ?? '').trim()
         }
 
-        const normalizedRole = normalizeRole(mapped.role)
+        const normalizedRole = normalizeAssignableRole(mapped.role)
         const loginId = normalizeLoginId(mapped.loginId || mapped.studentNo)
         return {
           loginId,
@@ -598,9 +605,7 @@ export async function parseUserAccountExcel(file) {
           studentNo: normalizedRole === 'student'
             ? String(mapped.studentNo || loginId).trim()
             : String(mapped.studentNo || '').trim(),
-          homeroomClass: normalizedRole === 'homeroom'
-            ? normalizeHomeroomClass(mapped.homeroomClass)
-            : '',
+          homeroomClass: '',
           email: String(mapped.email || '').trim(),
           school: String(mapped.school || '').trim(),
           phone: String(mapped.phone || '').trim(),
@@ -1067,6 +1072,128 @@ export async function deleteUserByAdmin(uid) {
 
   await deleteDoc(userRef)
   return { ok: true, removedApplications, removedMembers }
+}
+
+// 새 학년도 준비용 일괄 삭제: 관리자 계정과 현재 로그인한 계정만 남기고 모두 지웁니다.
+// 학생 신청·배정·확정 명단·알림 등 계정에 딸린 기록도 함께 정리합니다.
+export async function deleteAllUsersExceptAdmins(options = {}) {
+  const actorUid = String(options?.actor?.uid || '').trim()
+  if (!actorUid || normalizeRole(options?.actor?.role) !== 'admin') {
+    throw new Error('회원 일괄 삭제는 관리자만 가능합니다.')
+  }
+
+  const shouldKeep = (uid, data) => uid === actorUid
+    || normalizeRole(data?.role) === 'admin'
+    || normalizeLoginId(data?.loginId) === DEFAULT_ADMIN_LOGIN_ID
+
+  if (!isFirebaseEnabled()) {
+    let deleted = 0
+    for (const [uid, existing] of Array.from(localUsers.entries())) {
+      if (shouldKeep(uid, existing)) continue
+      localUsers.delete(uid)
+      deleted += 1
+    }
+    if (deleted === 0) {
+      throw new Error('삭제할 회원이 없습니다.')
+    }
+    return { deleted, skipped: [] }
+  }
+
+  const usersSnap = await getDocs(collection(db, COLLECTION))
+  const targets = usersSnap.docs.filter((row) => !shouldKeep(row.id, row.data()))
+  if (targets.length === 0) {
+    throw new Error('삭제할 회원이 없습니다.')
+  }
+
+  // 담당교사·동아리장으로 연결된 계정을 지우면 동아리 정보가 깨지므로 남겨두고 안내합니다.
+  const schedulesSnap = await getDocs(collection(db, SCHEDULES))
+  const linkedUids = new Set()
+  schedulesSnap.docs.forEach((row) => {
+    const data = row.data()
+    const teacherUids = Array.isArray(data?.teacherUids)
+      ? data.teacherUids
+      : (data?.teacherUid ? [data.teacherUid] : [])
+    teacherUids.forEach((value) => {
+      const uid = String(value || '').trim()
+      if (uid) linkedUids.add(uid)
+    })
+    const leaderUid = String(data?.leaderUid || '').trim()
+    if (leaderUid) linkedUids.add(leaderUid)
+  })
+
+  const skipped = targets
+    .filter((row) => linkedUids.has(row.id))
+    .map((row) => ({
+      uid: row.id,
+      loginId: String(row.data()?.loginId || '').trim(),
+      name: String(row.data()?.name || '').trim(),
+    }))
+  const deletable = targets.filter((row) => !linkedUids.has(row.id))
+  if (deletable.length === 0) {
+    return { deleted: 0, skipped }
+  }
+
+  const targetUids = new Set(deletable.map((row) => row.id))
+  const refs = []
+  const collectByUidField = (snapshot, field) => {
+    snapshot.docs.forEach((row) => {
+      const uid = String(row.data()?.[field] || '').trim()
+      if (uid && targetUids.has(uid)) refs.push(row.ref)
+    })
+  }
+
+  const [appsSnap, draftsSnap, assignmentsSnap, cardAppsSnap, notificationsSnap] = await Promise.all([
+    getDocs(collection(db, APPLICATIONS)),
+    getDocs(collection(db, DRAFTS)),
+    getDocs(collection(db, ASSIGNMENTS)),
+    getDocs(collection(db, REQUEST_CARD_APPLICATIONS)),
+    getDocs(collection(db, NOTIFICATIONS)),
+  ])
+  collectByUidField(appsSnap, 'studentUid')
+  collectByUidField(draftsSnap, 'studentUid')
+  collectByUidField(assignmentsSnap, 'studentUid')
+  collectByUidField(cardAppsSnap, 'applicantUid')
+  collectByUidField(notificationsSnap, 'recipientUid')
+
+  // 동아리 확정 명단에서 빼고 인원수를 다시 맞춥니다.
+  const memberCountUpdates = []
+  for (const scheduleDoc of schedulesSnap.docs) {
+    const membersSnap = await getDocs(collection(db, SCHEDULES, scheduleDoc.id, 'members'))
+    if (membersSnap.empty) continue
+
+    let removed = 0
+    membersSnap.docs.forEach((row) => {
+      const uid = String(row.data()?.studentUid || row.id || '').trim()
+      if (uid && targetUids.has(uid)) {
+        refs.push(row.ref)
+        removed += 1
+      }
+    })
+    if (removed > 0) {
+      memberCountUpdates.push({
+        ref: scheduleDoc.ref,
+        memberCount: Math.max(0, membersSnap.size - removed),
+      })
+    }
+  }
+
+  deletable.forEach((row) => refs.push(row.ref))
+
+  const chunkSize = 400
+  for (let index = 0; index < refs.length; index += chunkSize) {
+    const batch = writeBatch(db)
+    refs.slice(index, index + chunkSize).forEach((ref) => batch.delete(ref))
+    await batch.commit()
+  }
+  for (let index = 0; index < memberCountUpdates.length; index += chunkSize) {
+    const batch = writeBatch(db)
+    memberCountUpdates.slice(index, index + chunkSize).forEach((row) => {
+      batch.update(row.ref, { memberCount: row.memberCount, updatedAt: serverTimestamp() })
+    })
+    await batch.commit()
+  }
+
+  return { deleted: deletable.length, skipped }
 }
 
 export async function updateMyProfile(uid, profile) {

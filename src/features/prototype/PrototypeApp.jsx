@@ -79,6 +79,7 @@ import {
 import {
   createUserAccount,
   createUsersBatch,
+  deleteAllUsersExceptAdmins,
   deleteUserByAdmin,
   downloadUserAccountTemplate,
   listUsers,
@@ -2837,6 +2838,7 @@ function ClubTable({
   onDownloadPlanBudgetXlsx,
   onDownloadTemplate,
   onBulkUpload,
+  onResetAll,
   bulkLoading = false,
   showCapacity = true,
   showRoundStatus = true,
@@ -2948,6 +2950,21 @@ function ClubTable({
                 }}
               />
             </>
+          ) : null}
+          {onResetAll ? (
+            <button
+              onClick={onResetAll}
+              disabled={bulkLoading}
+              title={`이 프로그램의 ${clubLabels.unit}와 신청·배정 기록을 모두 삭제합니다.`}
+              style={{
+                ...buttonBase,
+                background: bulkLoading ? "#cfd8e3" : "#ffebee",
+                color: bulkLoading ? "#6b7280" : t.danger,
+                fontWeight: 700,
+              }}
+            >
+              일괄 초기화
+            </button>
           ) : null}
           {canCreate ? (
             <button
@@ -7116,17 +7133,18 @@ function RequestCardUserSection({
 function UserManagementPanel({
   currentUser,
   users,
-  classOptions = [],
   onRefresh,
   onCreate,
   onBulkUpload,
   onDownloadTemplate,
   onUpdate,
   onDelete,
+  onDeleteAll,
   onResetPassword,
   onResetStudentPasswords,
   loading,
   bulkResetLoading,
+  bulkDeleteLoading,
 }) {
   const isHomeroomManager = currentUser?.role === "homeroom";
   const [userListTab, setUserListTab] = useState(isHomeroomManager ? "student" : "teacher"); // "teacher" | "student"
@@ -7155,12 +7173,8 @@ function UserManagementPanel({
     : users;
   const teacherUsers = scopedUsers.filter((u) => u.role === "teacher" || u.role === "homeroom" || u.role === "admin");
   const studentUsers = scopedUsers.filter((u) => u.role === "student");
-  const homeroomClassOptions = Array.from(new Set([
-    ...(Array.isArray(classOptions) ? classOptions : []),
-    ...teacherUsers.map((row) => String(row.homeroomClass || "").trim()).filter(Boolean),
-    String(createForm.homeroomClass || "").trim(),
-    String(editForm.homeroomClass || "").trim(),
-  ].filter(Boolean))).sort(compareClassKeys);
+  // 관리자 계정과 지금 로그인한 계정은 일괄 삭제 대상에서 제외합니다.
+  const bulkDeletableCount = users.filter((row) => row.role !== "admin" && row.uid !== currentUser?.uid).length;
 
   const baseList = userListTab === "teacher" ? teacherUsers : studentUsers;
   const filtered = baseList.filter((u) => {
@@ -7219,14 +7233,11 @@ function UserManagementPanel({
                     ...prev,
                     role: e.target.value,
                     studentNo: e.target.value === "student" ? prev.studentNo : "",
-                    homeroomClass: e.target.value === "homeroom"
-                      ? prev.homeroomClass || homeroomClassOptions[0] || ""
-                      : "",
+                    homeroomClass: "",
                   }))}
                 >
                   <option value="student">학생</option>
                   <option value="teacher">교사</option>
-                  <option value="homeroom">담임교사</option>
                   <option value="admin">관리자</option>
                 </Select>
               )}
@@ -7249,19 +7260,6 @@ function UserManagementPanel({
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, subject: e.target.value }))}
               />
             </Field>
-            {!isHomeroomManager && createForm.role === "homeroom" ? (
-              <Field label="담당 학급(담임교사)" hint="등록된 학생 학번을 기준으로 구성된 학급 목록입니다.">
-                <Select
-                  value={createForm.homeroomClass}
-                  onChange={(e) => setCreateForm((prev) => ({ ...prev, homeroomClass: e.target.value }))}
-                >
-                  <option value="">담당 학급 선택</option>
-                  {homeroomClassOptions.map((classKey) => (
-                    <option key={classKey} value={classKey}>{formatClassKey(classKey)}</option>
-                  ))}
-                </Select>
-              </Field>
-            ) : null}
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -7307,6 +7305,21 @@ function UserManagementPanel({
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
           <h2 style={{ fontSize: 17 }}>회원 목록</h2>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {onDeleteAll ? (
+              <button
+                onClick={onDeleteAll}
+                disabled={bulkDeleteLoading || loading || bulkDeletableCount === 0}
+                title="관리자 계정과 현재 로그인한 계정만 남기고 모두 삭제합니다."
+                style={{
+                  ...buttonBase,
+                  background: bulkDeleteLoading || loading || bulkDeletableCount === 0 ? "#cfd8e3" : "#ffebee",
+                  color: bulkDeleteLoading || loading || bulkDeletableCount === 0 ? "#6b7280" : t.danger,
+                  fontWeight: 700,
+                }}
+              >
+                {bulkDeleteLoading ? "일괄 삭제 중..." : `회원 일괄 삭제 (${bulkDeletableCount})`}
+              </button>
+            ) : null}
             {userListTab === "student" ? (
               <button
                 onClick={onResetStudentPasswords}
@@ -7338,7 +7351,7 @@ function UserManagementPanel({
           {(isHomeroomManager
             ? [{ key: "student", label: `우리 반 학생 (${studentUsers.length})` }]
             : [
-              { key: "teacher", label: `교사/담임/관리자 (${teacherUsers.length})` },
+              { key: "teacher", label: `교사/관리자 (${teacherUsers.length})` },
               { key: "student", label: `학생 (${studentUsers.length})` },
             ]
           ).map((item) => (
@@ -7366,7 +7379,7 @@ function UserManagementPanel({
             <thead>
               <tr>
                 {(userListTab === "teacher"
-                  ? ["아이디", "이름", "역할", "과목/담당 학급", "최종 로그인", "작업"]
+                  ? ["아이디", "이름", "역할", "과목", "최종 로그인", "작업"]
                   : ["학번(아이디)", "이름", "학번", "최종 로그인", "작업"]
                 ).map((head) => (
                   <th key={head} style={{ textAlign: "left", padding: "8px 6px", borderBottom: `1px solid ${t.border}`, fontSize: 12, color: t.textSub }}>{head}</th>
@@ -7399,13 +7412,10 @@ function UserManagementPanel({
                             onChange={(e) => setEditForm((prev) => ({
                               ...prev,
                               role: e.target.value,
-                              homeroomClass: e.target.value === "homeroom"
-                                ? prev.homeroomClass || homeroomClassOptions[0] || ""
-                                : "",
+                              homeroomClass: "",
                             }))}
                           >
                             <option value="teacher">교사</option>
-                            <option value="homeroom">담임교사</option>
                             <option value="admin">관리자</option>
                           </Select>
                         ) : (
@@ -7414,27 +7424,13 @@ function UserManagementPanel({
                       </td>
                       <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px" }}>
                         {editing ? (
-                          editForm.role === "homeroom" ? (
-                            <Select
-                              value={editForm.homeroomClass}
-                              onChange={(e) => setEditForm((prev) => ({ ...prev, homeroomClass: e.target.value }))}
-                            >
-                              <option value="">담당 학급 선택</option>
-                              {homeroomClassOptions.map((classKey) => (
-                                <option key={classKey} value={classKey}>{formatClassKey(classKey)}</option>
-                              ))}
-                            </Select>
-                          ) : (
-                            <input
-                              value={editForm.subject}
-                              onChange={(e) => setEditForm((prev) => ({ ...prev, subject: e.target.value }))}
-                              style={{ ...inputBase, padding: "6px 8px" }}
-                            />
-                          )
+                          <input
+                            value={editForm.subject}
+                            onChange={(e) => setEditForm((prev) => ({ ...prev, subject: e.target.value }))}
+                            style={{ ...inputBase, padding: "6px 8px" }}
+                          />
                         ) : (
-                          <span style={{ fontSize: 13 }}>
-                            {row.role === "homeroom" ? formatClassKey(row.homeroomClass) : row.subject || "-"}
-                          </span>
+                          <span style={{ fontSize: 13 }}>{row.subject || "-"}</span>
                         )}
                       </td>
                       <td style={{ borderBottom: `1px solid ${t.border}`, padding: "8px 6px", fontSize: 12, color: row.lastLoginAt ? t.text : t.textSub, whiteSpace: "nowrap" }}>
@@ -7466,10 +7462,11 @@ function UserManagementPanel({
                                 setEditingUid(row.uid);
                                 setEditForm({
                                   name: row.name || "",
-                                  role: row.role || "teacher",
+                                  // 담임교사 역할은 폐지되어 교사로 전환합니다.
+                                  role: row.role === "homeroom" ? "teacher" : (row.role || "teacher"),
                                   studentNo: row.studentNo || "",
                                   subject: row.subject || "",
-                                  homeroomClass: row.homeroomClass || "",
+                                  homeroomClass: "",
                                 });
                               }}
                               style={{ ...buttonBase, padding: "5px 8px", background: "#fff", border: `1px solid ${t.border}` }}
@@ -7596,7 +7593,7 @@ function UserManagementPanel({
               {filtered.length === 0 ? (
                 <tr>
                   <td colSpan={userListTab === "teacher" ? 6 : 5} style={{ textAlign: "center", padding: 14, color: t.textSub, fontSize: 13 }}>
-                    {userListTab === "teacher" ? "교사/담임/관리자 계정이 없습니다." : "학생 계정이 없습니다."}
+                    {userListTab === "teacher" ? "교사/관리자 계정이 없습니다." : "학생 계정이 없습니다."}
                   </td>
                 </tr>
               ) : null}
@@ -8557,6 +8554,7 @@ export default function PrototypeApp({ studentOnly = false }) {
   const [loginLoading, setLoginLoading] = useState(false);
   const [myPasswordLoading, setMyPasswordLoading] = useState(false);
   const [bulkResetLoading, setBulkResetLoading] = useState(false);
+  const [bulkUserDeleteLoading, setBulkUserDeleteLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [forcePasswordChange, setForcePasswordChange] = useState(false);
   const [message, setMessage] = useState({ type: "", text: "" });
@@ -10204,10 +10202,18 @@ export default function PrototypeApp({ studentOnly = false }) {
 
   async function handleCleanupRecruitment() {
     const programName = activeProgram?.name || "현재 프로그램";
+    const unitLabel = getProgramLabels(activeProgram).unit;
     const confirmed = window.confirm(
-      `'${programName}' 프로그램의 모집 데이터(개설·신청·라운드)를 전부 삭제하고 초기화할까요?\n다른 프로그램의 데이터에는 영향이 없습니다.`,
+      `'${programName}' 프로그램의 모집 데이터(${unitLabel} 개설·신청·배정·라운드)를 전부 삭제하고 초기화할까요?\n`
+      + "되돌릴 수 없으며, 다른 프로그램의 데이터에는 영향이 없습니다.",
     );
     if (!confirmed) return;
+
+    const typed = window.prompt("정말 초기화하려면 아래 칸에 '초기화'를 입력해주세요.", "");
+    if (String(typed || "").trim() !== "초기화") {
+      setMessage({ type: "warn", text: "입력이 일치하지 않아 초기화를 취소했습니다." });
+      return;
+    }
 
     try {
       await purgeLegacyRecruitmentData({ actor: user, program: activeProgram });
@@ -10439,6 +10445,64 @@ export default function PrototypeApp({ studentOnly = false }) {
       await refreshRecruitmentViews(clubRows, cycleInfo, userRows);
     } catch (error) {
       withMessageError(error, "회원 삭제에 실패했습니다.");
+    }
+  }
+
+  async function handleDeleteAllUsers() {
+    let loadedUsers = users;
+    try {
+      loadedUsers = usersLoaded ? users : await ensureUsersLoaded();
+    } catch (error) {
+      withMessageError(error, "회원 목록을 불러오지 못했습니다.");
+      return;
+    }
+
+    const targets = loadedUsers.filter((row) => row.role !== "admin" && row.uid !== user.uid);
+    if (targets.length === 0) {
+      setMessage({ type: "warn", text: "삭제할 회원이 없습니다." });
+      return;
+    }
+
+    const studentCount = targets.filter((row) => row.role === "student").length;
+    const teacherCount = targets.length - studentCount;
+    const confirmed = window.confirm(
+      `관리자와 내 계정을 제외한 회원 ${targets.length}명(교사 ${teacherCount}명 / 학생 ${studentCount}명)을 모두 삭제할까요?\n`
+      + "학생 신청·배정·확정 명단·알림 기록도 함께 삭제되며 되돌릴 수 없습니다.",
+    );
+    if (!confirmed) return;
+
+    const typed = window.prompt("정말 삭제하려면 아래 칸에 '삭제'를 입력해주세요.", "");
+    if (String(typed || "").trim() !== "삭제") {
+      setMessage({ type: "warn", text: "입력이 일치하지 않아 일괄 삭제를 취소했습니다." });
+      return;
+    }
+
+    try {
+      setBulkUserDeleteLoading(true);
+      const result = await deleteAllUsersExceptAdmins({ actor: user });
+      invalidateUserCache();
+      invalidateScheduleCache();
+      invalidateApplicationCache();
+
+      const skipped = Array.isArray(result?.skipped) ? result.skipped : [];
+      if (skipped.length > 0) {
+        const preview = skipped.slice(0, 3).map((row) => row.name || row.loginId).join(", ");
+        setMessage({
+          type: "warn",
+          text: `회원 ${result.deleted}명을 삭제했습니다. 담당교사·동아리장으로 연결된 ${skipped.length}명(${preview}${skipped.length > 3 ? " 외" : ""})은 남겨두었습니다. `
+            + `${getProgramLabels(activeProgram).unit} 관리에서 먼저 일괄 초기화한 뒤 다시 실행해주세요.`,
+        });
+      } else {
+        setMessage({ type: "ok", text: `회원 ${result.deleted}명을 일괄 삭제했습니다.` });
+      }
+
+      const [clubRows, cycleInfo] = await Promise.all([refreshClubs({ forceRefresh: true }), refreshCycle()]);
+      const userRows = await refreshUsers({ forceRefresh: true });
+      await refreshRecruitmentViews(clubRows, cycleInfo, userRows);
+    } catch (error) {
+      withMessageError(error, "회원 일괄 삭제에 실패했습니다.");
+    } finally {
+      setBulkUserDeleteLoading(false);
     }
   }
 
@@ -10812,6 +10876,7 @@ export default function PrototypeApp({ studentOnly = false }) {
               onDownloadPlanBudgetXlsx={user.role === "admin" && activeProgram?.features?.plan !== false ? handleDownloadPlanBudgetXlsx : undefined}
               onDownloadTemplate={user.role === "admin" ? handleDownloadClubTemplate : undefined}
               onBulkUpload={user.role === "admin" ? handleBulkClubUpload : undefined}
+              onResetAll={user.role === "admin" ? handleCleanupRecruitment : undefined}
               bulkLoading={savingClub}
             />
           </div>
@@ -11046,8 +11111,8 @@ export default function PrototypeApp({ studentOnly = false }) {
         <UserManagementPanel
           currentUser={user}
           users={users}
-          classOptions={studentClassOptions}
           bulkResetLoading={bulkResetLoading}
+          bulkDeleteLoading={bulkUserDeleteLoading}
           onRefresh={async () => {
             try {
               await refreshUsers();
@@ -11061,6 +11126,7 @@ export default function PrototypeApp({ studentOnly = false }) {
           onDownloadTemplate={() => downloadUserAccountTemplate({ actor: user })}
           onUpdate={user.role === "admin" ? handleUpdateUser : undefined}
           onDelete={user.role === "admin" ? handleDeleteUser : undefined}
+          onDeleteAll={user.role === "admin" ? handleDeleteAllUsers : undefined}
           onResetPassword={handleResetPassword}
           onResetStudentPasswords={handleResetStudentPasswords}
           loading={loading}
