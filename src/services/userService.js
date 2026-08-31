@@ -15,7 +15,7 @@ import {
 } from 'firebase/firestore'
 import { appConfig } from '../config/appConfig'
 import { db, isFirebaseEnabled } from '../lib/firebase'
-import { getStudentClassKey } from './programService'
+import { buildProgramNameMap, describeClubsByProgram, getStudentClassKey } from './programService'
 
 const COLLECTION = 'users'
 const APPLICATIONS = 'applications'
@@ -1018,15 +1018,17 @@ export async function deleteUserByAdmin(uid) {
       ? teacherUids.includes(targetUid)
       : String(row.teacherUid || '').trim() === targetUid
   })
-  if (ownerClubs.length > 0) {
-    const preview = ownerClubs.slice(0, 3).map((row) => row.clubName || row.id).join(', ')
-    throw new Error(`담당교사로 연결된 동아리가 있습니다. 먼저 담당교사를 변경해주세요. (${preview})`)
-  }
-
   const leaderClubs = schedules.filter((row) => String(row.leaderUid || '').trim() === targetUid)
-  if (leaderClubs.length > 0) {
-    const preview = leaderClubs.slice(0, 3).map((row) => row.clubName || row.id).join(', ')
-    throw new Error(`동아리장으로 연결된 동아리가 있습니다. 먼저 동아리장을 변경해주세요. (${preview})`)
+  if (ownerClubs.length > 0 || leaderClubs.length > 0) {
+    // 어느 프로그램이 막고 있는지까지 알려줘야 해당 프로그램에서 정리할 수 있습니다.
+    const programNames = await buildProgramNameMap()
+    const blocking = ownerClubs.length > 0 ? ownerClubs : leaderClubs
+    const roleWord = ownerClubs.length > 0 ? '담당교사' : '동아리장'
+    const detail = describeClubsByProgram(blocking, programNames)
+    throw new Error(
+      `${roleWord}로 연결된 개설 단위가 있어 삭제할 수 없습니다. (${detail})`
+      + ` 해당 프로그램에서 ${roleWord}를 변경하거나 일괄 초기화한 뒤 다시 시도해주세요.`,
+    )
   }
 
   let removedApplications = 0
@@ -1096,7 +1098,7 @@ export async function deleteAllUsersExceptAdmins(options = {}) {
     if (deleted === 0) {
       throw new Error('삭제할 회원이 없습니다.')
     }
-    return { deleted, skipped: [] }
+    return { deleted, skipped: [], skippedDetail: '' }
   }
 
   const usersSnap = await getDocs(collection(db, COLLECTION))
@@ -1105,32 +1107,39 @@ export async function deleteAllUsersExceptAdmins(options = {}) {
     throw new Error('삭제할 회원이 없습니다.')
   }
 
-  // 담당교사·동아리장으로 연결된 계정을 지우면 동아리 정보가 깨지므로 남겨두고 안내합니다.
+  // 담당교사·동아리장으로 연결된 계정을 지우면 개설 단위 정보가 깨지므로 남겨두고 안내합니다.
   const schedulesSnap = await getDocs(collection(db, SCHEDULES))
-  const linkedUids = new Set()
+  const linkedClubsByUid = new Map()
+  const addLink = (uid, club) => {
+    if (!uid) return
+    if (!linkedClubsByUid.has(uid)) linkedClubsByUid.set(uid, [])
+    linkedClubsByUid.get(uid).push(club)
+  }
   schedulesSnap.docs.forEach((row) => {
     const data = row.data()
+    const club = {
+      clubName: String(data?.clubName || data?.school || row.id).trim(),
+      programId: String(data?.programId || '').trim(),
+    }
     const teacherUids = Array.isArray(data?.teacherUids)
       ? data.teacherUids
       : (data?.teacherUid ? [data.teacherUid] : [])
-    teacherUids.forEach((value) => {
-      const uid = String(value || '').trim()
-      if (uid) linkedUids.add(uid)
-    })
-    const leaderUid = String(data?.leaderUid || '').trim()
-    if (leaderUid) linkedUids.add(leaderUid)
+    teacherUids.forEach((value) => addLink(String(value || '').trim(), club))
+    addLink(String(data?.leaderUid || '').trim(), club)
   })
 
-  const skipped = targets
-    .filter((row) => linkedUids.has(row.id))
-    .map((row) => ({
-      uid: row.id,
-      loginId: String(row.data()?.loginId || '').trim(),
-      name: String(row.data()?.name || '').trim(),
-    }))
-  const deletable = targets.filter((row) => !linkedUids.has(row.id))
+  const blockedTargets = targets.filter((row) => linkedClubsByUid.has(row.id))
+  const programNames = blockedTargets.length > 0 ? await buildProgramNameMap() : new Map()
+  const blockingClubs = blockedTargets.flatMap((row) => linkedClubsByUid.get(row.id) || [])
+  const skipped = blockedTargets.map((row) => ({
+    uid: row.id,
+    loginId: String(row.data()?.loginId || '').trim(),
+    name: String(row.data()?.name || '').trim(),
+  }))
+  const skippedDetail = describeClubsByProgram(blockingClubs, programNames)
+  const deletable = targets.filter((row) => !linkedClubsByUid.has(row.id))
   if (deletable.length === 0) {
-    return { deleted: 0, skipped }
+    return { deleted: 0, skipped, skippedDetail }
   }
 
   const targetUids = new Set(deletable.map((row) => row.id))
@@ -1193,7 +1202,7 @@ export async function deleteAllUsersExceptAdmins(options = {}) {
     await batch.commit()
   }
 
-  return { deleted: deletable.length, skipped }
+  return { deleted: deletable.length, skipped, skippedDetail }
 }
 
 export async function updateMyProfile(uid, profile) {

@@ -15,10 +15,11 @@ import {
 import { db, isFirebaseEnabled } from '../lib/firebase'
 import { mockSchedules } from './mockData'
 import { getUserProfile } from './userService'
-import { DEFAULT_PROGRAM_ID } from './programService'
+import { DEFAULT_PROGRAM_ID, buildProgramNameMap, describeClubsByProgram } from './programService'
 
 const COLLECTION_NAME = 'schedules'
 const ROOMS_COLLECTION_NAME = 'clubRooms'
+
 let scheduleStore = [...mockSchedules]
 let roomStore = Array.from(
   new Set(
@@ -395,6 +396,17 @@ export async function createClubRoom(name, options = {}) {
   return normalizeRoom(created.id, { name: normalizedName })
 }
 
+// 사용 중인 장소 삭제가 막혔을 때, 호출부가 '미정으로 바꾸고 삭제'를 물어볼 수 있도록 정보를 담아 던집니다.
+function buildRoomInUseError(roomName, rows, programNames) {
+  const detail = describeClubsByProgram(rows, programNames)
+  const error = new Error(`'${roomName}'을(를) 사용 중인 곳이 ${rows.length}개 있습니다. (${detail})`)
+  error.code = 'room-in-use'
+  error.roomName = roomName
+  error.roomUsage = rows
+  error.roomUsageDetail = detail
+  return error
+}
+
 export async function deleteClubRoom(roomId, options = {}) {
   const actor = assertActor(options?.actor)
   if (actor.role !== 'admin' && actor.loginId !== 'admin') {
@@ -406,6 +418,9 @@ export async function deleteClubRoom(roomId, options = {}) {
     throw new Error('삭제할 수 없는 항목입니다.')
   }
 
+  // force가 아니면 사용 중인 곳을 알려주고 멈춥니다. force면 해당 개설 단위의 장소를 '미정'으로 되돌립니다.
+  const force = options?.force === true
+
   if (!isFirebaseEnabled()) {
     const target = roomStore.find((row) => row.id === targetId)
     if (!target) {
@@ -414,14 +429,22 @@ export async function deleteClubRoom(roomId, options = {}) {
     if (target.name === '미정') {
       throw new Error('미정 항목은 삭제할 수 없습니다.')
     }
-    const inUse = scheduleStore.some(
+    const inUse = scheduleStore.filter(
       (row) => String(row?.room || row?.region || '').trim() === target.name,
     )
-    if (inUse) {
-      throw new Error('사용 중인 동아리실은 삭제할 수 없습니다.')
+    if (inUse.length > 0) {
+      if (!force) {
+        throw buildRoomInUseError(target.name, inUse, await buildProgramNameMap())
+      }
+      scheduleStore = scheduleStore.map((row) => (
+        String(row?.room || row?.region || '').trim() === target.name
+          ? { ...row, room: '미정' }
+          : row
+      ))
     }
     roomStore = roomStore.filter((row) => row.id !== targetId)
-    return { ok: true }
+    invalidateScheduleCache()
+    return { ok: true, unassignedCount: inUse.length }
   }
 
   const roomRef = doc(db, ROOMS_COLLECTION_NAME, targetId)
@@ -439,11 +462,26 @@ export async function deleteClubRoom(roomId, options = {}) {
     query(collection(db, COLLECTION_NAME), where('room', '==', roomName)),
   )
   if (!inUseSnap.empty) {
-    throw new Error('사용 중인 동아리실은 삭제할 수 없습니다.')
+    if (!force) {
+      const rows = inUseSnap.docs.map((row) => ({
+        clubName: String(row.data()?.clubName || row.data()?.school || row.id).trim(),
+        programId: String(row.data()?.programId || '').trim() || DEFAULT_PROGRAM_ID,
+      }))
+      throw buildRoomInUseError(roomName, rows, await buildProgramNameMap())
+    }
+
+    for (let index = 0; index < inUseSnap.docs.length; index += 400) {
+      const batch = writeBatch(db)
+      inUseSnap.docs.slice(index, index + 400).forEach((row) => {
+        batch.update(row.ref, { room: '미정', updatedAt: serverTimestamp() })
+      })
+      await batch.commit()
+    }
+    invalidateScheduleCache()
   }
 
   await deleteDoc(roomRef)
-  return { ok: true }
+  return { ok: true, unassignedCount: inUseSnap.size }
 }
 
 export async function createSchedule(payload, options = {}) {

@@ -27,6 +27,7 @@ import {
   DEFAULT_CYCLE_ID,
   DEFAULT_PROGRAM_ID,
   MAX_PREFERENCE_COUNT,
+  deleteProgram,
   getStudentClassKey,
   getProgramById,
   isStudentEligibleForProgram,
@@ -3117,6 +3118,87 @@ export async function purgeLegacyRecruitmentData(payload) {
   })
   cycleCacheById.delete(cycleId)
   cyclePromiseById.delete(cycleId)
+}
+
+// 프로그램 자체를 삭제합니다. 소속 개설 단위와 모든 사이클의 신청·배정·사이클 문서까지 함께 정리합니다.
+// 기본 동아리 프로그램은 삭제할 수 없습니다.
+export async function deleteProgramWithData(payload) {
+  const user = assertActor(payload?.actor)
+  if (user.role !== 'admin') {
+    throw new Error('프로그램 삭제는 관리자만 가능합니다.')
+  }
+
+  const program = await resolveProgram(payload?.program)
+  if (program.id === DEFAULT_PROGRAM_ID) {
+    throw new Error('기본 동아리 프로그램은 삭제할 수 없습니다.')
+  }
+
+  const clubs = await listSchedules({ includeLegacy: true })
+  const targetClubs = clubs.filter((club) => club.programId === program.id)
+  for (const club of targetClubs) {
+    await deleteSchedule(club.id, { actor: user })
+  }
+
+  // 새 모집을 반복하면 사이클이 회전하므로 과거 사이클까지 모두 찾아 정리합니다.
+  const belongsToProgram = (value) => {
+    const cycleId = String(value || '').trim()
+    if (!cycleId) return false
+    return cycleId === program.id || cycleId === program.cycleId || cycleId.startsWith(`${program.id}__`)
+  }
+
+  if (!isFirebaseEnabled()) {
+    localApplications = localApplications.filter((row) => !belongsToProgram(row.cycleId))
+    for (const [draftId, draft] of Array.from(localDrafts.entries())) {
+      if (belongsToProgram(draft?.cycleId)) localDrafts.delete(draftId)
+    }
+    for (const cycleId of Array.from(localCycles.keys())) {
+      if (belongsToProgram(cycleId)) localCycles.delete(cycleId)
+    }
+    targetClubs.forEach((club) => localMembersByClub.delete(club.id))
+    await deleteProgram(program.id, { actor: user })
+    invalidateApplicationCache()
+    return { ok: true, clubCount: targetClubs.length }
+  }
+
+  // recruitmentCycles는 사이클당 문서 1개뿐이라 전체를 훑어 이 프로그램의 사이클 ID를 모읍니다.
+  const cyclesSnapshot = await getDocs(collection(db, CYCLES))
+  const cycleRefs = []
+  const cycleIds = new Set([program.cycleId])
+  cyclesSnapshot.docs.forEach((row) => {
+    const ownedByProgram = belongsToProgram(row.id)
+      || String(row.data()?.programId || '').trim() === program.id
+    if (!ownedByProgram) return
+    cycleIds.add(row.id)
+    cycleRefs.push(row.ref)
+  })
+
+  const refs = []
+  for (const cycleId of cycleIds) {
+    const [appsSnapshot, draftsSnapshot, assignmentsSnapshot] = await Promise.all([
+      getDocs(query(collection(db, APPLICATIONS), where('cycleId', '==', cycleId))),
+      getDocs(query(collection(db, DRAFTS), where('cycleId', '==', cycleId))),
+      getDocs(query(collection(db, ASSIGNMENTS), where('cycleId', '==', cycleId))),
+    ])
+    appsSnapshot.docs.forEach((row) => refs.push(row.ref))
+    draftsSnapshot.docs.forEach((row) => refs.push(row.ref))
+    assignmentsSnapshot.docs.forEach((row) => refs.push(row.ref))
+  }
+  refs.push(...cycleRefs)
+
+  for (const rows of chunk(refs, 400)) {
+    const batch = writeBatch(db)
+    rows.forEach((ref) => batch.delete(ref))
+    await batch.commit()
+  }
+
+  cycleIds.forEach((cycleId) => {
+    cycleCacheById.delete(cycleId)
+    cyclePromiseById.delete(cycleId)
+  })
+
+  await deleteProgram(program.id, { actor: user })
+  invalidateApplicationCache()
+  return { ok: true, clubCount: targetClubs.length }
 }
 
 // 같은 프로그램에서 새 모집 사이클을 시작합니다.

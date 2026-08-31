@@ -26,6 +26,7 @@ import {
   listApplicationsBySchedule,
   listClubMembers,
   listStudentApplications,
+  deleteProgramWithData,
   purgeLegacyRecruitmentData,
   randomSelectPending,
   rejectApplication,
@@ -1985,6 +1986,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
   const roomLabel = programLabels.room;
   const useRoomFeature = activeProgram?.features?.room !== false;
   const useAttendanceFeature = activeProgram?.features?.attendance === true;
+  const useActivityRecordFeature = activeProgram?.features?.activityRecord === true;
 
   const navByRole = {
     admin: [
@@ -1993,7 +1995,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
       ...(useRoomFeature ? [{ key: "clubRooms", label: `${roomLabel} 관리` }] : []),
       { key: "studentStatus", label: "학생 신청 현황" },
       ...(useAttendanceFeature ? [{ key: "attendance", label: "출석부" }] : []),
-      { key: "activityRecords", label: "학생 활동 기록" },
+      ...(useActivityRecordFeature ? [{ key: "activityRecords", label: "학생 활동 기록" }] : []),
       { key: "round", label: `${unitLabel} 선발 진행` },
       { type: "group", label: "신청카드" },
       { key: "extraRequests", label: "신청카드 목록" },
@@ -2010,7 +2012,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
       ...(useRoomFeature ? [{ key: "clubRooms", label: `${roomLabel} 현황` }] : []),
       { key: "studentStatus", label: "학생 신청 현황" },
       ...(useAttendanceFeature ? [{ key: "attendance", label: "출석부" }] : []),
-      { key: "activityRecords", label: "학생 활동 기록" },
+      ...(useActivityRecordFeature ? [{ key: "activityRecords", label: "학생 활동 기록" }] : []),
       { type: "group", label: "신청카드" },
       { key: "extraRequests", label: "신청카드 목록" },
       { key: "requestCards", label: "신청카드 관리" },
@@ -2024,7 +2026,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
       ...(useRoomFeature ? [{ key: "clubRooms", label: `${roomLabel} 현황` }] : []),
       { key: "studentStatus", label: "학생 신청 현황" },
       ...(useAttendanceFeature ? [{ key: "attendance", label: "출석부" }] : []),
-      { key: "activityRecords", label: "학생 활동 기록" },
+      ...(useActivityRecordFeature ? [{ key: "activityRecords", label: "학생 활동 기록" }] : []),
       { type: "group", label: "학급 관리" },
       { key: "classStatus", label: "우리 반 신청 현황" },
       { key: "users", label: "우리 반 학생 관리" },
@@ -2040,7 +2042,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
         { key: "apply", label: `${unitLabel} 신청` },
         { key: "my", label: "신청 현황" },
         { key: "clubOverview", label: `${unitLabel} 개설현황` },
-        { key: "activityRecord", label: "나의 활동 기록" },
+        ...(useActivityRecordFeature ? [{ key: "activityRecord", label: "나의 활동 기록" }] : []),
         { key: "clubs", label: `${unitLabel} 수정(${getProgramLabels(activeProgram).leader})` },
         { type: "group", label: "신청카드" },
         { key: "extraRequests", label: "신청카드 목록" },
@@ -2052,7 +2054,7 @@ function Layout({ user, tab, setTab, onSignOut, isStudentLeader, programs = [], 
         { key: "apply", label: `${unitLabel} 신청` },
         { key: "my", label: "신청 현황" },
         { key: "clubOverview", label: `${unitLabel} 개설현황` },
-        { key: "activityRecord", label: "나의 활동 기록" },
+        ...(useActivityRecordFeature ? [{ key: "activityRecord", label: "나의 활동 기록" }] : []),
         { type: "group", label: "신청카드" },
         { key: "extraRequests", label: "신청카드 목록" },
         { type: "group", label: "설정" },
@@ -7753,6 +7755,7 @@ const PROGRAM_FEATURE_META = [
   { key: "room", label: "장소 배정" },
   { key: "interview", label: "자체면접 선발" },
   { key: "attendance", label: "출석부" },
+  { key: "activityRecord", label: "학생 활동 기록" },
 ];
 
 function newProgramForm() {
@@ -7760,7 +7763,7 @@ function newProgramForm() {
     name: "",
     unitLabel: "강좌",
     preferenceCount: 1,
-    features: { leader: false, plan: false, room: false, interview: false, attendance: false },
+    features: { leader: false, plan: false, room: false, interview: false, attendance: false, activityRecord: false },
     attendanceSchedule: [],
     activityRecordStartAt: "",
     activityRecordEndAt: "",
@@ -7844,7 +7847,7 @@ function StudentVisibilitySwitch({ visible, disabled, onToggle }) {
   );
 }
 
-function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUpload, onDownloadTemplate, onUpdate, onArchive, onRestore, onConfigureAttendanceQr }) {
+function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUpload, onDownloadTemplate, onUpdate, onArchive, onRestore, onDelete, onConfigureAttendanceQr }) {
   const [editingId, setEditingId] = useState("");
   const [form, setForm] = useState(newProgramForm());
   const [qrProgramId, setQrProgramId] = useState("");
@@ -7917,22 +7920,24 @@ function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUp
         return;
       }
     }
-    if (Boolean(form.activityRecordStartAt) !== Boolean(form.activityRecordEndAt)) {
-      window.alert("학생 활동 기록 시작·종료 일시를 모두 입력하거나 모두 비워주세요.");
-      return;
-    }
-    if (form.activityRecordStartAt && new Date(form.activityRecordStartAt).getTime() >= new Date(form.activityRecordEndAt).getTime()) {
-      window.alert("학생 활동 기록 종료 일시는 시작 일시보다 뒤여야 합니다.");
-      return;
-    }
-    const activeQuestions = (form.activityRecordQuestions || []).filter((row) => row.active !== false);
-    if (activeQuestions.length > MAX_ACTIVITY_RECORD_QUESTIONS) {
-      window.alert(`프로그램별 추가 질문은 최대 ${MAX_ACTIVITY_RECORD_QUESTIONS}개까지 사용할 수 있습니다.`);
-      return;
-    }
-    if (activeQuestions.some((row) => !String(row.title || "").trim())) {
-      window.alert("사용 중인 추가 질문의 제목을 입력해주세요.");
-      return;
+    if (form.features?.activityRecord) {
+      if (Boolean(form.activityRecordStartAt) !== Boolean(form.activityRecordEndAt)) {
+        window.alert("학생 활동 기록 시작·종료 일시를 모두 입력하거나 모두 비워주세요.");
+        return;
+      }
+      if (form.activityRecordStartAt && new Date(form.activityRecordStartAt).getTime() >= new Date(form.activityRecordEndAt).getTime()) {
+        window.alert("학생 활동 기록 종료 일시는 시작 일시보다 뒤여야 합니다.");
+        return;
+      }
+      const activeQuestions = (form.activityRecordQuestions || []).filter((row) => row.active !== false);
+      if (activeQuestions.length > MAX_ACTIVITY_RECORD_QUESTIONS) {
+        window.alert(`프로그램별 추가 질문은 최대 ${MAX_ACTIVITY_RECORD_QUESTIONS}개까지 사용할 수 있습니다.`);
+        return;
+      }
+      if (activeQuestions.some((row) => !String(row.title || "").trim())) {
+        window.alert("사용 중인 추가 질문의 제목을 입력해주세요.");
+        return;
+      }
     }
     const ok = editingId
       ? await onUpdate(editingId, form)
@@ -8082,6 +8087,16 @@ function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUp
                           </button>
                         )
                       ) : null}
+                      {row.id !== DEFAULT_PROGRAM_ID && onDelete ? (
+                        <button
+                          onClick={() => onDelete(row)}
+                          disabled={loading}
+                          title="프로그램과 소속 개설·신청 기록을 모두 삭제합니다."
+                          style={{ ...buttonBase, background: "#ffebee", color: t.danger, padding: "6px 10px", fontSize: 12, fontWeight: 700 }}
+                        >
+                          삭제
+                        </button>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
@@ -8229,6 +8244,7 @@ function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUp
             </Field>
           ) : null}
 
+          {form.features?.activityRecord ? (
           <section style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, display: "grid", gap: 12, background: "#fbfcff" }}>
             <div>
               <div style={{ fontSize: 14, fontWeight: 800 }}>학생 활동 기록</div>
@@ -8295,6 +8311,7 @@ function ProgramPanel({ programs, classOptions = [], loading, onCreate, onBulkUp
               </div>
             </Field>
           </section>
+          ) : null}
 
           <Field
             label="신청 대상 학급"
@@ -9166,6 +9183,48 @@ export default function PrototypeApp({ studentOnly = false }) {
     }
   }
 
+  async function handleDeleteProgram(program) {
+    if (program.id === DEFAULT_PROGRAM_ID) {
+      setMessage({ type: "warn", text: "기본 동아리 프로그램은 삭제할 수 없습니다." });
+      return;
+    }
+
+    const unitLabel = getProgramLabels(program).unit;
+    const confirmed = window.confirm(
+      `프로그램 '${program.name}'을 삭제할까요?\n`
+      + `이 프로그램의 ${unitLabel} 개설·신청·배정 기록이 모두 함께 삭제되며 되돌릴 수 없습니다.\n`
+      + "기록을 남겨두고 화면에서만 숨기려면 '보관'을 사용하세요.",
+    );
+    if (!confirmed) return;
+
+    const typed = window.prompt(`정말 삭제하려면 프로그램명 '${program.name}'을 입력해주세요.`, "");
+    if (String(typed || "").trim() !== String(program.name || "").trim()) {
+      setMessage({ type: "warn", text: "입력이 일치하지 않아 삭제를 취소했습니다." });
+      return;
+    }
+
+    setProgramLoading(true);
+    try {
+      const result = await deleteProgramWithData({ actor: user, program });
+      invalidateScheduleCache();
+      invalidateApplicationCache();
+      setMessage({
+        type: "ok",
+        text: `프로그램을 삭제했습니다. (${program.name}${result?.clubCount ? ` · ${unitLabel} ${result.clubCount}개 포함` : ""})`,
+      });
+
+      const rows = await refreshPrograms({ forceRefresh: true });
+      if (program.id === activeProgramId) {
+        const fallback = rows.find((row) => row.status === "active") || rows[0];
+        if (fallback) await handleChangeProgram(fallback.id);
+      }
+    } catch (error) {
+      withMessageError(error, "프로그램 삭제에 실패했습니다.");
+    } finally {
+      setProgramLoading(false);
+    }
+  }
+
   async function handleRestoreProgram(program) {
     setProgramLoading(true);
     try {
@@ -9403,19 +9462,48 @@ export default function PrototypeApp({ studentOnly = false }) {
     }
   }
 
+  async function removeClubRoom(room, { force }) {
+    const result = await deleteClubRoom(room.id, { actor: user, force });
+    invalidateScheduleCache();
+    await Promise.all([refreshClubRooms(), refreshClubs({ forceRefresh: true })]);
+    if (String(clubForm.room || "").trim() === String(room.name || "").trim()) {
+      setClubForm((prev) => ({ ...prev, room: "미정" }));
+    }
+    const unassigned = Number(result?.unassignedCount || 0);
+    setMessage({
+      type: "ok",
+      text: unassigned > 0
+        ? `장소를 삭제했습니다. (${room.name} · ${unassigned}개 항목을 '미정'으로 변경)`
+        : `장소를 삭제했습니다. (${room.name})`,
+    });
+    return result;
+  }
+
   async function handleDeleteClubRoom(room) {
     if (!room?.id) return false;
     if (!window.confirm(`'${room.name}' 장소를 삭제하시겠습니까?`)) return false;
     setSavingRoom(true);
     try {
-      await deleteClubRoom(room.id, { actor: user });
-      await refreshClubRooms();
-      if (String(clubForm.room || "").trim() === String(room.name || "").trim()) {
-        setClubForm((prev) => ({ ...prev, room: "미정" }));
-      }
-      setMessage({ type: "ok", text: `장소를 삭제했습니다. (${room.name})` });
+      await removeClubRoom(room, { force: false });
       return true;
     } catch (error) {
+      // 다른 프로그램을 포함해 사용 중인 곳이 있으면, 장소를 '미정'으로 되돌리고 삭제할지 되묻습니다.
+      if (error?.code === "room-in-use") {
+        const proceed = window.confirm(
+          `${error.message}\n\n해당 항목의 장소를 '미정'으로 바꾸고 삭제할까요?`,
+        );
+        if (!proceed) {
+          setMessage({ type: "warn", text: "장소 삭제를 취소했습니다." });
+          return false;
+        }
+        try {
+          await removeClubRoom(room, { force: true });
+          return true;
+        } catch (forceError) {
+          withMessageError(forceError, "장소 삭제에 실패했습니다.");
+          return false;
+        }
+      }
       withMessageError(error, "장소 삭제에 실패했습니다.");
       return false;
     } finally {
@@ -10490,7 +10578,8 @@ export default function PrototypeApp({ studentOnly = false }) {
         setMessage({
           type: "warn",
           text: `회원 ${result.deleted}명을 삭제했습니다. 담당교사·동아리장으로 연결된 ${skipped.length}명(${preview}${skipped.length > 3 ? " 외" : ""})은 남겨두었습니다. `
-            + `${getProgramLabels(activeProgram).unit} 관리에서 먼저 일괄 초기화한 뒤 다시 실행해주세요.`,
+            + `${result.skippedDetail ? `연결된 곳 — ${result.skippedDetail}. ` : ""}`
+            + "해당 프로그램에서 일괄 초기화하거나 프로그램을 삭제한 뒤 다시 실행해주세요.",
         });
       } else {
         setMessage({ type: "ok", text: `회원 ${result.deleted}명을 일괄 삭제했습니다.` });
@@ -10630,6 +10719,12 @@ export default function PrototypeApp({ studentOnly = false }) {
       setTab(getDefaultTabForRole(user?.role));
     }
   }, [activeProgram?.features?.attendance, tab, user?.role]);
+
+  useEffect(() => {
+    if ((tab === "activityRecords" || tab === "activityRecord") && activeProgram?.features?.activityRecord !== true) {
+      setTab(getDefaultTabForRole(user?.role));
+    }
+  }, [activeProgram?.features?.activityRecord, tab, user?.role]);
 
   const refreshClubRoomsEffect = useEffectEvent(refreshClubRooms);
   const refreshRoundStatsEffect = useEffectEvent(refreshRoundStats);
@@ -10919,7 +11014,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         />
       ) : null}
 
-      {tab === "activityRecords" && (user.role === "admin" || isTeachingRole(user.role)) && activeProgram ? (
+      {tab === "activityRecords" && (user.role === "admin" || isTeachingRole(user.role)) && activeProgram?.features?.activityRecord === true ? (
         <TeacherActivityRecordPage key={`${activeProgram.id}:${activeProgram.cycleId}`} user={user} program={activeProgram} />
       ) : null}
 
@@ -11001,6 +11096,7 @@ export default function PrototypeApp({ studentOnly = false }) {
           onUpdate={handleUpdateProgram}
           onArchive={handleArchiveProgram}
           onRestore={handleRestoreProgram}
+          onDelete={handleDeleteProgram}
           onConfigureAttendanceQr={handleConfigureProgramAttendanceQr}
         />
       ) : null}
@@ -11171,7 +11267,7 @@ export default function PrototypeApp({ studentOnly = false }) {
         />
       ) : null}
 
-      {tab === "activityRecord" && user.role === "student" && activeProgram ? (
+      {tab === "activityRecord" && user.role === "student" && activeProgram?.features?.activityRecord === true ? (
         <StudentActivityRecordPage key={`${activeProgram.id}:${activeProgram.cycleId}`} user={user} program={activeProgram} />
       ) : null}
 

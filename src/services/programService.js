@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -32,6 +33,7 @@ function buildDefaultProgramData() {
       room: true,
       interview: true,
       attendance: false,
+      activityRecord: false,
     },
     attendanceSchedule: [],
     attendanceQrEnabled: false,
@@ -65,8 +67,9 @@ function normalizeFeatures(value, fallback = true) {
     plan: typeof value?.plan === 'boolean' ? value.plan : fallback,
     room: typeof value?.room === 'boolean' ? value.room : fallback,
     interview: typeof value?.interview === 'boolean' ? value.interview : fallback,
-    // 기존 프로그램에는 출석부를 자동 활성화하지 않습니다.
+    // 기존 프로그램에는 출석부와 학생 활동 기록을 자동 활성화하지 않습니다.
     attendance: typeof value?.attendance === 'boolean' ? value.attendance : false,
+    activityRecord: typeof value?.activityRecord === 'boolean' ? value.activityRecord : false,
   }
 }
 
@@ -293,6 +296,35 @@ function normalizeProgramNameKey(value) {
 
 const _listProgramsCache = { data: null, ts: 0 }
 
+// 삭제를 막고 있는 개설 단위가 어느 프로그램 소속인지 함께 알려주기 위한 이름 맵입니다.
+export async function buildProgramNameMap() {
+  try {
+    const programs = await listPrograms({ includeArchived: true })
+    return new Map(programs.map((row) => [row.id, row.name]))
+  } catch {
+    return new Map()
+  }
+}
+
+// [{ clubName, programId }] → "동아리: 미술부, 밴드부 / 2026 방과후: 코딩반"
+export function describeClubsByProgram(rows, programNames, limitPerProgram = 3) {
+  const grouped = new Map()
+  rows.forEach((row) => {
+    const programId = String(row?.programId || '').trim() || DEFAULT_PROGRAM_ID
+    const label = programNames?.get?.(programId) || programId
+    if (!grouped.has(label)) grouped.set(label, [])
+    grouped.get(label).push(String(row?.clubName || row?.id || '').trim())
+  })
+
+  return Array.from(grouped.entries())
+    .map(([label, names]) => {
+      const shown = names.slice(0, limitPerProgram).join(', ')
+      const rest = names.length > limitPerProgram ? ` 외 ${names.length - limitPerProgram}개` : ''
+      return `${label}: ${shown}${rest}`
+    })
+    .join(' / ')
+}
+
 export function invalidateProgramCache() {
   _listProgramsCache.data = null
   _listProgramsCache.ts = 0
@@ -518,6 +550,28 @@ export async function archiveProgram(programId, options = {}) {
 
 export async function restoreProgram(programId, options = {}) {
   return updateProgram(programId, { status: 'active' }, options)
+}
+
+// 프로그램 문서만 삭제합니다. 소속 개설 단위·신청 기록 정리는 호출부(applicationService)가 먼저 수행합니다.
+export async function deleteProgram(programId, options = {}) {
+  assertAdmin(options?.actor)
+  const existing = await getProgramById(programId)
+  if (!existing) {
+    throw new Error('프로그램 정보를 찾을 수 없습니다.')
+  }
+  if (existing.id === DEFAULT_PROGRAM_ID) {
+    throw new Error('기본 동아리 프로그램은 삭제할 수 없습니다.')
+  }
+
+  if (!isFirebaseEnabled()) {
+    localPrograms = localPrograms.filter((item) => item.id !== existing.id)
+    invalidateProgramCache()
+    return { ok: true }
+  }
+
+  await deleteDoc(doc(db, COLLECTION_NAME, existing.id))
+  invalidateProgramCache()
+  return { ok: true }
 }
 
 export async function resetProgramStore() {
